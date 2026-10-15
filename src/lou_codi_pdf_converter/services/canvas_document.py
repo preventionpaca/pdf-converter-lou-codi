@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pymupdf
 
+from .table_formulas import evaluate_table
+
 A4_WIDTH = 595.28
 A4_HEIGHT = 841.89
 
@@ -28,6 +30,7 @@ class PageObject:
     color: str = "#000000"
     fill: str = "#FFFFFF"
     pages: str = ""
+    group: str = ""
 
 
 @dataclass
@@ -94,6 +97,8 @@ def _draw_object(
     rectangle = pymupdf.Rect(item.x, item.y, item.x + item.width, item.y + item.height)
     if item.kind == "mask":
         page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
+    elif item.kind == "line":
+        page.draw_line(rectangle.top_left, rectangle.bottom_right, color=_rgb(item.color), width=max(0.5, item.font_size / 6), overlay=True)
     elif item.kind == "image" and Path(item.image_path).is_file():
         page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
     elif item.kind in {"text", "table"}:
@@ -145,7 +150,7 @@ def resolve_dynamic_text(text: str, page_number: int, page_count: int, document_
 
 
 def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, text: str) -> None:
-    rows = [row.split("\t") for row in text.splitlines() if row]
+    rows = evaluate_table(text)
     if not rows:
         return
     columns = max(len(row) for row in rows)

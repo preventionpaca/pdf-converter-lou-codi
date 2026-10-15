@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import tempfile
 import tkinter as tk
+import uuid
 from pathlib import Path
 from tkinter import colorchooser, messagebox, ttk
 
@@ -21,8 +22,9 @@ from ..services.canvas_document import (
     resolve_dynamic_text,
 )
 from ..services.docx_canvas import export_editable_docx
+from ..services.table_formulas import evaluate_table
 from ..system import open_path
-from .input_dialogs import ask_table_size, ask_text
+from .input_dialogs import ask_table_size, ask_text, edit_table
 from .pdf_picker import choose_documents
 from .windowing import make_modal, maximize_window
 
@@ -43,6 +45,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.last_export: Path | None = None
         self.current_page = 0
         self.selected: int | None = None
+        self.selected_indices: set[int] = set()
         self.zoom = 0.85
         self.undo_stack: list[CanvasDocument] = []
         self.redo_stack: list[CanvasDocument] = []
@@ -50,6 +53,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._overlay_images: list[ImageTk.PhotoImage] = []
         self._drag_origin: tuple[float, float, float, float] | None = None
         self._resize_origin: tuple[float, float, float, float] | None = None
+        self._drag_positions: dict[int, tuple[float, float]] = {}
+        self._drag_before: CanvasDocument | None = None
         self._editing_widget: tk.Text | None = None
         self._format_clipboard: dict[str, object] | None = None
         icon = getattr(self._root(), "app_icon", None)
@@ -91,7 +96,8 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Separator(formatting, orient="vertical").pack(side="left", fill="y", padx=8)
         self._buttons(formatting, (
             ("T+", self._add_text), ("▧", self._add_image), ("▤", self._add_table),
-            ("□", self._add_mask), ("⌗", self._copy_format), ("✓⌗", self._apply_format),
+            ("□", self._add_mask), ("╱", self._add_line), ("•", lambda: self._make_list(False)),
+            ("1.", lambda: self._make_list(True)), ("⌗", self._copy_format), ("✓⌗", self._apply_format),
         ))
         ttk.Button(formatting, text="PDF", style="Primary.TButton", command=self._export_pdf).pack(side="right", padx=2)
         ttk.Button(formatting, text="DOCX", command=self._export_docx).pack(side="right", padx=2)
@@ -192,6 +198,7 @@ class DocumentEditorWindow(tk.Toplevel):
         insert_menu.add_command(label="Image…", command=self._add_image)
         insert_menu.add_command(label="Tableau…", command=self._add_table)
         insert_menu.add_command(label="Masque blanc", command=self._add_mask)
+        insert_menu.add_command(label="Trait", command=self._add_line)
         insert_menu.add_separator()
         insert_menu.add_command(label="En-tête libre", command=lambda: self._add_preset("header"))
         insert_menu.add_command(label="Pied de page libre", command=lambda: self._add_preset("footer"))
@@ -209,6 +216,8 @@ class DocumentEditorWindow(tk.Toplevel):
         format_menu.add_command(label="Gras", command=lambda: self._toggle("bold"))
         format_menu.add_command(label="Italique", command=lambda: self._toggle("italic"))
         format_menu.add_command(label="Couleur du texte…", command=self._choose_color)
+        format_menu.add_command(label="Liste à puces", command=lambda: self._make_list(False))
+        format_menu.add_command(label="Liste numérotée", command=lambda: self._make_list(True))
         format_menu.add_separator()
         for label, value in (("Aligner à gauche", "left"), ("Centrer", "center"), ("Aligner à droite", "right"), ("Justifier", "justify")):
             format_menu.add_command(label=label, command=lambda alignment=value: self._align(alignment))
@@ -216,6 +225,18 @@ class DocumentEditorWindow(tk.Toplevel):
         format_menu.add_command(label="Agrandir le cadre", command=lambda: self._resize(1.1))
         format_menu.add_command(label="Réduire le cadre", command=lambda: self._resize(0.9))
         menu.add_cascade(label="Format", menu=format_menu)
+
+        object_menu = tk.Menu(menu, tearoff=False)
+        for label, mode in (
+            ("Aligner à gauche", "left"), ("Centrer horizontalement", "center"),
+            ("Aligner à droite", "right"), ("Aligner en haut", "top"),
+            ("Centrer verticalement", "middle"), ("Aligner en bas", "bottom"),
+        ):
+            object_menu.add_command(label=label, command=lambda value=mode: self._align_objects(value))
+        object_menu.add_separator()
+        object_menu.add_command(label="Regrouper", command=self._group_selected)
+        object_menu.add_command(label="Dissocier", command=self._ungroup_selected)
+        menu.add_cascade(label="Objets", menu=object_menu)
 
         view_menu = tk.Menu(menu, tearoff=False)
         view_menu.add_command(label="Zoom avant", command=lambda: self._set_zoom(0.1), accelerator="Ctrl++")
@@ -255,6 +276,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _after_history(self) -> None:
         self.current_page = min(self.current_page, self.document.page_count - 1)
         self.selected = None
+        self.selected_indices.clear()
         self._render()
 
     def _new(self) -> None:
@@ -263,6 +285,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.project_path = None
         self.current_page = 0
         self.selected = None
+        self.selected_indices.clear()
         self.status.configure(text="Nouvelle page A4")
         self._render()
 
@@ -280,6 +303,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.document = CanvasDocument(source_pdf=str(files[0]), page_count=max(1, count))
         self.current_page = 0
         self.selected = None
+        self.selected_indices.clear()
         self.status.configure(text=f"PDF importé comme document complet : {files[0].name}")
         self._render()
 
@@ -325,7 +349,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _draw_object(self, index: int, item: PageObject) -> None:
         x, y = self.page_x + item.x * self.zoom, self.page_y + item.y * self.zoom
         w, h = item.width * self.zoom, item.height * self.zoom
-        tag, selected = f"object:{index}", index == self.selected
+        tag, selected = f"object:{index}", index in self.selected_indices
         outline = "#1769AA" if selected else "#72879C"
         tags = (tag, "object")
         if item.kind == "mask":
@@ -342,7 +366,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.canvas.create_text(x + 4, y + 4, text="Image introuvable", anchor="nw", tags=tags)
             self.canvas.create_rectangle(x, y, x + w, y + h, outline=outline, width=3 if selected else 1, tags=tags)
         elif item.kind == "table":
-            rows = [row.split("\t") for row in item.text.splitlines()] or [[""]]
+            rows = evaluate_table(item.text)
             columns = max((len(row) for row in rows), default=1)
             rh, cw = h / max(1, len(rows)), w / max(1, columns)
             for row_index, row in enumerate(rows):
@@ -353,6 +377,8 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.canvas.create_text(cx + 4, cy + 3, text=value, anchor="nw", width=max(5, cw - 8), font=("Sans", max(7, round(item.font_size * self.zoom))), tags=tags)
             if selected:
                 self.canvas.create_rectangle(x, y, x + w, y + h, outline=outline, width=3, tags=tags)
+        elif item.kind == "line":
+            self.canvas.create_line(x, y, x + w, y + h, fill=item.color, width=max(1, item.font_size / 6), tags=tags)
         else:
             style = "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal"
             anchor = {"left": "nw", "center": "n", "right": "ne"}.get(item.align, "nw")
@@ -377,6 +403,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._checkpoint()
         self.document.objects.append(item)
         self.selected = len(self.document.objects) - 1
+        self.selected_indices = {self.selected}
         self._render()
 
     def _add_text(self) -> None:
@@ -395,8 +422,20 @@ class DocumentEditorWindow(tk.Toplevel):
         size = ask_table_size(self)
         if size:
             rows, columns = size
-            content = "\n".join("\t".join("Cellule" for _ in range(columns)) for _ in range(rows))
+            content = "\n".join("\t".join("" for _ in range(columns)) for _ in range(rows))
             self._add_object(PageObject("table", self.current_page, 70, 80, 360, max(80, rows * 32), text=content, font_size=10))
+
+    def _add_line(self) -> None:
+        self._add_object(PageObject("line", self.current_page, 70, 120, 260, 0, font_size=8))
+
+    def _make_list(self, numbered: bool) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "text":
+            return
+        self._checkpoint()
+        item = self.document.objects[self.selected]
+        lines = [line.removeprefix("• ").strip() for line in item.text.splitlines()]
+        item.text = "\n".join(f"{index + 1}. {line}" if numbered else f"• {line}" for index, line in enumerate(lines))
+        self._render()
 
     def _add_preset(self, kind: str) -> None:
         width, height = self._page_size()
@@ -454,10 +493,31 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                     self._drag_origin = None
                     return
-        self.selected = self._object_at_event(event)
+        clicked = self._object_at_event(event)
+        control = bool(event.state & 0x0004)
+        if clicked is None:
+            self.selected = None
+            self.selected_indices.clear()
+        elif control:
+            if clicked in self.selected_indices:
+                self.selected_indices.remove(clicked)
+            else:
+                self.selected_indices.add(clicked)
+            self.selected = clicked if clicked in self.selected_indices else next(iter(self.selected_indices), None)
+        else:
+            self.selected = clicked
+            group = self.document.objects[clicked].group
+            self.selected_indices = {
+                index for index, item in enumerate(self.document.objects) if group and item.group == group
+            } or {clicked}
         if self.selected is not None:
             item = self.document.objects[self.selected]
             self._drag_origin = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y), item.x, item.y)
+            self._drag_positions = {
+                index: (self.document.objects[index].x, self.document.objects[index].y)
+                for index in self.selected_indices
+            }
+            self._drag_before = copy.deepcopy(self.document)
         else:
             self._drag_origin = None
         self._render()
@@ -472,11 +532,14 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if self.selected is None or self._drag_origin is None:
             return
-        sx, sy, ox, oy = self._drag_origin
-        item = self.document.objects[self.selected]
+        sx, sy, _object_x, _object_y = self._drag_origin
         pw, ph = self._page_size()
-        item.x = max(0, min(pw - item.width, ox + (self.canvas.canvasx(event.x) - sx) / self.zoom))
-        item.y = max(0, min(ph - item.height, oy + (self.canvas.canvasy(event.y) - sy) / self.zoom))
+        dx = (self.canvas.canvasx(event.x) - sx) / self.zoom
+        dy = (self.canvas.canvasy(event.y) - sy) / self.zoom
+        for index, (start_x, start_y) in self._drag_positions.items():
+            item = self.document.objects[index]
+            item.x = max(0, min(pw - item.width, start_x + dx))
+            item.y = max(0, min(ph - item.height, start_y + dy))
         self._render()
 
     def _release(self, _event: tk.Event[tk.Misc]) -> None:
@@ -490,15 +553,14 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.undo_stack.append(snapshot)
                 self.redo_stack.clear()
         self._resize_origin = None
-        if self._drag_origin is not None and self.selected is not None:
-            _, _, old_x, old_y = self._drag_origin
-            item = self.document.objects[self.selected]
-            if (item.x, item.y) != (old_x, old_y):
-                snapshot = copy.deepcopy(self.document)
-                snapshot.objects[self.selected].x, snapshot.objects[self.selected].y = old_x, old_y
-                self.undo_stack.append(snapshot)
-                self.redo_stack.clear()
+        if self._drag_origin is not None and self._drag_before is not None and any(
+            (self.document.objects[index].x, self.document.objects[index].y) != position
+            for index, position in self._drag_positions.items()
+        ):
+            self.undo_stack.append(self._drag_before)
+            self.redo_stack.clear()
         self._drag_origin = None
+        self._drag_before = None
 
     def _edit_selected(self, _event: object = None) -> None:
         if self.selected is None:
@@ -507,7 +569,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if item.kind not in {"text", "table"}:
             return
         if item.kind == "table":
-            value = ask_text(self, "Modifier le tableau", "Contenu (tabulations entre les colonnes) :", item.text)
+            value = edit_table(self, item.text)
             if value is not None:
                 self._checkpoint()
                 item.text = value
@@ -611,7 +673,49 @@ class DocumentEditorWindow(tk.Toplevel):
             self._checkpoint()
             del self.document.objects[self.selected]
             self.selected = None
+            self.selected_indices.clear()
             self._render()
+
+    def _align_objects(self, mode: str) -> None:
+        indices = sorted(self.selected_indices)
+        if len(indices) < 2:
+            return
+        self._checkpoint()
+        objects = [self.document.objects[index] for index in indices]
+        anchor = objects[0]
+        for item in objects[1:]:
+            if mode == "left":
+                item.x = anchor.x
+            elif mode == "center":
+                item.x = anchor.x + (anchor.width - item.width) / 2
+            elif mode == "right":
+                item.x = anchor.x + anchor.width - item.width
+            elif mode == "top":
+                item.y = anchor.y
+            elif mode == "middle":
+                item.y = anchor.y + (anchor.height - item.height) / 2
+            elif mode == "bottom":
+                item.y = anchor.y + anchor.height - item.height
+        self._render()
+
+    def _group_selected(self) -> None:
+        if len(self.selected_indices) < 2:
+            return
+        self._checkpoint()
+        group = uuid.uuid4().hex
+        for index in self.selected_indices:
+            self.document.objects[index].group = group
+        self.status.configure(text="Objets regroupés : ils se déplacent désormais ensemble.")
+        self._render()
+
+    def _ungroup_selected(self) -> None:
+        if not self.selected_indices:
+            return
+        self._checkpoint()
+        for index in self.selected_indices:
+            self.document.objects[index].group = ""
+        self.status.configure(text="Objets dissociés.")
+        self._render()
 
     def _show_properties(self) -> None:
         if self.selected is None or self.selected >= len(self.document.objects):
@@ -622,8 +726,9 @@ class DocumentEditorWindow(tk.Toplevel):
             self.pages_var.set("")
             return
         item = self.document.objects[self.selected]
-        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau"}
-        self.kind_label.configure(text=names.get(item.kind, item.kind))
+        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait"}
+        selection = f" — {len(self.selected_indices)} objets" if len(self.selected_indices) > 1 else ""
+        self.kind_label.configure(text=names.get(item.kind, item.kind) + selection)
         for key, var in self.property_vars.items():
             var.set(f"{getattr(item, key):.1f}")
         self.font_size_var.set(f"{item.font_size:g}")
@@ -654,12 +759,14 @@ class DocumentEditorWindow(tk.Toplevel):
         page = self.current_page + change
         if 0 <= page < self.document.page_count:
             self.current_page, self.selected = page, None
+            self.selected_indices.clear()
             self._render()
 
     def _add_blank_page(self) -> None:
         self._checkpoint()
         self.document.page_count += 1
         self.current_page, self.selected = self.document.page_count - 1, None
+        self.selected_indices.clear()
         self._render()
 
     def _set_zoom(self, change: float) -> None:
@@ -694,6 +801,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._checkpoint()
         self.document, self.project_path = loaded, files[0]
         self.current_page, self.selected = 0, None
+        self.selected_indices.clear()
         self.status.configure(text=f"Projet ouvert : {files[0].name}")
         self._render()
 
