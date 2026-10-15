@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lou-codi-pdf-converter"
+version = "2.0.0a1"
+description = "Convertir, organiser et personnaliser des PDF localement."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+authors = [{name = "Lou Còdi"}]
+dependencies = [
+  "pypdf>=5.0,<7",
+  "pdfplumber>=0.11,<0.12",
+  "pdf2docx>=0.5.8,<0.6",
+  "openpyxl>=3.1,<4",
+  "Pillow>=10,<13",
+  "reportlab>=4,<5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-cov>=5,<8", "ruff>=0.8,<1"]
+
+[project.scripts]
+lou-codi-pdf-converter = "lou_codi_pdf_converter.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lou_codi_pdf_converter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
