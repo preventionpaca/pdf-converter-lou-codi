@@ -6,7 +6,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from ..paths import downloads_directory
-from .windowing import maximize_window
+from .windowing import make_modal, maximize_window
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -28,7 +28,7 @@ class PdfPicker(tk.Toplevel):
         self._build()
         self._show_directory(self.current_directory)
         maximize_window(self)
-        self.grab_set()
+        make_modal(self, parent)
 
     def _build(self) -> None:
         header = tk.Frame(self, bg=NAVY, padx=22, pady=16)
@@ -147,4 +147,3 @@ def _format_size(byte_count: int) -> str:
     if byte_count < 1_048_576:
         return f"{byte_count / 1024:.0f} Ko"
     return f"{byte_count / 1_048_576:.1f} Mo"
-

@@ -5,6 +5,6 @@ Exec=/home/rudy/Projets/pdf-converter-lou-codi/.venv/bin/lou-codi-pdf-converter
 Icon=lou-codi-pdf-converter
 Terminal=false
 Type=Application
-Categories=Office;Utility;
+Categories=Office;
 Keywords=PDF;DOCX;Excel;Word;conversion;
 StartupWMClass=LouCodiPdfConverter

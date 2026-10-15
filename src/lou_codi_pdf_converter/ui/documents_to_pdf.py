@@ -10,7 +10,7 @@ from ..paths import collision_free_target, downloads_directory
 from ..services.documents_to_pdf import IMAGE_SUFFIXES, OFFICE_SUFFIXES, convert_document_to_pdf
 from ..services.pdf_organizer import merge_pdfs
 from ..system import open_path
-from .windowing import maximize_window
+from .windowing import make_modal, maximize_window
 
 BACKGROUND = "#F0F4F9"
 NAVY = "#193B66"
@@ -24,13 +24,10 @@ class DocumentsToPdfWindow(tk.Toplevel):
         self.title("Documents vers PDF — PDF Converter Lou Còdi")
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
-        self.transient(parent)
-        self.wm_group(parent)
-        self.grab_set()
-        self.focus_set()
         maximize_window(self)
         self.files: list[Path] = []
         self.generated: list[Path] = []
+        self.output_by_source: dict[Path, Path] = {}
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.running = False
         self.destination = tk.StringVar(value=str(downloads_directory()))
@@ -38,13 +35,20 @@ class DocumentsToPdfWindow(tk.Toplevel):
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self.after(100, self._poll)
+        make_modal(self, parent)
 
     def _build(self) -> None:
-        header = tk.Frame(self, bg=NAVY, padx=22, pady=18)
+        header = tk.Frame(self, bg=NAVY, padx=22, pady=12)
         header.pack(fill="x")
-        tk.Label(header, text="Documents vers PDF", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(anchor="w")
+        app_icon = getattr(self.master, "app_icon", None)
+        if app_icon is not None:
+            self.workspace_logo = app_icon.subsample(17, 17)
+            tk.Label(header, image=self.workspace_logo, bg=NAVY, borderwidth=0).pack(side="left", padx=(0, 14))
+        titles = tk.Frame(header, bg=NAVY)
+        titles.pack(side="left")
+        tk.Label(titles, text="Documents vers PDF", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(anchor="w")
         tk.Label(
-            header,
+            titles,
             text="Documents bureautiques et images — traitement local par lots",
             bg=NAVY,
             fg="#CBDFF5",
@@ -75,6 +79,7 @@ class DocumentsToPdfWindow(tk.Toplevel):
             self.tree.heading(column, text=label)
             self.tree.column(column, width=width, minwidth=70, stretch=column != "format")
         self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.bind("<Double-1>", self._open_selected_result)
         scrollbar = ttk.Scrollbar(table_frame, command=self.tree.yview)
         scrollbar.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -172,6 +177,7 @@ class DocumentsToPdfWindow(tk.Toplevel):
             return
         self.running = True
         self.generated.clear()
+        self.output_by_source.clear()
         self.convert_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
         self.progress.configure(mode="indeterminate", value=0)
@@ -192,6 +198,7 @@ class DocumentsToPdfWindow(tk.Toplevel):
             try:
                 convert_document_to_pdf(source, target)
                 generated.append(target)
+                self.events.put(("converted", (source, target)))
                 self.events.put(("row", (source, f"Terminé → {target.name}")))
             except Exception as exc:  # noqa: BLE001 - isoler chaque élément du lot
                 if target.exists():
@@ -221,6 +228,9 @@ class DocumentsToPdfWindow(tk.Toplevel):
                 elif kind == "finished":
                     generated, failures = value  # type: ignore[misc]
                     self._finish(generated, failures)
+                elif kind == "converted":
+                    source, target = value  # type: ignore[misc]
+                    self.output_by_source[source] = target
         except queue.Empty:
             pass
         if self.winfo_exists():
@@ -245,6 +255,14 @@ class DocumentsToPdfWindow(tk.Toplevel):
         elif self.generated:
             open_path(self.generated[0].parent)
 
+    def _open_selected_result(self, _event: tk.Event[tk.Misc]) -> None:
+        selection = self.tree.selection()
+        if len(selection) != 1:
+            return
+        target = self.output_by_source.get(Path(selection[0]))
+        if target and target.is_file():
+            open_path(target)
+
     def _request_close(self) -> None:
         if self.running and not messagebox.askyesno(
             "Conversion en cours",
@@ -254,4 +272,3 @@ class DocumentsToPdfWindow(tk.Toplevel):
         ):
             return
         self.destroy()
-

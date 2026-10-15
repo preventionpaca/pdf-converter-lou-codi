@@ -8,7 +8,7 @@ from tkinter import ttk
 from . import __version__
 from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.pdf_to_office import PdfToOfficeWindow
-from .ui.windowing import center_window
+from .ui.windowing import center_window, make_modal
 
 NAVY = "#193B66"
 BLUE = "#2368AF"
@@ -89,13 +89,11 @@ class Application(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title(f"{name} — PDF Converter Lou Còdi")
         dialog.geometry("680x260")
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.focus_set()
         dialog.configure(bg=BACKGROUND)
         tk.Label(dialog, text=name, bg=BACKGROUND, fg=NAVY, font=("Sans", 18, "bold")).pack(pady=(35, 15))
         tk.Label(dialog, text="Le moteur local de ce module est prêt. L’interface détaillée sera intégrée au prochain lot.", bg=BACKGROUND, fg="#597089", wraplength=560, justify="center").pack()
         ttk.Button(dialog, text="Fermer", command=dialog.destroy).pack(pady=28)
+        make_modal(dialog, self)
         self.wait_window(dialog)
 
 

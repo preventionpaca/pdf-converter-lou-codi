@@ -12,7 +12,7 @@ from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
 from ..system import open_path
 from .pdf_picker import choose_pdfs
-from .windowing import maximize_window
+from .windowing import make_modal, maximize_window
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -33,13 +33,10 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.geometry("960x680")
         self.minsize(760, 540)
         self.configure(bg=BACKGROUND)
-        self.transient(parent)
-        self.wm_group(parent)
         maximize_window(self)
-        self.grab_set()
-        self.focus_set()
         self.files: list[Path] = []
         self.generated: list[Path] = []
+        self.output_by_source: dict[Path, Path] = {}
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.running = False
         self.mode = tk.StringVar(value="docx")
@@ -48,12 +45,19 @@ class PdfToOfficeWindow(tk.Toplevel):
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self.after(100, self._poll)
+        make_modal(self, parent)
 
     def _build(self) -> None:
-        header = tk.Frame(self, bg=NAVY, padx=22, pady=18)
+        header = tk.Frame(self, bg=NAVY, padx=22, pady=12)
         header.pack(fill="x")
-        tk.Label(header, text="PDF vers Office", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(anchor="w")
-        tk.Label(header, text="Conversion locale par lots", bg=NAVY, fg="#CBDFF5", font=("Sans", 10)).pack(anchor="w")
+        app_icon = getattr(self.master, "app_icon", None)
+        if app_icon is not None:
+            self.workspace_logo = app_icon.subsample(17, 17)
+            tk.Label(header, image=self.workspace_logo, bg=NAVY, borderwidth=0).pack(side="left", padx=(0, 14))
+        titles = tk.Frame(header, bg=NAVY)
+        titles.pack(side="left")
+        tk.Label(titles, text="PDF vers Office", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(anchor="w")
+        tk.Label(titles, text="Conversion locale par lots", bg=NAVY, fg="#CBDFF5", font=("Sans", 10)).pack(anchor="w")
 
         body = ttk.Frame(self, style="App.TFrame", padding=22)
         body.pack(fill="both", expand=True)
@@ -76,6 +80,7 @@ class PdfToOfficeWindow(tk.Toplevel):
             self.tree.heading(column, text=label)
             self.tree.column(column, width=width, minwidth=60, stretch=column in {"name", "status"})
         self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.bind("<Double-1>", self._open_selected_result)
         scroll = ttk.Scrollbar(table_frame, command=self.tree.yview)
         scroll.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scroll.set)
@@ -149,6 +154,7 @@ class PdfToOfficeWindow(tk.Toplevel):
             return
         self.running = True
         self.generated.clear()
+        self.output_by_source.clear()
         self.open_button.configure(state="disabled")
         self.convert_button.configure(state="disabled")
         self.progress.configure(mode="indeterminate", value=0)
@@ -174,6 +180,7 @@ class PdfToOfficeWindow(tk.Toplevel):
                 else:
                     convert_pdf_to_xlsx(source, target, password)
                 results.append(ConversionResult(source, target, None))
+                self.events.put(("converted", (source, target)))
                 self.events.put(("row", (source, f"Terminé → {target.name}")))
             except Exception as exc:  # noqa: BLE001 - isoler chaque conversion du lot
                 if target.exists():
@@ -193,6 +200,9 @@ class PdfToOfficeWindow(tk.Toplevel):
                     current = self.tree.item(str(source), "values")
                     if current:
                         self.tree.item(str(source), values=(*current[:3], row_status))
+                elif kind == "converted":
+                    source, target = value  # type: ignore[misc]
+                    self.output_by_source[source] = target
                 elif kind == "finished":
                     self._finish(value)  # type: ignore[arg-type]
         except queue.Empty:
@@ -220,6 +230,14 @@ class PdfToOfficeWindow(tk.Toplevel):
             open_path(self.generated[0])
         elif self.generated:
             open_path(self.generated[0].parent)
+
+    def _open_selected_result(self, _event: tk.Event[tk.Misc]) -> None:
+        selection = self.tree.selection()
+        if len(selection) != 1:
+            return
+        target = self.output_by_source.get(Path(selection[0]))
+        if target and target.is_file():
+            open_path(target)
 
     def _request_close(self) -> None:
         if self.running and not messagebox.askyesno(

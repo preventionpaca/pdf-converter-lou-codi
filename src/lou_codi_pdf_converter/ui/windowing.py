@@ -30,3 +30,20 @@ def center_window(window: tk.Tk | tk.Toplevel, width: int, height: int) -> None:
         window.geometry(f"{width}x{height}+{x}+{y}")
 
     window.after_idle(apply)
+
+
+def make_modal(window: tk.Toplevel, parent: tk.Misc) -> None:
+    """Attach a visible workspace to its parent and block the parent reliably."""
+    window.transient(parent)
+    try:
+        window.wm_group(parent)
+    except tk.TclError:
+        pass
+    window.update_idletasks()
+    try:
+        window.wait_visibility()
+    except tk.TclError:
+        return
+    window.lift(parent)
+    window.grab_set()
+    window.focus_force()
