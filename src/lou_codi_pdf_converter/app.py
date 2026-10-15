@@ -25,7 +25,7 @@ class Application(tk.Tk):
     )
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(className="LouCodiPdfConverter")
         self.title(f"PDF Converter – Lou Còdi | v{__version__}")
         self.geometry("1100x720")
         self.minsize(850, 600)
@@ -49,8 +49,9 @@ class Application(tk.Tk):
         header.pack(fill="x")
         header.pack_propagate(False)
         logo_path = Path(__file__).with_name("assets") / "croix-lou-codi.png"
-        source_logo = tk.PhotoImage(file=str(logo_path))
-        self.brand_logo = source_logo.subsample(15, 15)
+        self.app_icon = tk.PhotoImage(file=str(logo_path))
+        self.iconphoto(True, self.app_icon)
+        self.brand_logo = self.app_icon.subsample(15, 15)
         tk.Label(header, image=self.brand_logo, bg=NAVY, borderwidth=0).pack(
             side="left", padx=(22, 15), pady=7
         )
@@ -83,6 +84,8 @@ class Application(tk.Tk):
         dialog.title(f"{name} — PDF Converter Lou Còdi")
         dialog.geometry("680x260")
         dialog.transient(self)
+        dialog.grab_set()
+        dialog.focus_set()
         dialog.configure(bg=BACKGROUND)
         tk.Label(dialog, text=name, bg=BACKGROUND, fg=NAVY, font=("Sans", 18, "bold")).pack(pady=(35, 15))
         tk.Label(dialog, text="Le moteur local de ce module est prêt. L’interface détaillée sera intégrée au prochain lot.", bg=BACKGROUND, fg="#597089", wraplength=560, justify="center").pack()

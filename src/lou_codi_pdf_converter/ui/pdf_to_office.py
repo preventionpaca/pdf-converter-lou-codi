@@ -35,6 +35,8 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.configure(bg=BACKGROUND)
         self.transient(parent)
         maximize_window(self)
+        self.grab_set()
+        self.focus_set()
         self.files: list[Path] = []
         self.generated: list[Path] = []
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -43,6 +45,7 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.destination = tk.StringVar(value=str(downloads_directory()))
         self.password = tk.StringVar()
         self._build()
+        self.protocol("WM_DELETE_WINDOW", self._request_close)
         self.after(100, self._poll)
 
     def _build(self) -> None:
@@ -147,7 +150,8 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.generated.clear()
         self.open_button.configure(state="disabled")
         self.convert_button.configure(state="disabled")
-        self.progress.configure(value=0)
+        self.progress.configure(mode="indeterminate", value=0)
+        self.progress.start(12)
         threading.Thread(
             target=self._worker,
             args=(list(self.files), destination, self.mode.get(), self.password.get() or None),
@@ -175,7 +179,6 @@ class PdfToOfficeWindow(tk.Toplevel):
                     target.unlink()
                 results.append(ConversionResult(source, None, str(exc)))
                 self.events.put(("row", (source, f"Échec : {exc}")))
-            self.events.put(("progress", position * 100 / len(files)))
         self.events.put(("finished", results))
 
     def _poll(self) -> None:
@@ -184,8 +187,6 @@ class PdfToOfficeWindow(tk.Toplevel):
                 kind, value = self.events.get_nowait()
                 if kind == "status":
                     self.status.configure(text=str(value))
-                elif kind == "progress":
-                    self.progress.configure(value=float(value))
                 elif kind == "row":
                     source, row_status = value  # type: ignore[misc]
                     current = self.tree.item(str(source), "values")
@@ -200,6 +201,8 @@ class PdfToOfficeWindow(tk.Toplevel):
 
     def _finish(self, results: list[ConversionResult]) -> None:
         self.running = False
+        self.progress.stop()
+        self.progress.configure(mode="determinate", value=100)
         self.convert_button.configure(state="normal")
         self.generated = [result.target for result in results if result.target is not None]
         failures = [result for result in results if result.error]
@@ -216,3 +219,13 @@ class PdfToOfficeWindow(tk.Toplevel):
             open_path(self.generated[0])
         elif self.generated:
             open_path(self.generated[0].parent)
+
+    def _request_close(self) -> None:
+        if self.running and not messagebox.askyesno(
+            "Conversion en cours",
+            "Une conversion est encore en cours. Fermer cette fenêtre masquera son suivi.\n\n"
+            "Voulez-vous vraiment fermer ?",
+            parent=self,
+        ):
+            return
+        self.destroy()

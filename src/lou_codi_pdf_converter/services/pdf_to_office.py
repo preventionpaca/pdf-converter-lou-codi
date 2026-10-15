@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -8,7 +9,10 @@ def convert_pdf_to_docx(source: Path, target: Path, password: str | None = None)
 
     converter = Converter(str(source), password or None)
     try:
-        converter.convert(str(target))
+        # pdf2docx is CPU intensive. A bounded worker count substantially speeds up
+        # long documents without exhausting memory on machines with many cores.
+        cpu_count = max(1, min(4, (os.cpu_count() or 2) - 1))
+        converter.convert(str(target), multi_processing=True, cpu_count=cpu_count)
     finally:
         converter.close()
 
@@ -61,4 +65,3 @@ def convert_pdf_to_xlsx(source: Path, target: Path, password: str | None = None)
         )
     workbook.save(target)
     return count
-
