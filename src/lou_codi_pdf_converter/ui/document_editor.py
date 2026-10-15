@@ -57,6 +57,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._drag_positions: dict[int, tuple[float, float]] = {}
         self._drag_before: CanvasDocument | None = None
         self._editing_widget: tk.Text | None = None
+        self._editing_dialog: tk.Toplevel | None = None
         self._editing_object_id = ""
         self._editing_original_text = ""
         self._format_clipboard: dict[str, object] | None = None
@@ -184,6 +185,15 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Grouper", self._group_selected, "Regrouper les objets sélectionnés"),
             ("Dissocier", self._ungroup_selected, "Dissocier les objets"),
         ), color="#F9E8C8")
+        tk.Label(
+            layout,
+            text="Chaînage : 1  sélectionnez la première zone   →   2  cliquez sur Lier texte   →   3  cliquez sur la zone verte",
+            bg="#FFF5DE",
+            fg="#744500",
+            font=("Sans", 9, "bold"),
+            padx=10,
+            pady=5,
+        ).pack(side="right", padx=(12, 0))
 
         self.body = ttk.Panedwindow(self, orient="horizontal")
         self.body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
@@ -915,6 +925,12 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
+        linked = item.flow_next_id or any(
+            candidate.flow_next_id == item.object_id for candidate in self.document.objects
+        )
+        if linked:
+            self._start_linked_text_editor(item)
+            return
         x = self.page_x + item.x * self.zoom
         y = self.page_y + item.y * self.zoom
         widget = tk.Text(
@@ -946,21 +962,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 return
             item.text = widget.get("1.0", "end-1c")
             widget.edit_modified(False)
-            linked_ids: set[str] = set()
-            cursor = item
-            visited: set[str] = set()
-            by_id = {candidate.object_id: candidate for candidate in self.document.objects}
-            while cursor.flow_next_id and cursor.object_id not in visited:
-                visited.add(cursor.object_id)
-                linked_ids.add(cursor.flow_next_id)
-                cursor = by_id.get(cursor.flow_next_id, cursor)
-            for index, candidate in enumerate(self.document.objects):
-                if candidate.object_id in linked_ids and self.current_page in pages_for_object(
-                    candidate, self.document.page_count
-                ):
-                    self.canvas.delete(f"object:{index}")
-                    self.canvas.delete(f"resize:{index}")
-                    self._draw_object(index, candidate)
+            self._redraw_text_chain(item)
 
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
         widget.bind("<FocusOut>", lambda _event: self._commit_inline_editor())
@@ -969,6 +971,95 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.focus_set()
         widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
         widget.tag_add("align", "1.0", "end")
+
+    def _start_linked_text_editor(self, item: PageObject) -> None:
+        dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
+        dialog.title("Texte chaîné — Lou Còdi")
+        dialog.configure(bg=BACKGROUND)
+        dialog.transient(self)
+        dialog.geometry(
+            f"720x300+{max(20, self.winfo_screenwidth() - 750)}+{max(80, self.winfo_rooty() + 120)}"
+        )
+        tk.Label(
+            dialog,
+            text="Modifier le texte chaîné",
+            bg=NAVY,
+            fg="white",
+            font=("Sans", 16, "bold"),
+            padx=18,
+            pady=10,
+        ).pack(fill="x")
+        tk.Label(
+            dialog,
+            text="Écrivez ou collez ici : la page montre immédiatement la répartition entre les cadres liés.",
+            bg=BACKGROUND,
+            fg="#385571",
+            font=("Sans", 10),
+            padx=16,
+            pady=7,
+        ).pack(fill="x")
+        widget = tk.Text(
+            dialog,
+            wrap="word",
+            font=("Liberation Sans", 12),
+            bg="white",
+            fg=item.color,
+            relief="solid",
+            borderwidth=1,
+            undo=True,
+            padx=8,
+            pady=8,
+        )
+        widget.pack(fill="both", expand=True, padx=14, pady=(0, 8))
+        widget.insert("1.0", item.text)
+        actions = tk.Frame(dialog, bg=BACKGROUND)
+        actions.pack(fill="x", padx=14, pady=(0, 10))
+        tk.Button(
+            actions,
+            text="Terminer",
+            command=self._commit_inline_editor,
+            bg="#2368AF",
+            fg="white",
+            activebackground="#174D85",
+            activeforeground="white",
+            relief="flat",
+            padx=18,
+            pady=6,
+        ).pack(side="right")
+        self._editing_widget = widget
+        self._editing_dialog = dialog
+        self._editing_object_id = item.object_id
+        self._editing_original_text = item.text
+
+        def preview(_event: object = None) -> None:
+            if not widget.edit_modified():
+                return
+            item.text = widget.get("1.0", "end-1c")
+            widget.edit_modified(False)
+            self._redraw_text_chain(item)
+
+        widget.bind("<<Modified>>", preview)
+        widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
+        widget.edit_modified(False)
+        dialog.protocol("WM_DELETE_WINDOW", self._commit_inline_editor)
+        widget.focus_set()
+
+    def _redraw_text_chain(self, root: PageObject) -> None:
+        chain_ids = {root.object_id}
+        cursor = root
+        visited: set[str] = set()
+        by_id = {candidate.object_id: candidate for candidate in self.document.objects}
+        while cursor.flow_next_id and cursor.object_id not in visited:
+            visited.add(cursor.object_id)
+            chain_ids.add(cursor.flow_next_id)
+            cursor = by_id.get(cursor.flow_next_id, cursor)
+        for index, candidate in enumerate(self.document.objects):
+            if candidate.object_id in chain_ids and self.current_page in pages_for_object(
+                candidate, self.document.page_count
+            ):
+                self.canvas.delete(f"object:{index}")
+                self.canvas.delete(f"resize:{index}")
+                self._draw_object(index, candidate)
 
     def _commit_inline_editor(self, *, render: bool = True) -> None:
         widget = self._editing_widget
@@ -985,6 +1076,8 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         original_text = self._editing_original_text
         self._editing_widget = None
+        dialog = self._editing_dialog
+        self._editing_dialog = None
         self._editing_object_id = ""
         self._editing_original_text = ""
         if item is not None:
@@ -998,7 +1091,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.undo_stack.append(snapshot)
                 self.undo_stack = self.undo_stack[-80:]
                 self.redo_stack.clear()
-        widget.destroy()
+        if dialog is not None:
+            dialog.destroy()
+        elif widget.winfo_exists():
+            widget.destroy()
         if render:
             self._render()
 
@@ -1163,8 +1259,14 @@ class DocumentEditorWindow(tk.Toplevel):
         if second.text and second.text.strip():
             first.text = f"{first.text}\n{second.text}".strip()
             second.text = ""
-        self.status.configure(text="Zones liées : le texte trop long continue dans le second cadre.")
+        first_index = self.document.objects.index(first)
+        self.selected = first_index
+        self.selected_indices = {first_index}
+        self.status.configure(
+            text="Zones liées. Saisissez le texte dans l’éditeur : la suite apparaît dans le cadre suivant."
+        )
         self._render()
+        self.after_idle(lambda: self._start_linked_text_editor(first))
 
     def _unlink_text_frame(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
