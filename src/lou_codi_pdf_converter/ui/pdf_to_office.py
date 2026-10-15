@@ -34,6 +34,7 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.minsize(760, 540)
         self.configure(bg=BACKGROUND)
         self.transient(parent)
+        self.wm_group(parent)
         maximize_window(self)
         self.grab_set()
         self.focus_set()

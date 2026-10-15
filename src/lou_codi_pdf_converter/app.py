@@ -6,8 +6,9 @@ from pathlib import Path
 from tkinter import ttk
 
 from . import __version__
+from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.pdf_to_office import PdfToOfficeWindow
-from .ui.windowing import maximize_window
+from .ui.windowing import center_window
 
 NAVY = "#193B66"
 BLUE = "#2368AF"
@@ -30,7 +31,7 @@ class Application(tk.Tk):
         self.geometry("1100x720")
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
-        maximize_window(self)
+        center_window(self, 1100, 720)
         self._configure_styles()
         self._build()
 
@@ -78,7 +79,12 @@ class Application(tk.Tk):
 
     def _open_module(self, name: str) -> None:
         if name == "PDF vers Office":
-            PdfToOfficeWindow(self)
+            window = PdfToOfficeWindow(self)
+            self.wait_window(window)
+            return
+        if name == "Documents vers PDF":
+            window = DocumentsToPdfWindow(self)
+            self.wait_window(window)
             return
         dialog = tk.Toplevel(self)
         dialog.title(f"{name} — PDF Converter Lou Còdi")
@@ -90,6 +96,7 @@ class Application(tk.Tk):
         tk.Label(dialog, text=name, bg=BACKGROUND, fg=NAVY, font=("Sans", 18, "bold")).pack(pady=(35, 15))
         tk.Label(dialog, text="Le moteur local de ce module est prêt. L’interface détaillée sera intégrée au prochain lot.", bg=BACKGROUND, fg="#597089", wraplength=560, justify="center").pack()
         ttk.Button(dialog, text="Fermer", command=dialog.destroy).pack(pady=28)
+        self.wait_window(dialog)
 
 
 def main() -> None:
