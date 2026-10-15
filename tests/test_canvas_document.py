@@ -62,6 +62,11 @@ def test_text_flow_respects_explicit_line_breaks() -> None:
     assert flowed_text_for_object(first, [first, second]) == "Première ligne"
     assert flowed_text_for_object(second, [first, second]) == "Deuxième ligne"
 
+    before_move = flowed_text_for_object(second, [first, second])
+    second.x += 75
+    second.y += 40
+    assert flowed_text_for_object(second, [first, second]) == before_move
+
 
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")

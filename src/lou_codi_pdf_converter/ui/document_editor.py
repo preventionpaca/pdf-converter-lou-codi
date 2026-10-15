@@ -57,6 +57,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._drag_positions: dict[int, tuple[float, float]] = {}
         self._drag_before: CanvasDocument | None = None
         self._editing_widget: tk.Text | None = None
+        self._editing_object_id = ""
+        self._editing_original_text = ""
         self._format_clipboard: dict[str, object] | None = None
         self._object_clipboard: list[PageObject] = []
         self.properties_visible = tk.BooleanVar(value=True)
@@ -300,6 +302,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Control-p>", lambda _event: self._print())
         self.bind("<Delete>", lambda _event: self._delete_selected())
         self.bind("<F4>", lambda _event: self._toggle_properties_panel())
+        self.bind("<Escape>", lambda _event: self._cancel_text_link())
 
     def _buttons(
         self,
@@ -529,6 +532,8 @@ class DocumentEditorWindow(tk.Toplevel):
         return self.document.page_width, self.document.page_height
 
     def _render(self) -> None:
+        if self._editing_widget is not None:
+            self._commit_inline_editor(render=False)
         self.canvas.delete("all")
         self._overlay_images.clear()
         width, height = self._page_size()
@@ -551,6 +556,24 @@ class DocumentEditorWindow(tk.Toplevel):
         for index, item in enumerate(self.document.objects):
             if self.current_page in pages_for_object(item, self.document.page_count):
                 self._draw_object(index, item)
+        if self._pending_text_link_id:
+            self.canvas.create_rectangle(
+                self.page_x,
+                0,
+                self.page_x + dw,
+                28,
+                fill="#1E7D55",
+                outline="",
+                tags=("link-help",),
+            )
+            self.canvas.create_text(
+                self.page_x + dw / 2,
+                14,
+                text="CHAÎNAGE : cliquez sur le cadre vert qui doit recevoir la suite  •  Échap pour annuler",
+                fill="white",
+                font=("Sans", 10, "bold"),
+                tags=("link-help",),
+            )
         self.canvas.configure(scrollregion=(0, 0, max(viewport, self.page_x + dw + 40), self.page_y + dh + 35))
         self.page_label.configure(text=f"Page {self.current_page + 1} / {self.document.page_count}")
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
@@ -560,7 +583,10 @@ class DocumentEditorWindow(tk.Toplevel):
         x, y = self.page_x + item.x * self.zoom, self.page_y + item.y * self.zoom
         w, h = item.width * self.zoom, item.height * self.zoom
         tag, selected = f"object:{index}", index in self.selected_indices
-        outline = "#1769AA" if selected else "#72879C"
+        if self._pending_text_link_id and item.kind == "text":
+            outline = "#E47D16" if item.object_id == self._pending_text_link_id else "#1E9B66"
+        else:
+            outline = "#1769AA" if selected else "#72879C"
         tags = (tag, "object")
         if item.kind == "mask":
             self.canvas.create_rectangle(x, y, x + w, y + h, fill=item.fill, outline=outline, width=3 if selected else 1, tags=tags)
@@ -598,7 +624,8 @@ class DocumentEditorWindow(tk.Toplevel):
             source_name = Path(self.document.source_pdf).stem if self.document.source_pdf else (self.project_path.stem if self.project_path else "Nouveau document")
             flowed_text = flowed_text_for_object(item, self.document.objects)
             displayed_text = resolve_dynamic_text(flowed_text, self.current_page, self.document.page_count, source_name)
-            self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=3 if selected else 1, tags=tags)
+            emphasized = selected or bool(self._pending_text_link_id and item.kind == "text")
+            self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=4 if emphasized else 1, tags=tags)
             family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2"}.get(item.font_family, "Liberation Sans")
             self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=(family, max(7, round(item.font_size * self.zoom)), style), tags=tags)
             linked = item.flow_next_id or any(
@@ -755,6 +782,7 @@ class DocumentEditorWindow(tk.Toplevel):
         return None
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
+        self._commit_inline_editor(render=False)
         current = self.canvas.find_withtag("current")
         if current:
             for tag in self.canvas.gettags(current[0]):
@@ -886,7 +914,7 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
-            self._editing_widget.destroy()
+            self._commit_inline_editor(render=False)
         x = self.page_x + item.x * self.zoom
         y = self.page_y + item.y * self.zoom
         widget = tk.Text(
@@ -899,9 +927,10 @@ class DocumentEditorWindow(tk.Toplevel):
             borderwidth=2,
             undo=True,
         )
-        original_text = item.text
-        widget.insert("1.0", original_text)
+        widget.insert("1.0", item.text)
         self._editing_widget = widget
+        self._editing_object_id = item.object_id
+        self._editing_original_text = item.text
         self.canvas.create_window(
             x,
             y,
@@ -912,26 +941,11 @@ class DocumentEditorWindow(tk.Toplevel):
             tags=("inline-editor",),
         )
 
-        def finish(_event: object = None) -> None:
-            if self._editing_widget is not widget:
-                return
-            value = widget.get("1.0", "end-1c")
-            self._editing_widget = None
-            item.text = value
-            if value != original_text:
-                snapshot = copy.deepcopy(self.document)
-                snapshot_item = next(
-                    candidate for candidate in snapshot.objects if candidate.object_id == item.object_id
-                )
-                snapshot_item.text = original_text
-                self.undo_stack.append(snapshot)
-                self.undo_stack = self.undo_stack[-80:]
-                self.redo_stack.clear()
-            widget.destroy()
-            self._render()
-
         def preview_flow(_event: object = None) -> None:
+            if not widget.edit_modified():
+                return
             item.text = widget.get("1.0", "end-1c")
+            widget.edit_modified(False)
             linked_ids: set[str] = set()
             cursor = item
             visited: set[str] = set()
@@ -948,12 +962,45 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.canvas.delete(f"resize:{index}")
                     self._draw_object(index, candidate)
 
-        widget.bind("<Control-Return>", finish)
-        widget.bind("<FocusOut>", finish)
-        widget.bind("<KeyRelease>", preview_flow)
+        widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
+        widget.bind("<FocusOut>", lambda _event: self._commit_inline_editor())
+        widget.bind("<<Modified>>", preview_flow)
+        widget.edit_modified(False)
         widget.focus_set()
         widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
         widget.tag_add("align", "1.0", "end")
+
+    def _commit_inline_editor(self, *, render: bool = True) -> None:
+        widget = self._editing_widget
+        if widget is None:
+            return
+        value = widget.get("1.0", "end-1c")
+        item = next(
+            (
+                candidate
+                for candidate in self.document.objects
+                if candidate.object_id == self._editing_object_id
+            ),
+            None,
+        )
+        original_text = self._editing_original_text
+        self._editing_widget = None
+        self._editing_object_id = ""
+        self._editing_original_text = ""
+        if item is not None:
+            item.text = value
+            if value != original_text:
+                snapshot = copy.deepcopy(self.document)
+                snapshot_item = next(
+                    candidate for candidate in snapshot.objects if candidate.object_id == item.object_id
+                )
+                snapshot_item.text = original_text
+                self.undo_stack.append(snapshot)
+                self.undo_stack = self.undo_stack[-80:]
+                self.redo_stack.clear()
+        widget.destroy()
+        if render:
+            self._render()
 
     def _mutate(self, mutation: object) -> None:
         if self.selected is not None:
@@ -1075,6 +1122,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self.status.configure(
                 text="Chaînage actif : cliquez maintenant sur la zone de texte qui doit recevoir la suite."
             )
+            self._render()
             return
         if len(indices) != 2:
             messagebox.showinfo(
@@ -1087,6 +1135,14 @@ class DocumentEditorWindow(tk.Toplevel):
         if (second.page, second.y, second.x) < (first.page, first.y, first.x):
             first, second = second, first
         self._connect_text_frames(first, second)
+
+    def _cancel_text_link(self) -> None:
+        if not self._pending_text_link_id:
+            return
+        self._pending_text_link_id = ""
+        self.canvas.configure(cursor="")
+        self.status.configure(text="Chaînage annulé.")
+        self._render()
 
     def _connect_text_frames(self, first: PageObject, second: PageObject) -> None:
         by_id = {item.object_id: item for item in self.document.objects}
@@ -1220,6 +1276,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._mutate(apply)
 
     def _change_page(self, change: int) -> None:
+        self._commit_inline_editor(render=False)
         page = self.current_page + change
         if 0 <= page < self.document.page_count:
             self.current_page, self.selected = page, None
@@ -1227,6 +1284,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self._render()
 
     def _add_blank_page(self) -> None:
+        self._commit_inline_editor(render=False)
         self._checkpoint()
         self.document.page_count += 1
         self.current_page, self.selected = self.document.page_count - 1, None
@@ -1234,6 +1292,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _set_zoom(self, change: float) -> None:
+        self._commit_inline_editor(render=False)
         self.zoom = max(0.4, min(1.8, self.zoom + change))
         self._render()
 
@@ -1252,6 +1311,7 @@ class DocumentEditorWindow(tk.Toplevel):
         return settings_path().parent / "modeles" if self.template_mode else downloads_directory()
 
     def _save(self) -> None:
+        self._commit_inline_editor(render=False)
         path = self.project_path
         if path is None:
             name = ask_text(self, "Enregistrer", "Nom du document :", "nouveau_document")
@@ -1286,6 +1346,7 @@ class DocumentEditorWindow(tk.Toplevel):
         return collision_free_target(downloads_directory(), Path(name).stem, extension) if name else None
 
     def _export_pdf(self) -> None:
+        self._commit_inline_editor(render=False)
         target = self._choose_export(".pdf", "Document PDF")
         if target:
             try:
@@ -1297,6 +1358,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self.status.configure(text=f"PDF créé : {target.name}")
 
     def _export_docx(self) -> None:
+        self._commit_inline_editor(render=False)
         target = self._choose_export(".docx", "Document Word")
         if target is None:
             return
@@ -1309,6 +1371,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text=f"DOCX créé : {target.name}. Les zones de texte restent modifiables dans Word et TextMaker.")
 
     def _print(self) -> None:
+        self._commit_inline_editor(render=False)
         target = Path(tempfile.gettempdir()) / "lou-codi-document-a-imprimer.pdf"
         try:
             export_canvas_pdf(self.document, target)
