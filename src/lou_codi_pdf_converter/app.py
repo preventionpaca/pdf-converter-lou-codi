@@ -6,7 +6,14 @@ from pathlib import Path
 from tkinter import ttk
 
 from . import __version__
-from .i18n import LANGUAGES, get_language, load_language, set_language, tr, translate_widget_tree
+from .i18n import (
+    LANGUAGES,
+    get_language,
+    install_messagebox_translations,
+    load_language,
+    set_language,
+    translate_widget_tree,
+)
 from .ui.decorate_pdf import DecoratePdfWindow
 from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.organize_pdf import OrganizePdfWindow
@@ -30,6 +37,7 @@ class Application(tk.Tk):
 
     def __init__(self) -> None:
         set_language(load_language(), save=False)
+        install_messagebox_translations()
         super().__init__(className="LouCodiPdfConverter")
         self.title(f"PDF Converter – Lou Còdi | v{__version__}")
         self.geometry("1100x720")
@@ -92,7 +100,7 @@ class Application(tk.Tk):
             ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda name=title: self._open_module(name)).pack(anchor="w")
         grid.columnconfigure((0, 1), weight=1, uniform="modules")
         grid.rowconfigure((0, 1), weight=1, uniform="modules")
-        tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  {tr('Aucun document transmis sur Internet')}", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
+        tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
         translate_widget_tree(self)
 
     def _change_language(self, _event: tk.Event[tk.Misc]) -> None:

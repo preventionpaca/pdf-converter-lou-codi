@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from ..i18n import translate_widget_tree
+from ..i18n import tr, translate_widget_tree
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
@@ -200,7 +200,7 @@ class PdfToOfficeWindow(tk.Toplevel):
             while True:
                 kind, value = self.events.get_nowait()
                 if kind == "status":
-                    self.status.configure(text=str(value))
+                    self.status.configure(text=tr(str(value)))
                 elif kind == "row":
                     source, row_status = value  # type: ignore[misc]
                     current = self.tree.item(str(source), "values")
@@ -224,7 +224,11 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.generated = [result.target for result in results if result.target is not None]
         failures = [result for result in results if result.error]
         self.open_button.configure(state="normal" if self.generated else "disabled")
-        self.status.configure(text=f"Terminé : {len(self.generated)} réussite(s), {len(failures)} échec(s).")
+        self.status.configure(
+            text=tr(
+                f"Terminé : {len(self.generated)} réussite(s), {len(failures)} échec(s)."
+            )
+        )
         if failures:
             details = "\n".join(f"• {result.source.name} : {result.error}" for result in failures[:8])
             messagebox.showwarning("Conversion terminée", details, parent=self)
@@ -257,7 +261,7 @@ class PdfToOfficeWindow(tk.Toplevel):
     def _open_with_feedback(self, target: Path) -> None:
         previous_status = self.status.cget("text")
         self.configure(cursor="watch")
-        self.status.configure(text=f"Ouverture de {target.name}…")
+        self.status.configure(text=tr(f"Ouverture de {target.name}…"))
         self.progress.configure(mode="indeterminate", value=0)
         self.progress.start(12)
         self.update_idletasks()

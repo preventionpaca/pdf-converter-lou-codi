@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
+
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 LANGUAGES = {
     "fr": "Français",
@@ -13,7 +16,7 @@ LANGUAGES = {
     "it": "Italiano",
     "zh": "中文",
     "tr": "Türkçe",
-    "ar": "العربية",
+    "ar": get_display(arabic_reshaper.reshape("العربية")),
 }
 
 _language = "fr"
@@ -136,6 +139,177 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
 }
 
+# Complete English catalogue used as a safe fallback for every translated interface.
+# Locale-specific catalogues override it, so untranslated text never falls back to French.
+TRANSLATIONS["en"].update(
+    {
+        "Langue": "Language", "Conversion locale par lots": "Local batch conversion",
+        "Documents bureautiques et images — traitement local par lots": "Office documents and images — local batch processing",
+        "Réorganiser, fusionner, extraire, dupliquer et faire pivoter les pages": "Reorder, merge, extract, duplicate and rotate pages",
+        "Filigranes, en-têtes et pieds de page avec aperçu": "Watermarks, headers and footers with preview",
+        "Format :": "Format:", "Ajouter des PDF…": "Add PDFs…", "Ajouter des documents…": "Add documents…",
+        "Document": "Document", "Pages": "Pages", "Analyse": "Analysis", "État": "Status",
+        "Mot de passe PDF :": "PDF password:", "Word (.docx)": "Word (.docx)",
+        "Excel (.xlsx) — tableaux": "Excel (.xlsx) — tables", "Fichiers à convertir": "Files to convert",
+        "Dossier": "Folder", "Fusionner tous les PDF produits dans un document supplémentaire": "Merge all generated PDFs into an additional document",
+        "Aucun document": "No document", "Aucun PDF": "No PDF", "Aucun document transmis sur Internet": "No document sent over the Internet",
+        "Ajoutez au moins un document PDF.": "Add at least one PDF document.", "Ajoutez au moins un document.": "Add at least one document.",
+        "Ajoutez au moins une page.": "Add at least one page.", "Ajoutez un ou plusieurs PDF.": "Add one or more PDFs.",
+        "Choisissez d’abord un document PDF.": "Choose a PDF document first.", "Choisissez un dossier existant.": "Choose an existing folder.",
+        "Choisissez un dossier de destination existant.": "Choose an existing destination folder.",
+        "Dossier introuvable": "Folder not found", "Dossier inaccessible": "Folder unavailable", "Document vide": "Empty document",
+        "Conversion terminée": "Conversion complete", "Conversion en cours": "Conversion in progress", "Conversion…": "Converting…",
+        "Analyse…": "Analyzing…", "En attente": "Waiting", "Terminé :": "Completed:", "Terminé →": "Completed →",
+        "réussite(s),": "successful,", "échec(s).": "failed.", "Échec :": "Failure:", "Ouverture de": "Opening",
+        "Ouverture impossible": "Unable to open", "Export impossible": "Unable to export", "Import impossible": "Unable to import",
+        "Ouvrir le PDF": "Open PDF", "Ouvrir le document": "Open document", "Ouvrir le dossier": "Open folder",
+        "Opération réussie": "Operation successful", "Le document a été créé dans :": "The document was created in:",
+        "PDF créé :": "PDF created:", "PDF créé(s) dans :": "PDF(s) created in:", "document(s) créé(s) dans :": "document(s) created in:",
+        "Aperçu": "Preview", "Aperçu actualisé.": "Preview refreshed.", "Aperçu impossible": "Unable to preview",
+        "PLACEMENT À LA SOURIS": "MOUSE PLACEMENT", "Cliquez ou faites glisser l’élément choisi sur la page.": "Click or drag the selected item on the page.",
+        "Choisissez un PDF puis cliquez sur\n« Actualiser l’aperçu ».": "Choose a PDF, then click\n\u201cRefresh preview\u201d.",
+        "Ajuster": "Fit", "Élargir": "Expand", "Réduire": "Reduce", "Rétablir": "Redo",
+        "Filigrane": "Watermark", "Logo": "Logo", "En-tête": "Header", "Pied": "Footer", "Masque": "Mask",
+        "En-tête et pied de page": "Header and footer", "Masquage visuel": "Visual masking",
+        "Texte libre": "Free text", "Image de filigrane": "Watermark image", "Taille": "Size",
+        "Rotation (degrés)": "Rotation (degrees)", "Transparence (%)": "Transparency (%)", "Placer au premier plan": "Place in foreground",
+        "Position X (mm, vide = centre)": "X position (mm, blank = center)", "Position Y (mm, vide = centre)": "Y position (mm, blank = center)",
+        "Position Y (mm, vide = haut)": "Y position (mm, blank = top)", "Fichier PNG ou JPG": "PNG or JPG file",
+        "Logo appliqué aux pages sélectionnées": "Logo applied to selected pages", "Largeur (mm)": "Width (mm)",
+        "Sélectionnez « Logo » à droite, puis cliquez ou faites glisser sur l’aperçu.": "Select \u201cLogo\u201d on the right, then click or drag on the preview.",
+        "Position en-tête": "Header position", "En-tête X (mm, vide = alignement)": "Header X (mm, blank = alignment)",
+        "En-tête depuis le haut (mm)": "Header from top (mm)", "Pied de page": "Footer", "Position pied": "Footer position",
+        "Pied X (mm, vide = alignement)": "Footer X (mm, blank = alignment)", "Pied depuis le bas (mm)": "Footer from bottom (mm)",
+        "Taille du texte": "Text size", "Ajouter un liseré horizontal": "Add a horizontal line",
+        "Ajouter rapidement :": "Quick add:", "Marge gauche": "Left margin", "Marge droite": "Right margin",
+        "Zone libre": "Free area", "Zone tracée": "Drawn area", "Nom": "Name", "X (mm)": "X (mm)", "Y depuis le bas (mm)": "Y from bottom (mm)",
+        "Hauteur (mm)": "Height (mm)", "Ajouter avec ces coordonnées": "Add with these coordinates", "Mettre à jour": "Update",
+        "Pour tracer : sélectionnez « Masque » à droite puis faites glisser sur l’aperçu.": "To draw: select \u201cMask\u201d on the right, then drag on the preview.",
+        "Attention : ces masques sont uniquement visuels. Ils ne suppriment pas de façon sécurisée les informations confidentielles du PDF.": "Warning: these masks are visual only. They do not securely remove confidential information from the PDF.",
+        "Masque invalide": "Invalid mask", "Habillage terminé": "Customization complete", "Export du PDF…": "Exporting PDF…",
+        "Page blanche": "Blank page", "Document source": "Source document", "Ordre": "Order", "Page": "Page", "Rotation": "Rotation",
+        "Dupliquer": "Duplicate", "Tout vider": "Clear all", "Valider et exporter le PDF": "Apply and export PDF",
+        "Ajouter les PDF sélectionnés": "Add selected PDFs", "Ajouter les fichiers sélectionnés": "Add selected files",
+        "Choisir les documents PDF": "Choose PDF documents", "Choisir les documents ou images": "Choose documents or images",
+        "Choisir des PDF — Téléchargements": "Choose PDFs — Downloads", "Choisir des documents ou images — Téléchargements": "Choose documents or images — Downloads",
+        "Choisir le dossier de destination": "Choose destination folder", "Choisir ce dossier": "Choose this folder",
+        "Revenir à Téléchargements": "Return to Downloads", "Téléchargements": "Downloads", "↑ Dossier parent": "↑ Parent folder",
+        "Nom du fichier ou dossier": "File or folder name", "Modifié le": "Modified", "Double-cliquez sur un dossier pour l’ouvrir.": "Double-click a folder to open it.",
+        "Ctrl ou Maj : sélectionner plusieurs fichiers": "Ctrl or Shift: select multiple files", "Sélection": "Selection",
+        "Sélectionnez un ou plusieurs documents PDF.": "Select one or more PDF documents.",
+        "Sélectionnez un ou plusieurs documents ou images pris en charge.": "Select one or more supported documents or images.",
+        "Aucun tableau exploitable détecté. Un PDF scanné nécessitera l’OCR local.": "No usable table detected. A scanned PDF will require local OCR.",
+        "PDF scanné probable": "Likely scanned PDF", "PDF scanné probable : OCR local non encore disponible.": "Likely scanned PDF: local OCR is not available yet.",
+        "Texte détecté": "Text detected", "PDF chiffré": "Encrypted PDF", "Mot de passe requis": "Password required",
+        "Ce PDF est chiffré et ne peut pas être lu.": "This PDF is encrypted and cannot be read.",
+        "Ce PDF est chiffré et nécessite un mot de passe valide.": "This PDF is encrypted and requires a valid password.",
+        "Une conversion est encore en cours. Fermer cette fenêtre masquera son suivi.\n\nVoulez-vous vraiment fermer ?": "A conversion is still running. Closing this window will hide its progress.\n\nDo you really want to close it?",
+        "Le moteur local de ce module est prêt. L’interface détaillée sera intégrée au prochain lot.": "The local engine for this module is ready. Its detailed interface will be added in the next release.",
+        "Variables : {page}  {pages}  {document}  {date}": "Variables: {page}  {pages}  {document}  {date}",
+        "↑ Monter": "↑ Move up", "↓ Descendre": "↓ Move down", "↻ Rotation 90°": "↻ Rotate 90°",
+        "page(s)": "page(s)", "page(s) dans le document.": "page(s) in the document.", "Placement": "Placement",
+        "La page": "Page", "n’existe pas dans ce document.": "does not exist in this document.",
+        "Indiquez au moins une page valide.": "Enter at least one valid page.",
+        "Format non pris en charge :": "Unsupported format:",
+        "LibreOffice est requis pour convertir ce document.": "LibreOffice is required to convert this document.",
+        "La rotation doit être de 90, 180 ou 270 degrés.": "Rotation must be 90, 180 or 270 degrees.",
+    }
+)
+
+TRANSLATIONS["ar"].update(
+    {
+        "Langue": "اللغة", "Conversion locale par lots": "تحويل محلي بالجملة", "Format :": "التنسيق:",
+        "Ajouter des PDF…": "إضافة PDF…", "Ajouter des documents…": "إضافة مستندات…", "Document": "المستند",
+        "Pages": "الصفحات", "Analyse": "التحليل", "État": "الحالة", "Mot de passe PDF :": "كلمة مرور PDF:",
+        "Excel (.xlsx) — tableaux": "Excel (.xlsx) — جداول", "Fichiers à convertir": "ملفات للتحويل", "Dossier": "المجلد",
+        "Aucun document": "لا يوجد مستند", "Aucun PDF": "لا يوجد PDF", "Ajoutez au moins un document PDF.": "أضف مستند PDF واحداً على الأقل.",
+        "Ajoutez au moins un document.": "أضف مستنداً واحداً على الأقل.", "Ajoutez au moins une page.": "أضف صفحة واحدة على الأقل.",
+        "Choisissez d’abord un document PDF.": "اختر مستند PDF أولاً.", "Choisissez un dossier existant.": "اختر مجلداً موجوداً.",
+        "Dossier introuvable": "المجلد غير موجود", "Conversion terminée": "اكتمل التحويل", "Conversion en cours": "التحويل جارٍ",
+        "Conversion…": "جارٍ التحويل…", "En attente": "في الانتظار", "Ouverture impossible": "تعذر الفتح", "Export impossible": "تعذر التصدير",
+        "Opération réussie": "نجحت العملية", "Le document a été créé dans :": "تم إنشاء المستند في:", "Aperçu": "معاينة",
+        "Aperçu actualisé.": "تم تحديث المعاينة.", "Aperçu impossible": "تعذرت المعاينة", "PLACEMENT À LA SOURIS": "الوضع بالفأرة",
+        "Cliquez ou faites glisser l’élément choisi sur la page.": "انقر أو اسحب العنصر المحدد على الصفحة.",
+        "Ajuster": "ملاءمة", "Élargir": "توسيع", "Réduire": "تصغير", "Rétablir": "إعادة", "Filigrane": "علامة مائية",
+        "En-tête": "الرأس", "Pied": "التذييل", "Masque": "قناع", "En-tête et pied de page": "الرأس والتذييل", "Masquage visuel": "إخفاء مرئي",
+        "Texte libre": "نص حر", "Image de filigrane": "صورة العلامة المائية", "Taille": "الحجم", "Rotation (degrés)": "الدوران (درجات)",
+        "Transparence (%)": "الشفافية (%)", "Placer au premier plan": "وضع في المقدمة", "Position X (mm, vide = centre)": "موضع X (مم، فارغ = الوسط)",
+        "Position Y (mm, vide = centre)": "موضع Y (مم، فارغ = الوسط)", "Fichier PNG ou JPG": "ملف PNG أو JPG", "Largeur (mm)": "العرض (مم)",
+        "Position en-tête": "موضع الرأس", "Pied de page": "تذييل الصفحة", "Position pied": "موضع التذييل", "Taille du texte": "حجم النص",
+        "Ajouter rapidement :": "إضافة سريعة:", "Marge gauche": "الهامش الأيسر", "Marge droite": "الهامش الأيمن", "Zone libre": "منطقة حرة",
+        "Hauteur (mm)": "الارتفاع (مم)", "Mettre à jour": "تحديث", "Masque invalide": "قناع غير صالح", "Habillage terminé": "اكتمل التخصيص",
+        "Page blanche": "صفحة فارغة", "Document source": "المستند المصدر", "Ordre": "الترتيب", "Page": "الصفحة", "Rotation": "الدوران",
+        "Dupliquer": "تكرار", "Ajouter les PDF sélectionnés": "إضافة ملفات PDF المحددة", "Choisir les documents PDF": "اختيار مستندات PDF",
+        "Choisir le dossier de destination": "اختيار مجلد الوجهة", "Choisir ce dossier": "اختيار هذا المجلد", "Revenir à Téléchargements": "العودة إلى التنزيلات",
+        "Téléchargements": "التنزيلات", "↑ Dossier parent": "↑ المجلد الأصل", "Nom du fichier ou dossier": "اسم الملف أو المجلد", "Modifié le": "تاريخ التعديل",
+        "PDF scanné probable": "يحتمل أن PDF ممسوح", "Texte détecté": "تم اكتشاف نص", "PDF chiffré": "PDF مشفر", "Mot de passe requis": "كلمة مرور مطلوبة",
+    }
+)
+
+TRANSLATIONS["de"]["Aucun document transmis sur Internet"] = "Kein Dokument wird über das Internet übertragen"
+TRANSLATIONS["es"]["Aucun document transmis sur Internet"] = "Ningún documento se transmite por Internet"
+TRANSLATIONS["it"]["Aucun document transmis sur Internet"] = "Nessun documento viene trasmesso via Internet"
+TRANSLATIONS["zh"]["Aucun document transmis sur Internet"] = "不会通过互联网传输任何文档"
+TRANSLATIONS["tr"]["Aucun document transmis sur Internet"] = "Hiçbir belge internet üzerinden aktarılmaz"
+TRANSLATIONS["ar"]["Aucun document transmis sur Internet"] = "لا يتم إرسال أي مستند عبر الإنترنت"
+
+TRANSLATIONS["ar"].update(
+    {
+        "Analyse…": "جارٍ التحليل…", "Aucun tableau exploitable détecté. Un PDF scanné nécessitera l’OCR local.": "لم يتم اكتشاف جدول قابل للاستخدام. سيحتاج PDF الممسوح إلى OCR محلي.",
+        "Ce PDF est chiffré et ne peut pas être lu.": "ملف PDF هذا مشفر ولا يمكن قراءته.", "Ce PDF est chiffré et nécessite un mot de passe valide.": "ملف PDF هذا مشفر ويتطلب كلمة مرور صالحة.",
+        "Choisir des PDF — Téléchargements": "اختيار PDF — التنزيلات", "En-tête X (mm, vide = alignement)": "X للرأس (مم، فارغ = محاذاة)",
+        "En-tête depuis le haut (mm)": "الرأس من الأعلى (مم)", "Export du PDF…": "جارٍ تصدير PDF…", "Nom": "الاسم",
+        "Ouverture de": "جارٍ فتح", "Ouvrir le PDF": "فتح PDF", "Ouvrir le document": "فتح المستند", "Ouvrir le dossier": "فتح المجلد",
+        "PDF créé :": "تم إنشاء PDF:", "PDF créé(s) dans :": "تم إنشاء PDF في:", "PDF scanné probable : OCR local non encore disponible.": "يحتمل أن PDF ممسوح: OCR المحلي غير متاح بعد.",
+        "Pied X (mm, vide = alignement)": "X للتذييل (مم، فارغ = محاذاة)", "Pied depuis le bas (mm)": "التذييل من الأسفل (مم)",
+        "Position Y (mm, vide = haut)": "موضع Y (مم، فارغ = الأعلى)", "Sélectionnez un ou plusieurs documents PDF.": "حدد مستند PDF واحداً أو أكثر.",
+        "Terminé :": "اكتمل:", "Terminé →": "اكتمل →", "X (mm)": "X (مم)", "Y depuis le bas (mm)": "Y من الأسفل (مم)", "Zone tracée": "منطقة مرسومة",
+        "document(s) créé(s) dans :": "تم إنشاء المستند(ات) في:", "réussite(s),": "ناجحة،", "Échec :": "فشل:", "échec(s).": "فاشلة.",
+    }
+)
+
+TRANSLATIONS["ar"].update(
+    {
+        "Ajouter avec ces coordonnées": "إضافة بهذه الإحداثيات",
+        "Ajouter les fichiers sélectionnés": "إضافة الملفات المحددة",
+        "Ajouter un liseré horizontal": "إضافة خط أفقي",
+        "Ajoutez un ou plusieurs PDF.": "أضف ملف PDF واحداً أو أكثر.",
+        "Attention : ces masques sont uniquement visuels. Ils ne suppriment pas de façon sécurisée les informations confidentielles du PDF.": "تنبيه: هذه الأقنعة مرئية فقط ولا تحذف المعلومات السرية من PDF بأمان.",
+        "Choisir des documents ou images — Téléchargements": "اختيار مستندات أو صور — التنزيلات",
+        "Choisir les documents ou images": "اختيار المستندات أو الصور",
+        "Choisissez un PDF puis cliquez sur\n« Actualiser l’aperçu ».": "اختر PDF ثم انقر على\n«تحديث المعاينة».",
+        "Choisissez un dossier de destination existant.": "اختر مجلد وجهة موجوداً.",
+        "Ctrl ou Maj : sélectionner plusieurs fichiers": "Ctrl أو Shift: تحديد عدة ملفات",
+        "Document vide": "مستند فارغ",
+        "Documents bureautiques et images — traitement local par lots": "مستندات وصور — معالجة محلية بالجملة",
+        "Dossier inaccessible": "تعذر الوصول إلى المجلد",
+        "Double-cliquez sur un dossier pour l’ouvrir.": "انقر مرتين على مجلد لفتحه.",
+        "Filigranes, en-têtes et pieds de page avec aperçu": "علامات مائية ورؤوس وتذييلات مع معاينة",
+        "Fusionner tous les PDF produits dans un document supplémentaire": "دمج كل ملفات PDF المنتجة في مستند إضافي",
+        "Import impossible": "تعذر الاستيراد", "Logo": "الشعار",
+        "Logo appliqué aux pages sélectionnées": "الشعار مطبق على الصفحات المحددة",
+        "Ouvrir les résultats": "فتح النتائج",
+        "Pour tracer : sélectionnez « Masque » à droite puis faites glisser sur l’aperçu.": "للرسم: حدد «قناع» على اليمين ثم اسحب على المعاينة.",
+        "Retirer": "إزالة",
+        "Réorganiser, fusionner, extraire, dupliquer et faire pivoter les pages": "إعادة ترتيب الصفحات ودمجها واستخراجها وتكرارها وتدويرها",
+        "Sélection": "التحديد",
+        "Sélectionnez un ou plusieurs documents ou images pris en charge.": "حدد مستنداً أو صورة مدعومة واحدة أو أكثر.",
+        "Sélectionnez « Logo » à droite, puis cliquez ou faites glisser sur l’aperçu.": "حدد «الشعار» على اليمين، ثم انقر أو اسحب على المعاينة.",
+        "Tout effacer": "مسح الكل", "Tout vider": "إفراغ الكل",
+        "Une conversion est encore en cours. Fermer cette fenêtre masquera son suivi.\n\nVoulez-vous vraiment fermer ?": "ما زال التحويل جارياً. سيؤدي إغلاق هذه النافذة إلى إخفاء تقدمه.\n\nهل تريد حقاً الإغلاق؟",
+        "Valider et exporter le PDF": "تطبيق PDF وتصديره", "Word (.docx)": "Word (.docx)",
+        "Le moteur local de ce module est prêt. L’interface détaillée sera intégrée au prochain lot.": "محرك هذه الوحدة المحلي جاهز، وستضاف واجهتها التفصيلية في الإصدار القادم.",
+        "Variables : {page}  {pages}  {document}  {date}": "المتغيرات: {page}  {pages}  {document}  {date}",
+        "↑ Monter": "↑ نقل لأعلى", "↓ Descendre": "↓ نقل لأسفل", "↻ Rotation 90°": "↻ تدوير 90°",
+        "page(s)": "صفحة/صفحات", "page(s) dans le document.": "صفحة/صفحات في المستند.", "Placement": "موضع",
+        "La page": "الصفحة", "n’existe pas dans ce document.": "غير موجودة في هذا المستند.",
+        "Indiquez au moins une page valide.": "أدخل صفحة صحيحة واحدة على الأقل.",
+        "Format non pris en charge :": "تنسيق غير مدعوم:",
+        "LibreOffice est requis pour convertir ce document.": "LibreOffice مطلوب لتحويل هذا المستند.",
+        "La rotation doit être de 90, 180 ou 270 degrés.": "يجب أن يكون الدوران 90 أو 180 أو 270 درجة.",
+    }
+)
+
 
 def settings_path() -> Path:
     return Path.home() / ".config" / "lou-codi-pdf-converter" / "preferences.json"
@@ -170,13 +344,49 @@ def get_language() -> str:
 
 
 def tr(text: str) -> str:
-    return TRANSLATIONS.get(_language, {}).get(text, text)
+    if _language == "fr":
+        return text
+    language_map = TRANSLATIONS.get(_language, {})
+    translated = language_map.get(text)
+    if translated is None:
+        translated = text
+        replacements = dict(TRANSLATIONS.get("en", {}))
+        replacements.update(language_map)
+        for source in sorted(replacements, key=len, reverse=True):
+            if source in translated:
+                translated = translated.replace(source, replacements[source])
+    return _shape_arabic(translated) if _language == "ar" else translated
 
 
 def untr(text: str) -> str:
     """Return the French source text for a translated choice, when known."""
     translations = TRANSLATIONS.get(_language, {})
-    return next((source for source, translated in translations.items() if translated == text), text)
+    return next(
+        (
+            source
+            for source, translated in translations.items()
+            if translated == text or (_language == "ar" and _shape_arabic(translated) == text)
+        ),
+        text,
+    )
+
+
+def _shape_arabic(text: str) -> str:
+    return get_display(arabic_reshaper.reshape(text))
+
+
+def install_messagebox_translations() -> None:
+    """Translate native Tk message boxes, including those created after startup."""
+    if getattr(messagebox, "_lou_codi_i18n", False):
+        return
+    for name in ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel"):
+        original = getattr(messagebox, name)
+
+        def translated_box(title: str, message: str, *args: object, _original=original, **kwargs: object):
+            return _original(tr(title), tr(message), *args, **kwargs)
+
+        setattr(messagebox, name, translated_box)
+    messagebox._lou_codi_i18n = True
 
 
 def translate_widget_tree(root: tk.Misc) -> None:
@@ -188,15 +398,12 @@ def translate_widget_tree(root: tk.Misc) -> None:
     except tk.TclError:
         pass
     if isinstance(root, (tk.Tk, tk.Toplevel)):
-        title = root.title()
-        for source, translated in TRANSLATIONS.get(_language, {}).items():
-            title = title.replace(source, translated)
-        root.title(title)
+        root.title(tr(root.title()))
     if isinstance(root, ttk.Notebook):
         for tab_id in root.tabs():
             root.tab(tab_id, text=tr(root.tab(tab_id, "text")))
     if isinstance(root, ttk.Treeview):
-        for column in root["columns"]:
+        for column in ("#0", *root["columns"]):
             root.heading(column, text=tr(root.heading(column, "text")))
     for child in root.winfo_children():
         translate_widget_tree(child)

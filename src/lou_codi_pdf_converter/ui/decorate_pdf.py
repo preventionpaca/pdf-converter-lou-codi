@@ -421,7 +421,7 @@ class DecoratePdfWindow(tk.Toplevel):
     def _choose_color(self, variable: tk.StringVar, key: str) -> None:
         _rgb, selected = colorchooser.askcolor(
             color=variable.get(),
-            title="Choisir une couleur — Lou Còdi",
+            title=tr("Choisir une couleur — Lou Còdi"),
             parent=self,
         )
         if not selected:
@@ -442,7 +442,7 @@ class DecoratePdfWindow(tk.Toplevel):
             self.pages.set("1")
             self.page_selector.focus_set()
             self.page_selector.selection_range(0, "end")
-            self.status.configure(text="Saisissez par exemple : 1, 3-5, 8")
+            self.status.configure(text=tr("Saisissez par exemple : 1, 3-5, 8"))
         elif self.source:
             self._preview()
 
@@ -556,7 +556,7 @@ class DecoratePdfWindow(tk.Toplevel):
             return
         self.source = selected[0]
         self.page_count = len(pymupdf.open(self.source))
-        self.source_label.configure(text=f"{self.source.name} — {self.page_count} page(s)")
+        self.source_label.configure(text=tr(f"{self.source.name} — {self.page_count} page(s)"))
 
     def _choose_watermark_image(self) -> None:
         selected = choose_documents(self, {".png", ".jpg", ".jpeg"})
@@ -752,7 +752,7 @@ class DecoratePdfWindow(tk.Toplevel):
                 )
             )
             self.zoom_label.configure(text=f"{round(self.zoom_factor * 100)} %")
-            self.status.configure(text="Aperçu actualisé.")
+            self.status.configure(text=tr("Aperçu actualisé."))
         except Exception as exc:  # noqa: BLE001 - présenter toute erreur de configuration
             messagebox.showerror("Aperçu impossible", str(exc), parent=self)
 
@@ -773,7 +773,9 @@ class DecoratePdfWindow(tk.Toplevel):
     def _toggle_preview_width(self) -> None:
         self.preview_expanded = not self.preview_expanded
         self.preview_panel.configure(width=720 if self.preview_expanded else 430)
-        self.expand_button.configure(text="Réduire" if self.preview_expanded else "Élargir")
+        self.expand_button.configure(
+            text=tr("Réduire" if self.preview_expanded else "Élargir")
+        )
         self.update_idletasks()
         if self.source:
             self._preview()
@@ -797,7 +799,7 @@ class DecoratePdfWindow(tk.Toplevel):
             return
         self.last_output = target
         self.open_button.configure(state="normal")
-        self.status.configure(text=f"PDF créé : {target.name}")
+        self.status.configure(text=tr(f"PDF créé : {target.name}"))
         show_success(self, "Habillage terminé", f"Le document a été créé dans :\n\n{target}", action_label="Ouvrir le PDF", action=lambda: open_path(target))
 
     def _open_output(self) -> None:
@@ -905,7 +907,7 @@ class DecoratePdfWindow(tk.Toplevel):
             width=2,
             tags="placement",
         )
-        self.status.configure(text=f"Placement {target} : X {x_mm:.1f} mm")
+        self.status.configure(text=tr(f"Placement {target} : X {x_mm:.1f} mm"))
 
     def _finish_placement(self, _event: tk.Event[tk.Misc]) -> None:
         if self._edit_snapshot and self._edit_snapshot != self._capture_state():

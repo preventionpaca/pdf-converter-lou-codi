@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from ..i18n import translate_widget_tree
 from ..paths import downloads_directory
 from .windowing import make_modal, maximize_window
 
@@ -39,6 +40,7 @@ class PdfPicker(tk.Toplevel):
         self.paths: dict[str, Path] = {}
         self.path_text = tk.StringVar(value=str(self.current_directory))
         self._build()
+        translate_widget_tree(self)
         self._show_directory(self.current_directory)
         maximize_window(self)
         make_modal(self, parent)

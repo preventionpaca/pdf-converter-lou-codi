@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 import pymupdf
 from pypdf import PdfReader
 
-from ..i18n import translate_widget_tree
+from ..i18n import tr, translate_widget_tree
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_organizer import PagePlan, assemble_pdf, suggested_organized_stem
 from ..system import open_path
@@ -212,7 +212,7 @@ class OrganizePdfWindow(tk.Toplevel):
         if existing:
             self.tree.selection_set(existing)
             self.tree.see(existing[0])
-        self.status.configure(text=f"{len(self.pages)} page(s) dans le document.")
+        self.status.configure(text=tr(f"{len(self.pages)} page(s) dans le document."))
         self.undo_button.configure(state="normal" if self.undo_stack else "disabled")
         self.redo_button.configure(state="normal" if self.redo_stack else "disabled")
 
@@ -345,7 +345,7 @@ class OrganizePdfWindow(tk.Toplevel):
             ".pdf",
         )
         self.configure(cursor="watch")
-        self.status.configure(text="Export du PDF…")
+        self.status.configure(text=tr("Export du PDF…"))
         self.update_idletasks()
         try:
             assemble_pdf(plans, target)
@@ -356,7 +356,7 @@ class OrganizePdfWindow(tk.Toplevel):
             self.configure(cursor="")
         self.last_output = target
         self.open_button.configure(state="normal")
-        self.status.configure(text=f"PDF créé : {target.name}")
+        self.status.configure(text=tr(f"PDF créé : {target.name}"))
         show_success(
             self,
             "Export terminé",
