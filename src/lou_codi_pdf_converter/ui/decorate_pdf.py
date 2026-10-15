@@ -79,7 +79,15 @@ class DecoratePdfWindow(tk.Toplevel):
         self.preview_page_width = 0.0
         self.preview_page_height = 0.0
         self.preview_origin = (0.0, 0.0)
+        self.zoom_factor = 1.0
+        self.preview_expanded = False
+        self.undo_stack: list[dict[str, object]] = []
+        self.redo_stack: list[dict[str, object]] = []
+        self._restoring_history = False
+        self._edit_snapshot: dict[str, object] | None = None
         self._build()
+        self.bind_all("<Control-z>", lambda _event: self._undo())
+        self.bind_all("<Control-y>", lambda _event: self._redo())
         self.protocol("WM_DELETE_WINDOW", self._close)
         make_modal(self, parent)
 
@@ -102,6 +110,7 @@ class DecoratePdfWindow(tk.Toplevel):
         left = ttk.Frame(body, style="App.TFrame")
         left.pack(side="left", fill="both", expand=True, padx=(0, 10))
         right = ttk.Frame(body, style="Card.TFrame", padding=14, width=430)
+        self.preview_panel = right
         right.pack(side="right", fill="both")
         right.pack_propagate(False)
 
@@ -143,7 +152,13 @@ class DecoratePdfWindow(tk.Toplevel):
         self.status = ttk.Label(actions, text="Prêt.", background=BACKGROUND, foreground=MUTED)
         self.status.pack(side="right")
 
-        ttk.Label(right, text="PLACEMENT À LA SOURIS", style="Title.TLabel").pack(anchor="w")
+        preview_toolbar = ttk.Frame(right, style="Card.TFrame")
+        preview_toolbar.pack(fill="x")
+        ttk.Label(preview_toolbar, text="PLACEMENT À LA SOURIS", style="Title.TLabel").pack(side="left")
+        self.redo_button = ttk.Button(preview_toolbar, text="↷", width=3, command=self._redo, state="disabled")
+        self.redo_button.pack(side="right")
+        self.undo_button = ttk.Button(preview_toolbar, text="↶", width=3, command=self._undo, state="disabled")
+        self.undo_button.pack(side="right", padx=4)
         placement = ttk.Frame(right, style="Card.TFrame")
         placement.pack(fill="x", pady=(8, 4))
         for text, value in (
@@ -165,14 +180,33 @@ class DecoratePdfWindow(tk.Toplevel):
             style="Body.TLabel",
             wraplength=390,
         ).pack(anchor="w", pady=(0, 6))
+        zoom_bar = ttk.Frame(right, style="Card.TFrame")
+        zoom_bar.pack(fill="x", pady=(2, 5))
+        ttk.Button(zoom_bar, text="−", width=3, command=lambda: self._change_zoom(-0.2)).pack(side="left")
+        self.zoom_label = ttk.Label(zoom_bar, text="100 %", style="Body.TLabel", width=8, anchor="center")
+        self.zoom_label.pack(side="left")
+        ttk.Button(zoom_bar, text="+", width=3, command=lambda: self._change_zoom(0.2)).pack(side="left")
+        ttk.Button(zoom_bar, text="Ajuster", command=self._fit_preview).pack(side="left", padx=6)
+        self.expand_button = ttk.Button(zoom_bar, text="Élargir", command=self._toggle_preview_width)
+        self.expand_button.pack(side="right")
+
+        canvas_frame = ttk.Frame(right, style="Card.TFrame")
+        canvas_frame.pack(fill="both", expand=True, pady=6)
         self.preview_canvas = tk.Canvas(
-            right,
+            canvas_frame,
             background="white",
             highlightthickness=1,
             highlightbackground="#D9E2ED",
             cursor="crosshair",
         )
-        self.preview_canvas.pack(fill="both", expand=True, pady=6)
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        vertical = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.preview_canvas.yview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal = ttk.Scrollbar(canvas_frame, orient="horizontal", command=self.preview_canvas.xview)
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.preview_canvas.configure(xscrollcommand=horizontal.set, yscrollcommand=vertical.set)
+        canvas_frame.rowconfigure(0, weight=1)
+        canvas_frame.columnconfigure(0, weight=1)
         self.preview_canvas.create_text(
             205,
             280,
@@ -183,6 +217,9 @@ class DecoratePdfWindow(tk.Toplevel):
         self.preview_canvas.bind("<Button-1>", self._placement_press)
         self.preview_canvas.bind("<B1-Motion>", self._placement_motion)
         self.preview_canvas.bind("<ButtonRelease-1>", self._placement_release)
+        self.preview_canvas.bind("<Control-MouseWheel>", self._mouse_zoom)
+        self.preview_canvas.bind("<Control-Button-4>", lambda _event: self._change_zoom(0.2))
+        self.preview_canvas.bind("<Control-Button-5>", lambda _event: self._change_zoom(-0.2))
 
     def _build_watermark_tab(self, tab: ttk.Frame) -> None:
         self._field(tab, "Texte libre", self.watermark_text, 0)
@@ -192,7 +229,7 @@ class DecoratePdfWindow(tk.Toplevel):
             ttk.Button(
                 presets,
                 text=label,
-                command=lambda value=label: self.watermark_text.set(value.upper()),
+                command=lambda value=label: self._set_watermark_preset(value),
             ).pack(side="left", padx=(0, 6))
         ttk.Label(tab, text="Image de filigrane", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=6)
         ttk.Entry(tab, textvariable=self.watermark_image).grid(row=2, column=1, sticky="ew", padx=8)
@@ -316,11 +353,111 @@ class DecoratePdfWindow(tk.Toplevel):
 
     def _field(self, parent: ttk.Frame, label: str, variable: tk.Variable, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=6)
-        ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, columnspan=2, sticky="ew", padx=8)
+        entry = ttk.Entry(parent, textvariable=variable)
+        entry.grid(row=row, column=1, columnspan=2, sticky="ew", padx=8)
+        entry.bind("<FocusIn>", self._begin_edit)
+        entry.bind("<FocusOut>", self._finish_edit)
 
     def _position_field(self, parent: ttk.Frame, label: str, variable: tk.StringVar, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=6)
-        ttk.Combobox(parent, textvariable=variable, values=("left", "center", "right"), state="readonly").grid(row=row, column=1, sticky="ew", padx=8)
+        combo = ttk.Combobox(
+            parent,
+            textvariable=variable,
+            values=("left", "center", "right"),
+            state="readonly",
+        )
+        combo.grid(row=row, column=1, sticky="ew", padx=8)
+        combo.bind("<FocusIn>", self._begin_edit)
+        combo.bind("<FocusOut>", self._finish_edit)
+
+    def _history_variables(self) -> tuple[tk.Variable, ...]:
+        return (
+            self.pages,
+            self.watermark_text,
+            self.watermark_image,
+            self.watermark_size,
+            self.watermark_rotation,
+            self.watermark_opacity,
+            self.watermark_color,
+            self.watermark_x,
+            self.watermark_y,
+            self.watermark_front,
+            self.logo_image,
+            self.logo_x,
+            self.logo_y,
+            self.logo_width,
+            self.logo_opacity,
+            self.header_text,
+            self.header_position,
+            self.header_x,
+            self.header_y,
+            self.footer_text,
+            self.footer_position,
+            self.footer_x,
+            self.footer_y,
+            self.text_size,
+            self.text_color,
+            self.footer_line,
+            self.mask_footer,
+            self.mask_height,
+        )
+
+    def _capture_state(self) -> dict[str, object]:
+        return {
+            "variables": tuple(variable.get() for variable in self._history_variables()),
+            "masks": tuple(self.mask_zones),
+        }
+
+    def _restore_state(self, state: dict[str, object]) -> None:
+        self._restoring_history = True
+        try:
+            values = state["variables"]
+            for variable, value in zip(self._history_variables(), values, strict=True):
+                variable.set(value)
+            self.mask_zones = list(state["masks"])
+            self._refresh_mask_tree()
+        finally:
+            self._restoring_history = False
+        self._update_history_buttons()
+        if self.source:
+            self._preview()
+
+    def _remember_state(self, state: dict[str, object] | None = None) -> None:
+        if self._restoring_history:
+            return
+        snapshot = state or self._capture_state()
+        if self.undo_stack and self.undo_stack[-1] == snapshot:
+            return
+        self.undo_stack.append(snapshot)
+        if len(self.undo_stack) > 60:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+        self._update_history_buttons()
+
+    def _undo(self) -> None:
+        if not self.undo_stack:
+            return
+        self.redo_stack.append(self._capture_state())
+        self._restore_state(self.undo_stack.pop())
+
+    def _redo(self) -> None:
+        if not self.redo_stack:
+            return
+        self.undo_stack.append(self._capture_state())
+        self._restore_state(self.redo_stack.pop())
+
+    def _update_history_buttons(self) -> None:
+        self.undo_button.configure(state="normal" if self.undo_stack else "disabled")
+        self.redo_button.configure(state="normal" if self.redo_stack else "disabled")
+
+    def _begin_edit(self, _event: tk.Event[tk.Misc]) -> None:
+        if not self._restoring_history:
+            self._edit_snapshot = self._capture_state()
+
+    def _finish_edit(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._edit_snapshot and self._edit_snapshot != self._capture_state():
+            self._remember_state(self._edit_snapshot)
+        self._edit_snapshot = None
 
     def _choose_pdf(self) -> None:
         selected = choose_pdfs(self)
@@ -333,12 +470,18 @@ class DecoratePdfWindow(tk.Toplevel):
     def _choose_watermark_image(self) -> None:
         selected = choose_documents(self, {".png", ".jpg", ".jpeg"})
         if selected:
+            self._remember_state()
             self.watermark_image.set(str(selected[0]))
 
     def _choose_logo_image(self) -> None:
         selected = choose_documents(self, {".png", ".jpg", ".jpeg"})
         if selected:
+            self._remember_state()
             self.logo_image.set(str(selected[0]))
+
+    def _set_watermark_preset(self, value: str) -> None:
+        self._remember_state()
+        self.watermark_text.set(value.upper())
 
     def _choose_destination(self) -> None:
         selected = choose_directory(self, Path(self.destination.get()).expanduser())
@@ -354,6 +497,7 @@ class DecoratePdfWindow(tk.Toplevel):
         return 210.0, 297.0
 
     def _add_mask_preset(self, kind: str) -> None:
+        self._remember_state()
         page_width, page_height = self._page_dimensions_mm()
         margin = 20.0
         if kind == "left":
@@ -375,6 +519,7 @@ class DecoratePdfWindow(tk.Toplevel):
         except (tk.TclError, ValueError) as exc:
             messagebox.showerror("Masque invalide", str(exc), parent=self)
             return
+        self._remember_state()
         self.mask_zones.append(zone)
         self._refresh_mask_tree(len(self.mask_zones) - 1)
 
@@ -425,16 +570,19 @@ class DecoratePdfWindow(tk.Toplevel):
             return
         index = int(selection[0])
         try:
-            self.mask_zones[index] = self._mask_from_fields()
+            updated = self._mask_from_fields()
         except (tk.TclError, ValueError) as exc:
             messagebox.showerror("Masque invalide", str(exc), parent=self)
             return
+        self._remember_state()
+        self.mask_zones[index] = updated
         self._refresh_mask_tree(index)
 
     def _delete_selected_mask(self) -> None:
         selection = self.mask_tree.selection()
         if not selection:
             return
+        self._remember_state()
         self.mask_zones.pop(int(selection[0]))
         self._refresh_mask_tree()
 
@@ -484,22 +632,62 @@ class DecoratePdfWindow(tk.Toplevel):
             apply_pdf_decorations(self.source, target, self._settings())
             document = pymupdf.open(target)
             page = document[0]
-            scale = min(390 / page.rect.width, 600 / page.rect.height)
+            self.preview_canvas.update_idletasks()
+            canvas_width = max(220, self.preview_canvas.winfo_width())
+            canvas_height = max(320, self.preview_canvas.winfo_height())
+            fit_scale = min(
+                (canvas_width - 20) / page.rect.width,
+                (canvas_height - 20) / page.rect.height,
+            )
+            scale = fit_scale * self.zoom_factor
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
             self.preview_image = tk.PhotoImage(data=pixmap.tobytes("png"))
             self.preview_scale = scale
             self.preview_page_width = page.rect.width
             self.preview_page_height = page.rect.height
             document.close()
-            self.preview_canvas.update_idletasks()
-            origin_x = max(0, (self.preview_canvas.winfo_width() - self.preview_image.width()) / 2)
-            origin_y = max(0, (self.preview_canvas.winfo_height() - self.preview_image.height()) / 2)
+            origin_x = max(0, (canvas_width - self.preview_image.width()) / 2)
+            origin_y = max(0, (canvas_height - self.preview_image.height()) / 2)
             self.preview_origin = (origin_x, origin_y)
             self.preview_canvas.delete("all")
             self.preview_canvas.create_image(origin_x, origin_y, image=self.preview_image, anchor="nw")
+            self.preview_canvas.configure(
+                scrollregion=(
+                    0,
+                    0,
+                    max(canvas_width, origin_x + self.preview_image.width()),
+                    max(canvas_height, origin_y + self.preview_image.height()),
+                )
+            )
+            self.zoom_label.configure(text=f"{round(self.zoom_factor * 100)} %")
             self.status.configure(text="Aperçu actualisé.")
         except Exception as exc:  # noqa: BLE001 - présenter toute erreur de configuration
             messagebox.showerror("Aperçu impossible", str(exc), parent=self)
+
+    def _change_zoom(self, delta: float) -> str:
+        self.zoom_factor = min(3.0, max(0.4, round(self.zoom_factor + delta, 2)))
+        self.zoom_label.configure(text=f"{round(self.zoom_factor * 100)} %")
+        if self.source:
+            self._preview()
+        return "break"
+
+    def _fit_preview(self) -> None:
+        self.zoom_factor = 1.0
+        if self.source:
+            self._preview()
+        else:
+            self.zoom_label.configure(text="100 %")
+
+    def _toggle_preview_width(self) -> None:
+        self.preview_expanded = not self.preview_expanded
+        self.preview_panel.configure(width=720 if self.preview_expanded else 430)
+        self.expand_button.configure(text="Réduire" if self.preview_expanded else "Élargir")
+        self.update_idletasks()
+        if self.source:
+            self._preview()
+
+    def _mouse_zoom(self, event: tk.Event[tk.Misc]) -> str:
+        return self._change_zoom(0.2 if event.delta > 0 else -0.2)
 
     def _export(self) -> None:
         if not self.source:
@@ -525,8 +713,9 @@ class DecoratePdfWindow(tk.Toplevel):
             open_path(self.last_output)
 
     def _placement_press(self, event: tk.Event[tk.Misc]) -> None:
+        self._edit_snapshot = self._capture_state()
         if self.placement_target.get() == "mask":
-            self.mask_drag_start = (event.x, event.y)
+            self.mask_drag_start = self._canvas_coordinates(event)
             self.preview_canvas.delete("placement")
             return
         self._place_element(event)
@@ -538,12 +727,13 @@ class DecoratePdfWindow(tk.Toplevel):
         if not self.mask_drag_start:
             return
         start_x, start_y = self.mask_drag_start
+        current_x, current_y = self._canvas_coordinates(event)
         self.preview_canvas.delete("placement")
         self.preview_canvas.create_rectangle(
             start_x,
             start_y,
-            event.x,
-            event.y,
+            current_x,
+            current_y,
             outline="#2368AF",
             width=2,
             dash=(5, 3),
@@ -564,12 +754,17 @@ class DecoratePdfWindow(tk.Toplevel):
         y_mm = (self.preview_page_height - image_y / self.preview_scale) * 25.4 / 72
         return x_mm, y_mm
 
+    def _canvas_coordinates(self, event: tk.Event[tk.Misc]) -> tuple[float, float]:
+        return self.preview_canvas.canvasx(event.x), self.preview_canvas.canvasy(event.y)
+
     def _finish_mask_placement(self, event: tk.Event[tk.Misc]) -> None:
         if not self.preview_image or not self.mask_drag_start:
             self.mask_drag_start = None
+            self._edit_snapshot = None
             return
         start_x_mm, start_y_mm = self._event_to_pdf_mm(*self.mask_drag_start)
-        end_x_mm, end_y_mm = self._event_to_pdf_mm(event.x, event.y)
+        end_x, end_y = self._canvas_coordinates(event)
+        end_x_mm, end_y_mm = self._event_to_pdf_mm(end_x, end_y)
         zone = MaskZone(
             "Zone tracée",
             min(start_x_mm, end_x_mm),
@@ -580,15 +775,20 @@ class DecoratePdfWindow(tk.Toplevel):
         self.mask_drag_start = None
         if zone.width_mm < 1 or zone.height_mm < 1:
             self.preview_canvas.delete("placement")
+            self._edit_snapshot = None
             return
         self.mask_zones.append(zone)
+        if self._edit_snapshot:
+            self._remember_state(self._edit_snapshot)
+        self._edit_snapshot = None
         self._refresh_mask_tree(len(self.mask_zones) - 1)
         self._preview()
 
     def _place_element(self, event: tk.Event[tk.Misc]) -> None:
         if not self.preview_image or not self.preview_page_width:
             return
-        x_mm, y_from_bottom_mm = self._event_to_pdf_mm(event.x, event.y)
+        canvas_x, canvas_y = self._canvas_coordinates(event)
+        x_mm, y_from_bottom_mm = self._event_to_pdf_mm(canvas_x, canvas_y)
         target = self.placement_target.get()
         if target == "watermark":
             self.watermark_x.set(f"{x_mm:.1f}")
@@ -605,10 +805,10 @@ class DecoratePdfWindow(tk.Toplevel):
             self.footer_y.set(round(y_from_bottom_mm, 1))
         self.preview_canvas.delete("placement")
         self.preview_canvas.create_oval(
-            event.x - 7,
-            event.y - 7,
-            event.x + 7,
-            event.y + 7,
+            canvas_x - 7,
+            canvas_y - 7,
+            canvas_x + 7,
+            canvas_y + 7,
             outline="#2368AF",
             width=2,
             tags="placement",
@@ -616,6 +816,9 @@ class DecoratePdfWindow(tk.Toplevel):
         self.status.configure(text=f"Placement {target} : X {x_mm:.1f} mm")
 
     def _finish_placement(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._edit_snapshot and self._edit_snapshot != self._capture_state():
+            self._remember_state(self._edit_snapshot)
+        self._edit_snapshot = None
         if self.preview_image:
             self._preview()
 
