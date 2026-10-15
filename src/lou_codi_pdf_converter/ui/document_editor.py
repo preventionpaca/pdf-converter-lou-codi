@@ -68,7 +68,7 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _build(self) -> None:
         self._build_menu()
-        ttk.Style(self).configure("EditorTool.TButton", padding=(5, 2), font=("Sans", 10))
+        ttk.Style(self).configure("EditorTool.TButton", padding=(3, 2), font=("Sans", 10))
         header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
@@ -77,10 +77,13 @@ class DocumentEditorWindow(tk.Toplevel):
         formatting = ttk.Frame(self, style="App.TFrame", padding=(12, 5))
         formatting.pack(fill="x")
         self._buttons(formatting, (
-            ("↶", self._undo), ("↷", self._redo),
-            ("B", lambda: self._toggle("bold")), ("I", lambda: self._toggle("italic")),
-            ("≡←", lambda: self._align("left")), ("≡↔", lambda: self._align("center")),
-            ("→≡", lambda: self._align("right")), ("≡", lambda: self._align("justify")),
+            ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
+            ("B", lambda: self._toggle("bold"), "Gras"),
+            ("I", lambda: self._toggle("italic"), "Italique"),
+            ("←", lambda: self._align("left"), "Aligner à gauche"),
+            ("↔", lambda: self._align("center"), "Centrer"),
+            ("→", lambda: self._align("right"), "Aligner à droite"),
+            ("J", lambda: self._align("justify"), "Justifier"),
         ))
         ttk.Label(formatting, text="Police", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.font_family_var = tk.StringVar(value="Sans-serif")
@@ -104,13 +107,23 @@ class DocumentEditorWindow(tk.Toplevel):
         font_size.pack(side="left", padx=2)
         font_size.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
         font_size.bind("<Return>", lambda _event: self._apply_font_size())
-        ttk.Button(formatting, text="🎨", command=self._choose_color).pack(side="left", padx=2)
+        color_button = ttk.Button(
+            formatting,
+            text="A▾",
+            width=3,
+            command=self._choose_color,
+            style="EditorTool.TButton",
+        )
+        color_button.pack(side="left", padx=2)
+        self._add_tooltip(color_button, "Couleur du texte")
         ttk.Separator(formatting, orient="vertical").pack(side="left", fill="y", padx=8)
         self._buttons(formatting, (
-            ("T+", self._add_text), ("▧", self._add_image), ("▤", self._add_table),
-            ("□", self._add_mask), ("╱", self._add_line), ("Ω", self._insert_symbol),
-            ("•", lambda: self._make_list(False)),
-            ("1.", lambda: self._make_list(True)), ("⌗", self._copy_format), ("✓⌗", self._apply_format),
+            ("T+", self._add_text, "Insérer une zone de texte"),
+            ("Img", self._add_image, "Insérer une image"),
+            ("Tab", self._add_table, "Insérer un tableau"),
+            ("Ω", self._insert_symbol, "Insérer un caractère spécial"),
+            ("•", lambda: self._make_list(False), "Liste à puces"),
+            ("1.", lambda: self._make_list(True), "Liste numérotée"),
         ))
 
         body = ttk.Panedwindow(self, orient="horizontal")
@@ -274,10 +287,65 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Control-p>", lambda _event: self._print())
         self.bind("<Delete>", lambda _event: self._delete_selected())
 
-    @staticmethod
-    def _buttons(parent: tk.Misc, items: tuple[tuple[str, object], ...]) -> None:
-        for label, command in items:
-            ttk.Button(parent, text=label, command=command, style="EditorTool.TButton").pack(side="left", padx=1)
+    def _buttons(
+        self,
+        parent: tk.Misc,
+        items: tuple[tuple[str, object] | tuple[str, object, str], ...],
+    ) -> None:
+        for item in items:
+            label, command = item[:2]
+            tooltip = item[2] if len(item) == 3 else ""
+            options = {"width": max(2, len(label))} if len(label) <= 4 else {}
+            button = ttk.Button(
+                parent,
+                text=label,
+                command=command,
+                style="EditorTool.TButton",
+                **options,
+            )
+            button.pack(side="left", padx=1)
+            if tooltip:
+                self._add_tooltip(button, tooltip)
+
+    def _add_tooltip(self, widget: tk.Widget, text: str) -> None:
+        popup: list[tk.Toplevel | None] = [None]
+        timer: list[str | None] = [None]
+
+        def show() -> None:
+            timer[0] = None
+            if popup[0] is not None:
+                return
+            tip = tk.Toplevel(self)
+            tip.wm_overrideredirect(True)
+            tip.configure(bg="#152E4D")
+            x = widget.winfo_rootx()
+            y = widget.winfo_rooty() + widget.winfo_height() + 5
+            tip.geometry(f"+{x}+{y}")
+            tk.Label(
+                tip,
+                text=text,
+                bg="#152E4D",
+                fg="white",
+                padx=8,
+                pady=4,
+                font=("Sans", 9),
+            ).pack()
+            popup[0] = tip
+
+        def enter(_event: object) -> None:
+            timer[0] = self.after(450, show)
+
+        def hide(_event: object) -> None:
+            if timer[0] is not None:
+                self.after_cancel(timer[0])
+                timer[0] = None
+            if popup[0] is not None:
+                popup[0].destroy()
+                popup[0] = None
+
+        widget.bind("<Enter>", enter, add="+")
+        widget.bind("<Leave>", hide, add="+")
+        widget.bind("<ButtonPress>", hide, add="+")
 
     def _checkpoint(self) -> None:
         self.undo_stack.append(copy.deepcopy(self.document))

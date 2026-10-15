@@ -90,6 +90,7 @@ def edit_table(parent: tk.Misc, text: str) -> str | None:
     grid = ttk.Frame(canvas, style="Card.TFrame", padding=8)
     window = canvas.create_window(0, 0, window=grid, anchor="nw")
     variables: list[list[tk.StringVar]] = []
+    formula_entry: list[ttk.Entry | None] = [None]
     ttk.Label(grid, text="", style="Body.TLabel", width=4).grid(row=0, column=0)
     for column in range(column_count):
         ttk.Label(grid, text=_column_name(column), style="Body.TLabel", anchor="center").grid(row=0, column=column + 1, sticky="ew")
@@ -99,7 +100,29 @@ def edit_table(parent: tk.Misc, text: str) -> str | None:
         for column_index, value in enumerate(values):
             variable = tk.StringVar(value=value)
             variable_row.append(variable)
-            ttk.Entry(grid, textvariable=variable, width=18).grid(row=row_index + 1, column=column_index + 1, padx=1, pady=1, sticky="ew")
+            entry = ttk.Entry(grid, textvariable=variable, width=18)
+            entry.grid(row=row_index + 1, column=column_index + 1, padx=1, pady=1, sticky="ew")
+
+            def remember_formula(_event: object, current: ttk.Entry = entry, current_value: tk.StringVar = variable) -> None:
+                if current_value.get().startswith("="):
+                    formula_entry[0] = current
+
+            def insert_reference(
+                _event: object,
+                current: ttk.Entry = entry,
+                current_row: int = row_index,
+                current_column: int = column_index,
+            ) -> str | None:
+                active = formula_entry[0]
+                if active is None or active is current or not active.get().startswith("="):
+                    return None
+                active.insert("insert", f"{_column_name(current_column)}{current_row + 1}")
+                active.focus_set()
+                return "break"
+
+            entry.bind("<KeyRelease>", remember_formula)
+            entry.bind("<FocusIn>", remember_formula)
+            entry.bind("<Button-1>", insert_reference)
         variables.append(variable_row)
 
     def resize(_event: object = None) -> None:
