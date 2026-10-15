@@ -7,6 +7,7 @@ from tkinter import ttk
 
 from . import __version__
 from .ui.pdf_to_office import PdfToOfficeWindow
+from .ui.windowing import maximize_window
 
 NAVY = "#193B66"
 BLUE = "#2368AF"
@@ -29,6 +30,7 @@ class Application(tk.Tk):
         self.geometry("1100x720")
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
+        maximize_window(self)
         self._configure_styles()
         self._build()
 

@@ -11,6 +11,8 @@ from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
 from ..system import open_path
+from .pdf_picker import choose_pdfs
+from .windowing import maximize_window
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -32,6 +34,7 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.minsize(760, 540)
         self.configure(bg=BACKGROUND)
         self.transient(parent)
+        maximize_window(self)
         self.files: list[Path] = []
         self.generated: list[Path] = []
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -98,14 +101,7 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.progress.pack(fill="x", pady=(13, 0))
 
     def _add_files(self) -> None:
-        selected = filedialog.askopenfilenames(
-            parent=self,
-            title="Choisir les PDF",
-            initialdir=downloads_directory(),
-            filetypes=(("Documents PDF", "*.pdf"),),
-        )
-        for raw_path in selected:
-            path = Path(raw_path)
+        for path in choose_pdfs(self):
             if path in self.files:
                 continue
             self.files.append(path)
