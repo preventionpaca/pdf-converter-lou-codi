@@ -6,6 +6,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from . import __version__
+from .ui.pdf_to_office import PdfToOfficeWindow
 
 NAVY = "#193B66"
 BLUE = "#2368AF"
@@ -72,6 +73,9 @@ class Application(tk.Tk):
         tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
 
     def _open_module(self, name: str) -> None:
+        if name == "PDF vers Office":
+            PdfToOfficeWindow(self)
+            return
         dialog = tk.Toplevel(self)
         dialog.title(f"{name} — PDF Converter Lou Còdi")
         dialog.geometry("680x260")
