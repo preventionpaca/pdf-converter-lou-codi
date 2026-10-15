@@ -16,4 +16,4 @@ def test_occitan_cross_is_packaged() -> None:
     root = Path(__file__).parents[1]
     logo = root / "src/lou_codi_pdf_converter/assets/croix-lou-codi.png"
     assert logo.is_file()
-    assert logo.stat().st_size > 1_000
+    assert logo.stat().st_size > 100_000

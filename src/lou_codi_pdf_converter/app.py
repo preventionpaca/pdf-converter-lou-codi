@@ -47,7 +47,8 @@ class Application(tk.Tk):
         header.pack(fill="x")
         header.pack_propagate(False)
         logo_path = Path(__file__).with_name("assets") / "croix-lou-codi.png"
-        self.brand_logo = tk.PhotoImage(file=str(logo_path))
+        source_logo = tk.PhotoImage(file=str(logo_path))
+        self.brand_logo = source_logo.subsample(15, 15)
         tk.Label(header, image=self.brand_logo, bg=NAVY, borderwidth=0).pack(
             side="left", padx=(22, 15), pady=7
         )
