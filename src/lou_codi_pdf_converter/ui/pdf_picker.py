@@ -16,7 +16,7 @@ class PdfPicker(tk.Toplevel):
     """Large, predictable PDF picker starting in the Downloads directory."""
 
     def __init__(self, parent: tk.Misc) -> None:
-        super().__init__(parent)
+        super().__init__(parent, class_="LouCodiPdfConverter")
         self.title("Choisir des PDF — Téléchargements")
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
@@ -31,8 +31,18 @@ class PdfPicker(tk.Toplevel):
         make_modal(self, parent)
 
     def _build(self) -> None:
-        header = tk.Frame(self, bg=NAVY, padx=22, pady=16)
+        root = self._root()
+        app_icon = getattr(root, "app_icon", None)
+        if app_icon is not None:
+            self.iconphoto(False, app_icon)
+
+        header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
+        if app_icon is not None:
+            self.picker_logo = app_icon.subsample(17, 17)
+            tk.Label(header, image=self.picker_logo, bg=NAVY, borderwidth=0).pack(
+                side="left", padx=(0, 14)
+            )
         tk.Label(
             header,
             text="Choisir les documents PDF",

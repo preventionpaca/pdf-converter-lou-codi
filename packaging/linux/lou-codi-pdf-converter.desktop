@@ -7,4 +7,4 @@ Terminal=false
 Type=Application
 Categories=Office;
 Keywords=PDF;DOCX;Excel;Word;conversion;
-StartupWMClass=LouCodiPdfConverter
+StartupWMClass=Loucodipdfconverter

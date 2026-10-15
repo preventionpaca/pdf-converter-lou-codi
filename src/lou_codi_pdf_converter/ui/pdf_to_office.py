@@ -28,7 +28,7 @@ class ConversionResult:
 
 class PdfToOfficeWindow(tk.Toplevel):
     def __init__(self, parent: tk.Misc) -> None:
-        super().__init__(parent)
+        super().__init__(parent, class_="LouCodiPdfConverter")
         self.title("PDF vers Office — PDF Converter Lou Còdi")
         self.geometry("960x680")
         self.minsize(760, 540)
@@ -48,9 +48,11 @@ class PdfToOfficeWindow(tk.Toplevel):
         make_modal(self, parent)
 
     def _build(self) -> None:
+        app_icon = getattr(self._root(), "app_icon", None)
+        if app_icon is not None:
+            self.iconphoto(False, app_icon)
         header = tk.Frame(self, bg=NAVY, padx=22, pady=12)
         header.pack(fill="x")
-        app_icon = getattr(self.master, "app_icon", None)
         if app_icon is not None:
             self.workspace_logo = app_icon.subsample(17, 17)
             tk.Label(header, image=self.workspace_logo, bg=NAVY, borderwidth=0).pack(side="left", padx=(0, 14))
@@ -237,7 +239,29 @@ class PdfToOfficeWindow(tk.Toplevel):
             return
         target = self.output_by_source.get(Path(selection[0]))
         if target and target.is_file():
+            self._open_with_feedback(target)
+
+    def _open_with_feedback(self, target: Path) -> None:
+        previous_status = self.status.cget("text")
+        self.configure(cursor="watch")
+        self.status.configure(text=f"Ouverture de {target.name}…")
+        self.progress.configure(mode="indeterminate", value=0)
+        self.progress.start(12)
+        self.update_idletasks()
+        try:
             open_path(target)
+        except OSError as exc:
+            messagebox.showerror("Ouverture impossible", str(exc), parent=self)
+
+        def restore() -> None:
+            if not self.winfo_exists():
+                return
+            self.progress.stop()
+            self.progress.configure(mode="determinate", value=100)
+            self.status.configure(text=previous_status)
+            self.configure(cursor="")
+
+        self.after(900, restore)
 
     def _request_close(self) -> None:
         if self.running and not messagebox.askyesno(

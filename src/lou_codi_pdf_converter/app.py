@@ -86,7 +86,7 @@ class Application(tk.Tk):
             window = DocumentsToPdfWindow(self)
             self.wait_window(window)
             return
-        dialog = tk.Toplevel(self)
+        dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
         dialog.title(f"{name} — PDF Converter Lou Còdi")
         dialog.geometry("680x260")
         dialog.configure(bg=BACKGROUND)
