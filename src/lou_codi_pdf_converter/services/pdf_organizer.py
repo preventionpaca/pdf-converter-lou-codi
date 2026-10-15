@@ -1,9 +1,37 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
+
+
+@dataclass(frozen=True)
+class PagePlan:
+    source: Path | None
+    page_index: int | None
+    rotation: int = 0
+    width: float = 595
+    height: float = 842
+
+
+def assemble_pdf(pages: Sequence[PagePlan], target: Path) -> None:
+    """Build a PDF from source pages and blanks in the requested order."""
+    writer = PdfWriter()
+    readers: dict[Path, PdfReader] = {}
+    for planned in pages:
+        if planned.source is None:
+            page = writer.add_blank_page(width=planned.width, height=planned.height)
+        else:
+            reader = readers.setdefault(planned.source, PdfReader(planned.source))
+            if planned.page_index is None:
+                raise ValueError("Une page source doit posséder un index.")
+            writer.add_page(reader.pages[planned.page_index])
+            page = writer.pages[-1]
+        if planned.rotation:
+            page.rotate(planned.rotation)
+    _write(writer, target)
 
 
 def merge_pdfs(sources: Iterable[Path], target: Path) -> None:
@@ -42,4 +70,3 @@ def _write(writer: PdfWriter, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("wb") as output:
         writer.write(output)
-

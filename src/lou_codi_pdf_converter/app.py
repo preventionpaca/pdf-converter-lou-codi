@@ -7,6 +7,7 @@ from tkinter import ttk
 
 from . import __version__
 from .ui.documents_to_pdf import DocumentsToPdfWindow
+from .ui.organize_pdf import OrganizePdfWindow
 from .ui.pdf_to_office import PdfToOfficeWindow
 from .ui.windowing import center_window, make_modal
 
@@ -84,6 +85,10 @@ class Application(tk.Tk):
             return
         if name == "Documents vers PDF":
             window = DocumentsToPdfWindow(self)
+            self.wait_window(window)
+            return
+        if name == "Organiser les PDF":
+            window = OrganizePdfWindow(self)
             self.wait_window(window)
             return
         dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
