@@ -7,8 +7,6 @@ from pathlib import Path
 from tkinter import colorchooser, messagebox, ttk
 
 import pymupdf
-from docx import Document
-from docx.shared import Inches
 from PIL import Image, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
@@ -21,6 +19,7 @@ from ..services.canvas_document import (
     export_canvas_pdf,
     pages_for_object,
 )
+from ..services.docx_canvas import export_editable_docx
 from ..system import open_path
 from .input_dialogs import ask_table_size, ask_text
 from .pdf_picker import choose_documents
@@ -62,38 +61,40 @@ class DocumentEditorWindow(tk.Toplevel):
         self.after_idle(self._render)
 
     def _build(self) -> None:
+        self._build_menu()
         header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
         tk.Label(header, text="Mise en page locale — canevas A4/PDF", bg=NAVY, fg="#CBDFF5", font=("Sans", 10)).pack(side="left", padx=18)
 
-        top = ttk.Frame(self, style="App.TFrame", padding=(12, 7))
-        top.pack(fill="x")
-        self._buttons(top, (
-            ("Nouveau blanc", self._new), ("Ouvrir un projet", self._load),
-            ("Importer PDF", self._import_pdf), ("Enregistrer", self._save),
-            ("↶ Annuler", self._undo), ("↷ Rétablir", self._redo),
-            ("Zone de texte", self._add_text), ("Image", self._add_image),
-            ("Masque", self._add_mask), ("Tableau", self._add_table),
-            ("En-tête", lambda: self._add_preset("header")),
-            ("Pied de page", lambda: self._add_preset("footer")),
-            ("Marge gauche", lambda: self._add_preset("left_margin")),
-        ))
-        ttk.Button(top, text="Imprimer", command=self._print).pack(side="right", padx=2)
-        ttk.Button(top, text="Exporter DOCX", command=self._export_docx).pack(side="right", padx=2)
-        ttk.Button(top, text="Exporter PDF", style="Primary.TButton", command=self._export_pdf).pack(side="right", padx=2)
-
         formatting = ttk.Frame(self, style="App.TFrame", padding=(12, 5))
         formatting.pack(fill="x")
         self._buttons(formatting, (
-            ("Gras", lambda: self._toggle("bold")), ("Italique", lambda: self._toggle("italic")),
-            ("Aligner à gauche", lambda: self._align("left")), ("Centrer", lambda: self._align("center")),
-            ("Aligner à droite", lambda: self._align("right")), ("Justifier", lambda: self._align("justify")),
-            ("Couleur", self._choose_color), ("A−", lambda: self._change_font(-1)), ("A+", lambda: self._change_font(1)),
-            ("Copier le format", self._copy_format), ("Appliquer le format", self._apply_format),
-            ("Réduire", lambda: self._resize(0.9)), ("Agrandir", lambda: self._resize(1.1)),
+            ("↶", self._undo), ("↷", self._redo),
+            ("B", lambda: self._toggle("bold")), ("I", lambda: self._toggle("italic")),
+            ("≡←", lambda: self._align("left")), ("≡↔", lambda: self._align("center")),
+            ("→≡", lambda: self._align("right")), ("≡", lambda: self._align("justify")),
         ))
-        ttk.Button(formatting, text="Supprimer l’objet", command=self._delete_selected).pack(side="right", padx=2)
+        ttk.Label(formatting, text="Taille", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self.font_size_var = tk.StringVar(value="12")
+        font_size = ttk.Combobox(
+            formatting,
+            textvariable=self.font_size_var,
+            values=("8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36", "48", "60", "72"),
+            width=5,
+        )
+        font_size.pack(side="left", padx=2)
+        font_size.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
+        font_size.bind("<Return>", lambda _event: self._apply_font_size())
+        ttk.Button(formatting, text="🎨", command=self._choose_color).pack(side="left", padx=2)
+        ttk.Separator(formatting, orient="vertical").pack(side="left", fill="y", padx=8)
+        self._buttons(formatting, (
+            ("T+", self._add_text), ("▧", self._add_image), ("▤", self._add_table),
+            ("□", self._add_mask), ("⌗", self._copy_format), ("✓⌗", self._apply_format),
+        ))
+        ttk.Button(formatting, text="PDF", style="Primary.TButton", command=self._export_pdf).pack(side="right", padx=2)
+        ttk.Button(formatting, text="DOCX", command=self._export_docx).pack(side="right", padx=2)
+        ttk.Button(formatting, text="🗑", command=self._delete_selected).pack(side="right", padx=2)
 
         body = ttk.Panedwindow(self, orient="horizontal")
         body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
@@ -157,6 +158,70 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Label(bottom, text="Zoom", style="Body.TLabel").pack(side="right", padx=5)
         self.status = ttk.Label(self, text="Nouvelle page A4", background=BACKGROUND)
         self.status.pack(fill="x", padx=18, pady=(2, 7))
+
+    def _build_menu(self) -> None:
+        menu = tk.Menu(self)
+        file_menu = tk.Menu(menu, tearoff=False)
+        for label, command, accelerator in (
+            ("Nouveau document", self._new, "Ctrl+N"),
+            ("Ouvrir un projet…", self._load, "Ctrl+O"),
+            ("Importer un PDF…", self._import_pdf, ""),
+            ("Enregistrer", self._save, "Ctrl+S"),
+        ):
+            file_menu.add_command(label=label, command=command, accelerator=accelerator)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exporter en PDF…", command=self._export_pdf)
+        file_menu.add_command(label="Exporter en DOCX…", command=self._export_docx)
+        file_menu.add_command(label="Imprimer…", command=self._print, accelerator="Ctrl+P")
+        file_menu.add_separator()
+        file_menu.add_command(label="Fermer", command=self.destroy)
+        menu.add_cascade(label="Fichier", menu=file_menu)
+
+        edit_menu = tk.Menu(menu, tearoff=False)
+        edit_menu.add_command(label="Annuler", command=self._undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(label="Rétablir", command=self._redo, accelerator="Ctrl+Y")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Copier le format", command=self._copy_format)
+        edit_menu.add_command(label="Appliquer le format", command=self._apply_format)
+        edit_menu.add_command(label="Supprimer l’objet", command=self._delete_selected, accelerator="Suppr")
+        menu.add_cascade(label="Édition", menu=edit_menu)
+
+        insert_menu = tk.Menu(menu, tearoff=False)
+        insert_menu.add_command(label="Zone de texte", command=self._add_text)
+        insert_menu.add_command(label="Image…", command=self._add_image)
+        insert_menu.add_command(label="Tableau…", command=self._add_table)
+        insert_menu.add_command(label="Masque blanc", command=self._add_mask)
+        insert_menu.add_separator()
+        insert_menu.add_command(label="En-tête libre", command=lambda: self._add_preset("header"))
+        insert_menu.add_command(label="Pied de page libre", command=lambda: self._add_preset("footer"))
+        insert_menu.add_command(label="Marge de notes à gauche", command=lambda: self._add_preset("left_margin"))
+        insert_menu.add_command(label="Page blanche", command=self._add_blank_page)
+        menu.add_cascade(label="Insertion", menu=insert_menu)
+
+        format_menu = tk.Menu(menu, tearoff=False)
+        format_menu.add_command(label="Gras", command=lambda: self._toggle("bold"))
+        format_menu.add_command(label="Italique", command=lambda: self._toggle("italic"))
+        format_menu.add_command(label="Couleur du texte…", command=self._choose_color)
+        format_menu.add_separator()
+        for label, value in (("Aligner à gauche", "left"), ("Centrer", "center"), ("Aligner à droite", "right"), ("Justifier", "justify")):
+            format_menu.add_command(label=label, command=lambda alignment=value: self._align(alignment))
+        format_menu.add_separator()
+        format_menu.add_command(label="Agrandir le cadre", command=lambda: self._resize(1.1))
+        format_menu.add_command(label="Réduire le cadre", command=lambda: self._resize(0.9))
+        menu.add_cascade(label="Format", menu=format_menu)
+
+        view_menu = tk.Menu(menu, tearoff=False)
+        view_menu.add_command(label="Zoom avant", command=lambda: self._set_zoom(0.1), accelerator="Ctrl++")
+        view_menu.add_command(label="Zoom arrière", command=lambda: self._set_zoom(-0.1), accelerator="Ctrl+-")
+        menu.add_cascade(label="Affichage", menu=view_menu)
+        self.configure(menu=menu)
+        self.bind("<Control-n>", lambda _event: self._new())
+        self.bind("<Control-o>", lambda _event: self._load())
+        self.bind("<Control-s>", lambda _event: self._save())
+        self.bind("<Control-z>", lambda _event: self._undo())
+        self.bind("<Control-y>", lambda _event: self._redo())
+        self.bind("<Control-p>", lambda _event: self._print())
+        self.bind("<Delete>", lambda _event: self._delete_selected())
 
     @staticmethod
     def _buttons(parent: tk.Misc, items: tuple[tuple[str, object], ...]) -> None:
@@ -485,6 +550,13 @@ class DocumentEditorWindow(tk.Toplevel):
     def _change_font(self, change: int) -> None:
         self._mutate(lambda item: setattr(item, "font_size", max(6, item.font_size + change)))
 
+    def _apply_font_size(self) -> None:
+        try:
+            value = max(6.0, min(144.0, float(self.font_size_var.get().replace(",", "."))))
+        except ValueError:
+            return
+        self._mutate(lambda item: setattr(item, "font_size", value))
+
     def _resize(self, factor: float) -> None:
         def resize(item: PageObject) -> None:
             item.width, item.height = max(20, item.width * factor), max(20, item.height * factor)
@@ -524,6 +596,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.kind_label.configure(text=names.get(item.kind, item.kind))
         for key, var in self.property_vars.items():
             var.set(f"{getattr(item, key):.1f}")
+        self.font_size_var.set(f"{item.font_size:g}")
         self.scope_var.set("Toutes les pages" if item.pages == "all" else "Pages choisies" if item.pages else "Cette page")
         self.pages_var.set("" if item.pages == "all" else item.pages)
 
@@ -615,28 +688,12 @@ class DocumentEditorWindow(tk.Toplevel):
         if target is None:
             return
         try:
-            with tempfile.TemporaryDirectory(prefix="lou-codi-docx-") as directory:
-                temporary = Path(directory)
-                composed_pdf = temporary / "document.pdf"
-                export_canvas_pdf(self.document, composed_pdf)
-                document = Document()
-                section = document.sections[0]
-                section.page_width, section.page_height = Inches(8.27), Inches(11.69)
-                section.left_margin = section.right_margin = Inches(0)
-                section.top_margin = section.bottom_margin = Inches(0)
-                with pymupdf.open(composed_pdf) as pdf:
-                    for page_number, page in enumerate(pdf):
-                        if page_number:
-                            document.add_page_break()
-                        image_path = temporary / f"page-{page_number + 1}.png"
-                        page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False).save(image_path)
-                        document.add_picture(str(image_path), width=Inches(8.20))
-                document.save(target)
+            export_editable_docx(self.document, target)
         except (OSError, RuntimeError, ValueError) as exc:
             messagebox.showerror("Export impossible", str(exc), parent=self)
             return
         self.last_export = target
-        self.status.configure(text=f"DOCX compatible créé : {target.name}. Chaque page conserve exactement sa mise en page.")
+        self.status.configure(text=f"DOCX créé : {target.name}. Les zones de texte restent modifiables dans Word et TextMaker.")
 
     def _print(self) -> None:
         target = Path(tempfile.gettempdir()) / "lou-codi-document-a-imprimer.pdf"
