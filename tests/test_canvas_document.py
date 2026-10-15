@@ -6,6 +6,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    pages_for_object,
 )
 
 
@@ -24,3 +25,11 @@ def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
 
     assert restored.objects[1].text == "Bonjour Lou Còdi"
     assert len(PdfReader(target).pages) == 1
+
+
+def test_page_scope_supports_all_and_ranges() -> None:
+    item = PageObject("text", 0, 0, 0, 100, 30, text="Entête", pages="all")
+    assert pages_for_object(item, 4) == [0, 1, 2, 3]
+
+    item.pages = "1,3-4"
+    assert pages_for_object(item, 5) == [0, 2, 3]

@@ -8,8 +8,7 @@ from tkinter import colorchooser, messagebox, ttk
 
 import pymupdf
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
+from docx.shared import Inches
 from PIL import Image, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
@@ -20,6 +19,7 @@ from ..services.canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    pages_for_object,
 )
 from ..system import open_path
 from .input_dialogs import ask_table_size, ask_text
@@ -49,6 +49,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._background_image: ImageTk.PhotoImage | None = None
         self._overlay_images: list[ImageTk.PhotoImage] = []
         self._drag_origin: tuple[float, float, float, float] | None = None
+        self._resize_origin: tuple[float, float, float, float] | None = None
+        self._editing_widget: tk.Text | None = None
         self._format_clipboard: dict[str, object] | None = None
         icon = getattr(self._root(), "app_icon", None)
         if icon is not None:
@@ -73,6 +75,9 @@ class DocumentEditorWindow(tk.Toplevel):
             ("↶ Annuler", self._undo), ("↷ Rétablir", self._redo),
             ("Zone de texte", self._add_text), ("Image", self._add_image),
             ("Masque", self._add_mask), ("Tableau", self._add_table),
+            ("En-tête", lambda: self._add_preset("header")),
+            ("Pied de page", lambda: self._add_preset("footer")),
+            ("Marge gauche", lambda: self._add_preset("left_margin")),
         ))
         ttk.Button(top, text="Imprimer", command=self._print).pack(side="right", padx=2)
         ttk.Button(top, text="Exporter DOCX", command=self._export_docx).pack(side="right", padx=2)
@@ -121,6 +126,22 @@ class DocumentEditorWindow(tk.Toplevel):
             ttk.Entry(panel, textvariable=var).pack(fill="x", pady=(0, 6))
         ttk.Button(panel, text="Appliquer les coordonnées", style="Primary.TButton", command=self._apply_properties).pack(fill="x", pady=4)
         ttk.Button(panel, text="Modifier le contenu", command=self._edit_selected).pack(fill="x", pady=4)
+        ttk.Label(panel, text="Appliquer sur", style="Body.TLabel").pack(anchor="w", pady=(10, 0))
+        self.scope_var = tk.StringVar(value="Cette page")
+        self.scope_box = ttk.Combobox(
+            panel,
+            textvariable=self.scope_var,
+            values=("Cette page", "Toutes les pages", "Pages choisies"),
+            state="readonly",
+        )
+        self.scope_box.pack(fill="x", pady=(0, 5))
+        self.scope_box.bind("<<ComboboxSelected>>", lambda _event: self._apply_scope())
+        ttk.Label(panel, text="Pages (ex. 1,3-5)", style="Body.TLabel").pack(anchor="w")
+        self.pages_var = tk.StringVar()
+        pages_entry = ttk.Entry(panel, textvariable=self.pages_var)
+        pages_entry.pack(fill="x", pady=(0, 5))
+        pages_entry.bind("<Return>", lambda _event: self._apply_scope())
+        ttk.Button(panel, text="Appliquer aux pages", command=self._apply_scope).pack(fill="x", pady=4)
         ttk.Label(panel, text="Glissez un objet pour le déplacer. Double-cliquez pour modifier son contenu.", style="Body.TLabel", wraplength=230, justify="left").pack(anchor="w", pady=14)
 
         bottom = ttk.Frame(self, style="App.TFrame", padding=(14, 6))
@@ -222,7 +243,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if not rendered:
             self.canvas.create_rectangle(self.page_x, self.page_y, self.page_x + dw, self.page_y + dh, fill="white", outline="#9AA5B1")
         for index, item in enumerate(self.document.objects):
-            if item.page == self.current_page:
+            if self.current_page in pages_for_object(item, self.document.page_count):
                 self._draw_object(index, item)
         self.canvas.configure(scrollregion=(0, 0, max(viewport, self.page_x + dw + 40), self.page_y + dh + 35))
         self.page_label.configure(text=f"Page {self.current_page + 1} / {self.document.page_count}")
@@ -266,6 +287,17 @@ class DocumentEditorWindow(tk.Toplevel):
             tx = x if item.align in {"left", "justify"} else x + w / 2 if item.align == "center" else x + w
             self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=3 if selected else 1, tags=tags)
             self.canvas.create_text(tx, y + 3, text=item.text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=("Liberation Sans", max(7, round(item.font_size * self.zoom)), style), tags=tags)
+        if selected:
+            size = 12
+            self.canvas.create_rectangle(
+                x + w - size / 2,
+                y + h - size / 2,
+                x + w + size / 2,
+                y + h + size / 2,
+                fill="#1769AA",
+                outline="white",
+                tags=(f"resize:{index}", "resize"),
+            )
 
     def _add_object(self, item: PageObject) -> None:
         self._checkpoint()
@@ -274,9 +306,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _add_text(self) -> None:
-        value = ask_text(self, "Zone de texte", "Texte :", "Saisissez votre texte")
-        if value:
-            self._add_object(PageObject("text", self.current_page, 70, 80, 280, 80, text=value))
+        self._add_object(PageObject("text", self.current_page, 70, 80, 280, 80))
+        self.after_idle(lambda: self._start_inline_text_editor(self.document.objects[self.selected]) if self.selected is not None else None)
 
     def _add_image(self) -> None:
         files = choose_documents(self, {".png", ".jpg", ".jpeg", ".tif", ".tiff"})
@@ -293,6 +324,18 @@ class DocumentEditorWindow(tk.Toplevel):
             content = "\n".join("\t".join("Cellule" for _ in range(columns)) for _ in range(rows))
             self._add_object(PageObject("table", self.current_page, 70, 80, 360, max(80, rows * 32), text=content, font_size=10))
 
+    def _add_preset(self, kind: str) -> None:
+        width, height = self._page_size()
+        labels = {
+            "header": ("Texte d’en-tête", 45, 30, width - 90, 45),
+            "footer": ("Texte de pied de page", 45, height - 65, width - 90, 35),
+            "left_margin": ("Notes", 18, 90, 90, height - 160),
+        }
+        text, x, y, object_width, object_height = labels[kind]
+        item = PageObject("text", self.current_page, x, y, object_width, object_height, text=text)
+        item.pages = "all"
+        self._add_object(item)
+
     def _object_at_event(self, event: tk.Event[tk.Misc]) -> int | None:
         current = self.canvas.find_withtag("current")
         if current:
@@ -302,6 +345,20 @@ class DocumentEditorWindow(tk.Toplevel):
         return None
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
+        current = self.canvas.find_withtag("current")
+        if current:
+            for tag in self.canvas.gettags(current[0]):
+                if tag.startswith("resize:"):
+                    self.selected = int(tag.split(":", 1)[1])
+                    item = self.document.objects[self.selected]
+                    self._resize_origin = (
+                        self.canvas.canvasx(event.x),
+                        self.canvas.canvasy(event.y),
+                        item.width,
+                        item.height,
+                    )
+                    self._drag_origin = None
+                    return
         self.selected = self._object_at_event(event)
         if self.selected is not None:
             item = self.document.objects[self.selected]
@@ -311,6 +368,13 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _drag(self, event: tk.Event[tk.Misc]) -> None:
+        if self.selected is not None and self._resize_origin is not None:
+            sx, sy, old_width, old_height = self._resize_origin
+            item = self.document.objects[self.selected]
+            item.width = max(20, old_width + (self.canvas.canvasx(event.x) - sx) / self.zoom)
+            item.height = max(20, old_height + (self.canvas.canvasy(event.y) - sy) / self.zoom)
+            self._render()
+            return
         if self.selected is None or self._drag_origin is None:
             return
         sx, sy, ox, oy = self._drag_origin
@@ -321,6 +385,16 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _release(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._resize_origin is not None and self.selected is not None:
+            _, _, old_width, old_height = self._resize_origin
+            item = self.document.objects[self.selected]
+            if (item.width, item.height) != (old_width, old_height):
+                snapshot = copy.deepcopy(self.document)
+                snapshot.objects[self.selected].width = old_width
+                snapshot.objects[self.selected].height = old_height
+                self.undo_stack.append(snapshot)
+                self.redo_stack.clear()
+        self._resize_origin = None
         if self._drag_origin is not None and self.selected is not None:
             _, _, old_x, old_y = self._drag_origin
             item = self.document.objects[self.selected]
@@ -337,12 +411,58 @@ class DocumentEditorWindow(tk.Toplevel):
         item = self.document.objects[self.selected]
         if item.kind not in {"text", "table"}:
             return
-        prompt = "Contenu (tabulations entre les colonnes) :" if item.kind == "table" else "Texte :"
-        value = ask_text(self, "Modifier le contenu", prompt, item.text)
-        if value is not None:
-            self._checkpoint()
-            item.text = value
+        if item.kind == "table":
+            value = ask_text(self, "Modifier le tableau", "Contenu (tabulations entre les colonnes) :", item.text)
+            if value is not None:
+                self._checkpoint()
+                item.text = value
+                self._render()
+            return
+        self._start_inline_text_editor(item)
+
+    def _start_inline_text_editor(self, item: PageObject) -> None:
+        if self._editing_widget is not None:
+            self._editing_widget.destroy()
+        x = self.page_x + item.x * self.zoom
+        y = self.page_y + item.y * self.zoom
+        widget = tk.Text(
+            self.canvas,
+            wrap="word",
+            font=("Liberation Sans", max(8, round(item.font_size * self.zoom))),
+            bg="white",
+            fg=item.color,
+            relief="solid",
+            borderwidth=2,
+            undo=True,
+        )
+        widget.insert("1.0", item.text)
+        self._editing_widget = widget
+        self.canvas.create_window(
+            x,
+            y,
+            window=widget,
+            anchor="nw",
+            width=max(60, item.width * self.zoom),
+            height=max(35, item.height * self.zoom),
+            tags=("inline-editor",),
+        )
+
+        def finish(_event: object = None) -> None:
+            if self._editing_widget is not widget:
+                return
+            value = widget.get("1.0", "end-1c")
+            self._editing_widget = None
+            if value != item.text:
+                self._checkpoint()
+                item.text = value
+            widget.destroy()
             self._render()
+
+        widget.bind("<Control-Return>", finish)
+        widget.bind("<FocusOut>", finish)
+        widget.focus_set()
+        widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
+        widget.tag_add("align", "1.0", "end")
 
     def _mutate(self, mutation: object) -> None:
         if self.selected is not None:
@@ -396,12 +516,23 @@ class DocumentEditorWindow(tk.Toplevel):
             self.kind_label.configure(text="Aucun objet")
             for var in self.property_vars.values():
                 var.set("")
+            self.scope_var.set("Cette page")
+            self.pages_var.set("")
             return
         item = self.document.objects[self.selected]
         names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau"}
         self.kind_label.configure(text=names.get(item.kind, item.kind))
         for key, var in self.property_vars.items():
             var.set(f"{getattr(item, key):.1f}")
+        self.scope_var.set("Toutes les pages" if item.pages == "all" else "Pages choisies" if item.pages else "Cette page")
+        self.pages_var.set("" if item.pages == "all" else item.pages)
+
+    def _apply_scope(self) -> None:
+        if self.selected is None:
+            return
+        scope = self.scope_var.get()
+        pages = "all" if scope == "Toutes les pages" else self.pages_var.get().strip() if scope == "Pages choisies" else ""
+        self._mutate(lambda item: setattr(item, "pages", pages))
 
     def _apply_properties(self) -> None:
         if self.selected is None:
@@ -483,36 +614,29 @@ class DocumentEditorWindow(tk.Toplevel):
         target = self._choose_export(".docx", "Document Word")
         if target is None:
             return
-        document = Document()
-        section = document.sections[0]
-        section.page_width, section.page_height = Inches(8.27), Inches(11.69)
-        section.left_margin = section.right_margin = Inches(0.7)
-        for page_number in range(self.document.page_count):
-            if page_number:
-                document.add_page_break()
-            objects = sorted((obj for obj in self.document.objects if obj.page == page_number), key=lambda obj: (obj.y, obj.x))
-            for item in objects:
-                if item.kind == "text":
-                    paragraph = document.add_paragraph()
-                    paragraph.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT, "center": WD_ALIGN_PARAGRAPH.CENTER, "right": WD_ALIGN_PARAGRAPH.RIGHT, "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}.get(item.align, WD_ALIGN_PARAGRAPH.LEFT)
-                    run = paragraph.add_run(item.text)
-                    run.bold, run.italic, run.font.size = item.bold, item.italic, Pt(item.font_size)
-                elif item.kind == "image" and Path(item.image_path).is_file():
-                    document.add_picture(item.image_path, width=Inches(min(6.5, item.width / 72)))
-                elif item.kind == "table":
-                    rows = [row.split("\t") for row in item.text.splitlines()] or [[""]]
-                    table = document.add_table(rows=len(rows), cols=max(len(row) for row in rows))
-                    table.style = "Table Grid"
-                    for docx_row, values in zip(table.rows, rows):
-                        for cell, value in zip(docx_row.cells, values):
-                            cell.text = value
         try:
-            document.save(target)
-        except OSError as exc:
+            with tempfile.TemporaryDirectory(prefix="lou-codi-docx-") as directory:
+                temporary = Path(directory)
+                composed_pdf = temporary / "document.pdf"
+                export_canvas_pdf(self.document, composed_pdf)
+                document = Document()
+                section = document.sections[0]
+                section.page_width, section.page_height = Inches(8.27), Inches(11.69)
+                section.left_margin = section.right_margin = Inches(0)
+                section.top_margin = section.bottom_margin = Inches(0)
+                with pymupdf.open(composed_pdf) as pdf:
+                    for page_number, page in enumerate(pdf):
+                        if page_number:
+                            document.add_page_break()
+                        image_path = temporary / f"page-{page_number + 1}.png"
+                        page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False).save(image_path)
+                        document.add_picture(str(image_path), width=Inches(8.20))
+                document.save(target)
+        except (OSError, RuntimeError, ValueError) as exc:
             messagebox.showerror("Export impossible", str(exc), parent=self)
             return
         self.last_export = target
-        self.status.configure(text=f"DOCX modifiable créé : {target.name}. La disposition peut varier selon l’éditeur.")
+        self.status.configure(text=f"DOCX compatible créé : {target.name}. Chaque page conserve exactement sa mise en page.")
 
     def _print(self) -> None:
         target = Path(tempfile.gettempdir()) / "lou-codi-document-a-imprimer.pdf"

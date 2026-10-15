@@ -26,6 +26,7 @@ class PageObject:
     align: str = "left"
     color: str = "#000000"
     fill: str = "#FFFFFF"
+    pages: str = ""
 
 
 @dataclass
@@ -74,31 +75,56 @@ def export_canvas_pdf(document: CanvasDocument, target: Path) -> None:
         pdf.new_page(width=A4_WIDTH, height=A4_HEIGHT)
 
     for item in document.objects:
-        if not 0 <= item.page < pdf.page_count:
-            continue
-        page = pdf[item.page]
-        rectangle = pymupdf.Rect(item.x, item.y, item.x + item.width, item.y + item.height)
-        if item.kind == "mask":
-            page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
-        elif item.kind == "image" and Path(item.image_path).is_file():
-            page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
-        elif item.kind in {"text", "table"}:
-            if item.kind == "table":
-                _draw_table(page, rectangle, item)
-            else:
-                font_name = "hebi" if item.bold and item.italic else "hebo" if item.bold else "heit" if item.italic else "helv"
-                page.insert_textbox(
-                    rectangle,
-                    item.text,
-                    fontsize=max(6, item.font_size),
-                    fontname=font_name,
-                    color=_rgb(item.color),
-                    align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
-                    overlay=True,
-                )
+        for page_number in pages_for_object(item, pdf.page_count):
+            page = pdf[page_number]
+            _draw_object(page, item)
     target.parent.mkdir(parents=True, exist_ok=True)
     pdf.save(target, garbage=4, deflate=True)
     pdf.close()
+
+
+def _draw_object(page: pymupdf.Page, item: PageObject) -> None:
+    rectangle = pymupdf.Rect(item.x, item.y, item.x + item.width, item.y + item.height)
+    if item.kind == "mask":
+        page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
+    elif item.kind == "image" and Path(item.image_path).is_file():
+        page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
+    elif item.kind in {"text", "table"}:
+        if item.kind == "table":
+            _draw_table(page, rectangle, item)
+        else:
+            font_name = "hebi" if item.bold and item.italic else "hebo" if item.bold else "heit" if item.italic else "helv"
+            page.insert_textbox(
+                rectangle,
+                item.text,
+                fontsize=max(6, item.font_size),
+                fontname=font_name,
+                color=_rgb(item.color),
+                align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
+                overlay=True,
+            )
+
+
+def pages_for_object(item: PageObject, page_count: int) -> list[int]:
+    """Resolve `all` or a human page selection such as `1,3-5`."""
+    if item.pages == "all":
+        return list(range(page_count))
+    if not item.pages:
+        return [item.page] if 0 <= item.page < page_count else []
+    selected: set[int] = set()
+    for part in item.pages.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                start, end = (int(value) for value in part.split("-", 1))
+                selected.update(range(min(start, end) - 1, max(start, end)))
+            else:
+                selected.add(int(part) - 1)
+        except ValueError:
+            continue
+    return sorted(page for page in selected if 0 <= page < page_count)
 
 
 def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject) -> None:
