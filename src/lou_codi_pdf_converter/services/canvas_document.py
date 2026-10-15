@@ -221,20 +221,54 @@ def _flow_segments(text: str, frames: list[PageObject]) -> list[str]:
         if not remaining:
             segments.append("")
             continue
-        characters = max(1, int(frame.width / max(3.0, frame.font_size * 0.52)))
-        lines = max(1, int(frame.height / max(7.0, frame.font_size * 1.25)))
-        capacity = max(1, characters * lines)
-        if len(remaining) <= capacity:
+        if _text_fits(remaining, frame):
             segments.append(remaining)
             remaining = ""
             continue
-        cut = remaining.rfind(" ", int(capacity * 0.6), capacity + 1)
-        if cut < 0:
-            cut = capacity
+        low, high = 1, len(remaining)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if _text_fits(remaining[:middle], frame):
+                low = middle
+            else:
+                high = middle - 1
+        cut = max(1, low)
+        if cut >= len(remaining) or not remaining[cut].isspace():
+            word_boundary = max(
+                remaining.rfind(" ", int(cut * 0.6), cut),
+                remaining.rfind("\n", 0, cut),
+            )
+            if word_boundary > 0:
+                cut = word_boundary
         segment = remaining[:cut].rstrip()
         segments.append(segment)
         remaining = remaining[cut:].lstrip("\n ")
     return segments
+
+
+def _text_fits(text: str, frame: PageObject) -> bool:
+    font_name = {"Serif": "tiro", "Monospace": "cour"}.get(frame.font_family, "helv")
+    font = pymupdf.Font(font_name)
+    available_width = max(4.0, frame.width - 8)
+    line_height = max(7.0, frame.font_size * 1.2)
+    maximum_lines = max(1, int((frame.height - 4) / line_height))
+    lines = 0
+    for paragraph in text.split("\n"):
+        if not paragraph:
+            lines += 1
+            continue
+        current = ""
+        for character in paragraph:
+            candidate = current + character
+            if current and font.text_length(candidate, fontsize=frame.font_size) > available_width:
+                lines += 1
+                current = character.lstrip() if character.isspace() else character
+            else:
+                current = candidate
+        lines += 1
+        if lines > maximum_lines:
+            return False
+    return lines <= maximum_lines
 
 
 def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, text: str) -> None:

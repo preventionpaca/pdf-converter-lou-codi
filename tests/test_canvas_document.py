@@ -54,6 +54,15 @@ def test_text_can_flow_between_linked_frames() -> None:
     assert f"{first_part} {second_part}" == first.text
 
 
+def test_text_flow_respects_explicit_line_breaks() -> None:
+    first = PageObject("text", 0, 10, 10, 180, 18, text="Première ligne\nDeuxième ligne", font_size=12)
+    second = PageObject("text", 0, 10, 40, 180, 40, font_size=12)
+    first.flow_next_id = second.object_id
+
+    assert flowed_text_for_object(first, [first, second]) == "Première ligne"
+    assert flowed_text_for_object(second, [first, second]) == "Deuxième ligne"
+
+
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
     bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")

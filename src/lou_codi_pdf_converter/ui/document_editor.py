@@ -115,6 +115,8 @@ class DocumentEditorWindow(tk.Toplevel):
             ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
             ("Cop", self._copy_objects, "Copier les objets sélectionnés"),
             ("Col", self._paste_objects, "Coller une copie indépendante sur cette page"),
+            ("Fmt+", self._copy_format, "Copier la mise en forme"),
+            ("Fmt✓", self._apply_format, "Appliquer la mise en forme copiée"),
             ("B", lambda: self._toggle("bold"), "Gras"),
             ("I", lambda: self._toggle("italic"), "Italique"),
             ("←", lambda: self._align("left"), "Aligner à gauche"),
@@ -164,6 +166,8 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Ω", self._insert_symbol, "Insérer un caractère spécial"),
             ("•", lambda: self._make_list(False), "Liste à puces"),
             ("1.", lambda: self._make_list(True), "Liste numérotée"),
+            ("Barres", lambda: self._add_chart("bar"), "Graphique en barres lié au tableau"),
+            ("Cam.", lambda: self._add_chart("pie"), "Camembert lié au tableau"),
         ), color="#DDF3E7")
         self._buttons(layout, (
             ("Portrait", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
@@ -173,6 +177,10 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Marge", lambda: self._add_preset("left_margin"), "Ajouter une marge de notes"),
             ("Lier texte", self._link_text_frames, "Faire continuer le texte dans le cadre suivant"),
             ("Délier", self._unlink_text_frame, "Supprimer le chaînage du cadre"),
+            ("N° page", lambda: self._insert_field("Page {{PAGE}} / {{PAGES}}"), "Numérotation automatique"),
+            ("Date", lambda: self._insert_field("{{DATE}}"), "Insérer la date du jour"),
+            ("Grouper", self._group_selected, "Regrouper les objets sélectionnés"),
+            ("Dissocier", self._ungroup_selected, "Dissocier les objets"),
         ), color="#F9E8C8")
 
         self.body = ttk.Panedwindow(self, orient="horizontal")
@@ -264,79 +272,6 @@ class DocumentEditorWindow(tk.Toplevel):
         file_menu.add_separator()
         file_menu.add_command(label="Fermer", command=self.destroy)
         menu.add_cascade(label="Fichier", menu=file_menu)
-
-        edit_menu = tk.Menu(menu, tearoff=False)
-        edit_menu.add_command(label="Annuler", command=self._undo, accelerator="Ctrl+Z")
-        edit_menu.add_command(label="Rétablir", command=self._redo, accelerator="Ctrl+Y")
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Copier les objets", command=self._copy_objects, accelerator="Ctrl+C")
-        edit_menu.add_command(label="Coller des copies indépendantes", command=self._paste_objects, accelerator="Ctrl+V")
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Copier le format", command=self._copy_format)
-        edit_menu.add_command(label="Appliquer le format", command=self._apply_format)
-        edit_menu.add_command(label="Supprimer l’objet", command=self._delete_selected, accelerator="Suppr")
-        menu.add_cascade(label="Édition", menu=edit_menu)
-
-        insert_menu = tk.Menu(menu, tearoff=False)
-        insert_menu.add_command(label="Zone de texte", command=self._add_text)
-        insert_menu.add_command(label="Image…", command=self._add_image)
-        insert_menu.add_command(label="Tableau…", command=self._add_table)
-        insert_menu.add_command(label="Masque blanc", command=self._add_mask)
-        insert_menu.add_command(label="Trait", command=self._add_line)
-        insert_menu.add_command(label="Caractère spécial…", command=self._insert_symbol)
-        insert_menu.add_separator()
-        insert_menu.add_command(label="Graphique en barres lié au tableau", command=lambda: self._add_chart("bar"))
-        insert_menu.add_command(label="Camembert lié au tableau", command=lambda: self._add_chart("pie"))
-        insert_menu.add_separator()
-        insert_menu.add_command(label="En-tête libre", command=lambda: self._add_preset("header"))
-        insert_menu.add_command(label="Pied de page libre", command=lambda: self._add_preset("footer"))
-        insert_menu.add_command(label="Marge de notes à gauche", command=lambda: self._add_preset("left_margin"))
-        fields_menu = tk.Menu(insert_menu, tearoff=False)
-        fields_menu.add_command(label="Numéro de page", command=lambda: self._insert_field("{{PAGE}}"))
-        fields_menu.add_command(label="Page / nombre total", command=lambda: self._insert_field("Page {{PAGE}} / {{PAGES}}"))
-        fields_menu.add_command(label="Date du jour", command=lambda: self._insert_field("{{DATE}}"))
-        fields_menu.add_command(label="Nom du document", command=lambda: self._insert_field("{{DOCUMENT}}"))
-        insert_menu.add_cascade(label="Champ automatique", menu=fields_menu)
-        insert_menu.add_command(label="Page blanche", command=self._add_blank_page)
-        menu.add_cascade(label="Insertion", menu=insert_menu)
-
-        format_menu = tk.Menu(menu, tearoff=False)
-        format_menu.add_command(label="Gras", command=lambda: self._toggle("bold"))
-        format_menu.add_command(label="Italique", command=lambda: self._toggle("italic"))
-        format_menu.add_command(label="Couleur du texte…", command=self._choose_color)
-        format_menu.add_command(label="Liste à puces", command=lambda: self._make_list(False))
-        format_menu.add_command(label="Liste numérotée", command=lambda: self._make_list(True))
-        format_menu.add_separator()
-        for label, value in (("Aligner à gauche", "left"), ("Centrer", "center"), ("Aligner à droite", "right"), ("Justifier", "justify")):
-            format_menu.add_command(label=label, command=lambda alignment=value: self._align(alignment))
-        format_menu.add_separator()
-        format_menu.add_command(label="Agrandir le cadre", command=lambda: self._resize(1.1))
-        format_menu.add_command(label="Réduire le cadre", command=lambda: self._resize(0.9))
-        menu.add_cascade(label="Format", menu=format_menu)
-
-        object_menu = tk.Menu(menu, tearoff=False)
-        for label, mode in (
-            ("Aligner à gauche", "left"), ("Centrer horizontalement", "center"),
-            ("Aligner à droite", "right"), ("Aligner en haut", "top"),
-            ("Centrer verticalement", "middle"), ("Aligner en bas", "bottom"),
-        ):
-            object_menu.add_command(label=label, command=lambda value=mode: self._align_objects(value))
-        object_menu.add_separator()
-        object_menu.add_command(label="Regrouper", command=self._group_selected)
-        object_menu.add_command(label="Dissocier", command=self._ungroup_selected)
-        object_menu.add_separator()
-        object_menu.add_command(label="Lier les zones de texte", command=self._link_text_frames)
-        object_menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
-        menu.add_cascade(label="Objets", menu=object_menu)
-
-        page_menu = tk.Menu(menu, tearoff=False)
-        page_menu.add_command(label="Orientation portrait", command=lambda: self._set_orientation("portrait"))
-        page_menu.add_command(label="Orientation paysage", command=lambda: self._set_orientation("landscape"))
-        page_menu.add_separator()
-        page_menu.add_command(label="Page précédente", command=lambda: self._change_page(-1))
-        page_menu.add_command(label="Page suivante", command=lambda: self._change_page(1))
-        page_menu.add_command(label="Ajouter une page blanche", command=self._add_blank_page)
-        menu.add_cascade(label="Page", menu=page_menu)
 
         view_menu = tk.Menu(menu, tearoff=False)
         view_menu.add_checkbutton(
@@ -964,7 +899,8 @@ class DocumentEditorWindow(tk.Toplevel):
             borderwidth=2,
             undo=True,
         )
-        widget.insert("1.0", item.text)
+        original_text = item.text
+        widget.insert("1.0", original_text)
         self._editing_widget = widget
         self.canvas.create_window(
             x,
@@ -981,14 +917,40 @@ class DocumentEditorWindow(tk.Toplevel):
                 return
             value = widget.get("1.0", "end-1c")
             self._editing_widget = None
-            if value != item.text:
-                self._checkpoint()
-                item.text = value
+            item.text = value
+            if value != original_text:
+                snapshot = copy.deepcopy(self.document)
+                snapshot_item = next(
+                    candidate for candidate in snapshot.objects if candidate.object_id == item.object_id
+                )
+                snapshot_item.text = original_text
+                self.undo_stack.append(snapshot)
+                self.undo_stack = self.undo_stack[-80:]
+                self.redo_stack.clear()
             widget.destroy()
             self._render()
 
+        def preview_flow(_event: object = None) -> None:
+            item.text = widget.get("1.0", "end-1c")
+            linked_ids: set[str] = set()
+            cursor = item
+            visited: set[str] = set()
+            by_id = {candidate.object_id: candidate for candidate in self.document.objects}
+            while cursor.flow_next_id and cursor.object_id not in visited:
+                visited.add(cursor.object_id)
+                linked_ids.add(cursor.flow_next_id)
+                cursor = by_id.get(cursor.flow_next_id, cursor)
+            for index, candidate in enumerate(self.document.objects):
+                if candidate.object_id in linked_ids and self.current_page in pages_for_object(
+                    candidate, self.document.page_count
+                ):
+                    self.canvas.delete(f"object:{index}")
+                    self.canvas.delete(f"resize:{index}")
+                    self._draw_object(index, candidate)
+
         widget.bind("<Control-Return>", finish)
         widget.bind("<FocusOut>", finish)
+        widget.bind("<KeyRelease>", preview_flow)
         widget.focus_set()
         widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
         widget.tag_add("align", "1.0", "end")
