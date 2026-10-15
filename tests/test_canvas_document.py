@@ -7,6 +7,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     PageObject,
     export_canvas_pdf,
     pages_for_object,
+    resolve_dynamic_text,
 )
 
 
@@ -33,3 +34,7 @@ def test_page_scope_supports_all_and_ranges() -> None:
 
     item.pages = "1,3-4"
     assert pages_for_object(item, 5) == [0, 2, 3]
+
+
+def test_dynamic_page_fields_are_resolved() -> None:
+    assert resolve_dynamic_text("Page {{PAGE}} / {{PAGES}}", 1, 4) == "Page 2 / 4"

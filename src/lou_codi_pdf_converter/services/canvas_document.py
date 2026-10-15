@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
+from datetime import date
 from pathlib import Path
 
 import pymupdf
@@ -77,26 +78,33 @@ def export_canvas_pdf(document: CanvasDocument, target: Path) -> None:
     for item in document.objects:
         for page_number in pages_for_object(item, pdf.page_count):
             page = pdf[page_number]
-            _draw_object(page, item)
+            _draw_object(page, item, page_number, pdf.page_count, source.stem if source else target.stem)
     target.parent.mkdir(parents=True, exist_ok=True)
     pdf.save(target, garbage=4, deflate=True)
     pdf.close()
 
 
-def _draw_object(page: pymupdf.Page, item: PageObject) -> None:
+def _draw_object(
+    page: pymupdf.Page,
+    item: PageObject,
+    page_number: int,
+    page_count: int,
+    document_name: str,
+) -> None:
     rectangle = pymupdf.Rect(item.x, item.y, item.x + item.width, item.y + item.height)
     if item.kind == "mask":
         page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
     elif item.kind == "image" and Path(item.image_path).is_file():
         page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
     elif item.kind in {"text", "table"}:
+        rendered_text = resolve_dynamic_text(item.text, page_number, page_count, document_name)
         if item.kind == "table":
-            _draw_table(page, rectangle, item)
+            _draw_table(page, rectangle, item, rendered_text)
         else:
             font_name = "hebi" if item.bold and item.italic else "hebo" if item.bold else "heit" if item.italic else "helv"
             page.insert_textbox(
                 rectangle,
-                item.text,
+                rendered_text,
                 fontsize=max(6, item.font_size),
                 fontname=font_name,
                 color=_rgb(item.color),
@@ -127,8 +135,17 @@ def pages_for_object(item: PageObject, page_count: int) -> list[int]:
     return sorted(page for page in selected if 0 <= page < page_count)
 
 
-def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject) -> None:
-    rows = [row.split("\t") for row in item.text.splitlines() if row]
+def resolve_dynamic_text(text: str, page_number: int, page_count: int, document_name: str = "") -> str:
+    return (
+        text.replace("{{PAGE}}", str(page_number + 1))
+        .replace("{{PAGES}}", str(page_count))
+        .replace("{{DATE}}", date.today().strftime("%d/%m/%Y"))
+        .replace("{{DOCUMENT}}", document_name)
+    )
+
+
+def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, text: str) -> None:
+    rows = [row.split("\t") for row in text.splitlines() if row]
     if not rows:
         return
     columns = max(len(row) for row in rows)

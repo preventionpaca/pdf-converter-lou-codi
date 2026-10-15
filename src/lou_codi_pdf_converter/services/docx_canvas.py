@@ -10,7 +10,13 @@ from docx import Document
 from docx.enum.text import WD_BREAK
 from docx.shared import Inches, Pt
 
-from .canvas_document import CanvasDocument, PageObject, export_canvas_pdf, pages_for_object
+from .canvas_document import (
+    CanvasDocument,
+    PageObject,
+    export_canvas_pdf,
+    pages_for_object,
+    resolve_dynamic_text,
+)
 
 VML = "urn:schemas-microsoft-com:vml"
 WORD = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -39,15 +45,25 @@ def export_editable_docx(canvas_document: CanvasDocument, target: Path) -> None:
                 paragraph.add_run().add_picture(str(image_path), width=Inches(8.20))
                 for index, item in enumerate(canvas_document.objects):
                     if item.kind == "text" and page_number in pages_for_object(item, canvas_document.page_count):
-                        paragraph._p.append(_textbox_xml(item, page_number, index))
+                        document_name = Path(canvas_document.source_pdf).stem if canvas_document.source_pdf else target.stem
+                        paragraph._p.append(
+                            _textbox_xml(item, page_number, index, canvas_document.page_count, document_name)
+                        )
                 if page_number < pdf.page_count - 1:
                     paragraph.add_run().add_break(WD_BREAK.PAGE)
         target.parent.mkdir(parents=True, exist_ok=True)
         document.save(target)
 
 
-def _textbox_xml(item: PageObject, page_number: int, index: int):
-    fragments = "<w:br/>".join(f'<w:t xml:space="preserve">{escape(line)}</w:t>' for line in item.text.splitlines())
+def _textbox_xml(
+    item: PageObject,
+    page_number: int,
+    index: int,
+    page_count: int,
+    document_name: str,
+):
+    text = resolve_dynamic_text(item.text, page_number, page_count, document_name)
+    fragments = "<w:br/>".join(f'<w:t xml:space="preserve">{escape(line)}</w:t>' for line in text.splitlines())
     bold = "<w:b/>" if item.bold else ""
     italic = "<w:i/>" if item.italic else ""
     font_size = round(item.font_size * 2)

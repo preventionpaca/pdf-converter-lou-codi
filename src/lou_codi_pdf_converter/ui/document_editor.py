@@ -18,6 +18,7 @@ from ..services.canvas_document import (
     PageObject,
     export_canvas_pdf,
     pages_for_object,
+    resolve_dynamic_text,
 )
 from ..services.docx_canvas import export_editable_docx
 from ..system import open_path
@@ -195,6 +196,12 @@ class DocumentEditorWindow(tk.Toplevel):
         insert_menu.add_command(label="En-tête libre", command=lambda: self._add_preset("header"))
         insert_menu.add_command(label="Pied de page libre", command=lambda: self._add_preset("footer"))
         insert_menu.add_command(label="Marge de notes à gauche", command=lambda: self._add_preset("left_margin"))
+        fields_menu = tk.Menu(insert_menu, tearoff=False)
+        fields_menu.add_command(label="Numéro de page", command=lambda: self._insert_field("{{PAGE}}"))
+        fields_menu.add_command(label="Page / nombre total", command=lambda: self._insert_field("Page {{PAGE}} / {{PAGES}}"))
+        fields_menu.add_command(label="Date du jour", command=lambda: self._insert_field("{{DATE}}"))
+        fields_menu.add_command(label="Nom du document", command=lambda: self._insert_field("{{DOCUMENT}}"))
+        insert_menu.add_cascade(label="Champ automatique", menu=fields_menu)
         insert_menu.add_command(label="Page blanche", command=self._add_blank_page)
         menu.add_cascade(label="Insertion", menu=insert_menu)
 
@@ -350,8 +357,10 @@ class DocumentEditorWindow(tk.Toplevel):
             style = "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal"
             anchor = {"left": "nw", "center": "n", "right": "ne"}.get(item.align, "nw")
             tx = x if item.align in {"left", "justify"} else x + w / 2 if item.align == "center" else x + w
+            source_name = Path(self.document.source_pdf).stem if self.document.source_pdf else (self.project_path.stem if self.project_path else "Nouveau document")
+            displayed_text = resolve_dynamic_text(item.text, self.current_page, self.document.page_count, source_name)
             self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=3 if selected else 1, tags=tags)
-            self.canvas.create_text(tx, y + 3, text=item.text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=("Liberation Sans", max(7, round(item.font_size * self.zoom)), style), tags=tags)
+            self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=("Liberation Sans", max(7, round(item.font_size * self.zoom)), style), tags=tags)
         if selected:
             size = 12
             self.canvas.create_rectangle(
@@ -393,12 +402,33 @@ class DocumentEditorWindow(tk.Toplevel):
         width, height = self._page_size()
         labels = {
             "header": ("Texte d’en-tête", 45, 30, width - 90, 45),
-            "footer": ("Texte de pied de page", 45, height - 65, width - 90, 35),
+            "footer": ("Page {{PAGE}} / {{PAGES}}", 45, height - 65, width - 90, 35),
             "left_margin": ("Notes", 18, 90, 90, height - 160),
         }
         text, x, y, object_width, object_height = labels[kind]
         item = PageObject("text", self.current_page, x, y, object_width, object_height, text=text)
         item.pages = "all"
+        self._add_object(item)
+
+    def _insert_field(self, token: str) -> None:
+        if self.selected is not None and self.document.objects[self.selected].kind == "text":
+            self._checkpoint()
+            item = self.document.objects[self.selected]
+            item.text = f"{item.text} {token}".strip()
+            self._render()
+            return
+        width, height = self._page_size()
+        item = PageObject(
+            "text",
+            self.current_page,
+            45,
+            height - 65,
+            width - 90,
+            35,
+            text=token,
+            align="center",
+            pages="all",
+        )
         self._add_object(item)
 
     def _object_at_event(self, event: tk.Event[tk.Misc]) -> int | None:
