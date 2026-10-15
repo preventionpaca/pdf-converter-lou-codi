@@ -10,6 +10,7 @@ from ..paths import collision_free_target, downloads_directory
 from ..services.documents_to_pdf import IMAGE_SUFFIXES, OFFICE_SUFFIXES, convert_document_to_pdf
 from ..services.pdf_organizer import merge_pdfs
 from ..system import open_path
+from .pdf_picker import choose_documents
 from .windowing import make_modal, maximize_window
 
 BACKGROUND = "#F0F4F9"
@@ -124,15 +125,7 @@ class DocumentsToPdfWindow(tk.Toplevel):
         self.progress.pack(fill="x", pady=(13, 0))
 
     def _add_files(self) -> None:
-        patterns = " ".join(f"*{suffix}" for suffix in sorted(SUPPORTED_SUFFIXES))
-        selected = filedialog.askopenfilenames(
-            parent=self,
-            title="Choisir les documents ou images",
-            initialdir=downloads_directory(),
-            filetypes=(("Documents pris en charge", patterns), ("Tous les fichiers", "*")),
-        )
-        for raw_path in selected:
-            path = Path(raw_path)
+        for path in choose_documents(self, SUPPORTED_SUFFIXES):
             if path in self.files or path.suffix.lower() not in SUPPORTED_SUFFIXES:
                 continue
             self.files.append(path)

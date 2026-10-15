@@ -15,13 +15,26 @@ BACKGROUND = "#F0F4F9"
 class PdfPicker(tk.Toplevel):
     """Large, predictable PDF picker starting in the Downloads directory."""
 
-    def __init__(self, parent: tk.Misc) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        allowed_suffixes: set[str] | None = None,
+        window_title: str = "Choisir des PDF — Téléchargements",
+        heading: str = "Choisir les documents PDF",
+        accept_label: str = "Ajouter les PDF sélectionnés",
+        selection_help: str = "Sélectionnez un ou plusieurs documents PDF.",
+    ) -> None:
         super().__init__(parent, class_="LouCodiPdfConverter")
-        self.title("Choisir des PDF — Téléchargements")
+        self.title(window_title)
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
         self.transient(parent)
         self.selected_files: list[Path] = []
+        self.allowed_suffixes = allowed_suffixes or {".pdf"}
+        self.heading = heading
+        self.accept_label = accept_label
+        self.selection_help = selection_help
         self.current_directory = downloads_directory()
         self.paths: dict[str, Path] = {}
         self.path_text = tk.StringVar(value=str(self.current_directory))
@@ -45,7 +58,7 @@ class PdfPicker(tk.Toplevel):
             )
         tk.Label(
             header,
-            text="Choisir les documents PDF",
+            text=self.heading,
             bg=NAVY,
             fg="white",
             font=("Sans", 18, "bold"),
@@ -87,11 +100,11 @@ class PdfPicker(tk.Toplevel):
 
         footer = ttk.Frame(self, padding=(20, 6, 20, 18))
         footer.pack(fill="x")
-        ttk.Label(footer, text="Ctrl ou Maj : sélectionner plusieurs PDF").pack(side="left")
+        ttk.Label(footer, text="Ctrl ou Maj : sélectionner plusieurs fichiers").pack(side="left")
         ttk.Button(footer, text="Annuler", command=self.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(
             footer,
-            text="Ajouter les PDF sélectionnés",
+            text=self.accept_label,
             style="Primary.TButton",
             command=self._accept,
         ).pack(side="right")
@@ -107,7 +120,7 @@ class PdfPicker(tk.Toplevel):
         self.paths.clear()
         self.tree.delete(*self.tree.get_children())
         for path in entries:
-            if not (path.is_dir() or path.suffix.lower() == ".pdf"):
+            if not (path.is_dir() or path.suffix.lower() in self.allowed_suffixes):
                 continue
             try:
                 statistics = path.stat()
@@ -132,7 +145,11 @@ class PdfPicker(tk.Toplevel):
     def _accept(self) -> None:
         paths = [self.paths[item] for item in self.tree.selection() if item in self.paths]
         directories = [path for path in paths if path.is_dir()]
-        files = [path for path in paths if path.is_file() and path.suffix.lower() == ".pdf"]
+        files = [
+            path
+            for path in paths
+            if path.is_file() and path.suffix.lower() in self.allowed_suffixes
+        ]
         if files:
             self.selected_files = files
             self.destroy()
@@ -142,13 +159,26 @@ class PdfPicker(tk.Toplevel):
             return
         messagebox.showinfo(
             "Sélection",
-            "Sélectionnez un ou plusieurs documents PDF.",
+            self.selection_help,
             parent=self,
         )
 
 
 def choose_pdfs(parent: tk.Misc) -> list[Path]:
     picker = PdfPicker(parent)
+    picker.wait_window()
+    return picker.selected_files
+
+
+def choose_documents(parent: tk.Misc, allowed_suffixes: set[str]) -> list[Path]:
+    picker = PdfPicker(
+        parent,
+        allowed_suffixes=allowed_suffixes,
+        window_title="Choisir des documents ou images — Téléchargements",
+        heading="Choisir les documents ou images",
+        accept_label="Ajouter les fichiers sélectionnés",
+        selection_help="Sélectionnez un ou plusieurs documents ou images pris en charge.",
+    )
     picker.wait_window()
     return picker.selected_files
 
