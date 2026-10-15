@@ -4,12 +4,13 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from ..paths import collision_free_target, downloads_directory
 from ..services.documents_to_pdf import IMAGE_SUFFIXES, OFFICE_SUFFIXES, convert_document_to_pdf
 from ..services.pdf_organizer import merge_pdfs
 from ..system import open_path
+from .directory_picker import choose_directory
 from .pdf_picker import choose_documents
 from .windowing import make_modal, maximize_window
 
@@ -152,13 +153,9 @@ class DocumentsToPdfWindow(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
 
     def _choose_destination(self) -> None:
-        selected = filedialog.askdirectory(
-            parent=self,
-            initialdir=self.destination.get(),
-            title="Dossier de destination",
-        )
+        selected = choose_directory(self, Path(self.destination.get()).expanduser())
         if selected:
-            self.destination.set(selected)
+            self.destination.set(str(selected))
 
     def _start(self) -> None:
         if self.running:

@@ -8,6 +8,7 @@ from lou_codi_pdf_converter.services.pdf_organizer import (
     extract_pages,
     merge_pdfs,
     rotate_pages,
+    suggested_organized_stem,
 )
 
 
@@ -58,3 +59,9 @@ def test_assemble_pdf_reorders_duplicates_rotates_and_adds_blank(tmp_path: Path)
     assert pages[0].rotation == 90
     assert float(pages[1].mediabox.width) == 200
     assert [float(page.mediabox.width) for page in pages[2:]] == [100, 100]
+
+
+def test_suggested_name_keeps_original_name() -> None:
+    plans = [PagePlan(Path("Dossier de candidature.pdf"), 0), PagePlan(None, None)]
+    assert suggested_organized_stem(plans) == "Dossier de candidature_modifié"
+    assert suggested_organized_stem([PagePlan(None, None)]) == "document_modifié"

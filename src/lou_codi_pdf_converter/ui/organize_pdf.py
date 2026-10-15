@@ -4,14 +4,15 @@ import tkinter as tk
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 import pymupdf
 from pypdf import PdfReader
 
 from ..paths import collision_free_target, downloads_directory
-from ..services.pdf_organizer import PagePlan, assemble_pdf
+from ..services.pdf_organizer import PagePlan, assemble_pdf, suggested_organized_stem
 from ..system import open_path
+from .directory_picker import choose_directory
 from .pdf_picker import choose_pdfs
 from .windowing import make_modal, maximize_window
 
@@ -322,13 +323,9 @@ class OrganizePdfWindow(tk.Toplevel):
         self.drag_snapshot = None
 
     def _choose_destination(self) -> None:
-        selected = filedialog.askdirectory(
-            parent=self,
-            initialdir=self.destination.get(),
-            title="Dossier de destination",
-        )
+        selected = choose_directory(self, Path(self.destination.get()).expanduser())
         if selected:
-            self.destination.set(selected)
+            self.destination.set(str(selected))
 
     def _export(self) -> None:
         if not self.pages:
@@ -338,12 +335,17 @@ class OrganizePdfWindow(tk.Toplevel):
         if not destination.is_dir():
             messagebox.showerror("Dossier introuvable", "Choisissez un dossier existant.", parent=self)
             return
-        target = collision_free_target(destination, "document_organise", ".pdf")
+        plans = [item.plan() for item in self.pages]
+        target = collision_free_target(
+            destination,
+            suggested_organized_stem(plans),
+            ".pdf",
+        )
         self.configure(cursor="watch")
         self.status.configure(text="Export du PDF…")
         self.update_idletasks()
         try:
-            assemble_pdf([item.plan() for item in self.pages], target)
+            assemble_pdf(plans, target)
         except Exception as exc:  # noqa: BLE001 - présenter l’erreur d’export
             messagebox.showerror("Export impossible", str(exc), parent=self)
             return

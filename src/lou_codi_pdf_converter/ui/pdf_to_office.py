@@ -5,12 +5,13 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
 from ..system import open_path
+from .directory_picker import choose_directory
 from .pdf_picker import choose_pdfs
 from .windowing import make_modal, maximize_window
 
@@ -140,9 +141,9 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.tree.delete(*self.tree.get_children())
 
     def _choose_destination(self) -> None:
-        selected = filedialog.askdirectory(parent=self, initialdir=self.destination.get(), title="Dossier de destination")
+        selected = choose_directory(self, Path(self.destination.get()).expanduser())
         if selected:
-            self.destination.set(selected)
+            self.destination.set(str(selected))
 
     def _start(self) -> None:
         if self.running:

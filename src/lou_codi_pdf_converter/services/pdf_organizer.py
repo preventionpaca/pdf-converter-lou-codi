@@ -16,6 +16,12 @@ class PagePlan:
     height: float = 842
 
 
+def suggested_organized_stem(pages: Sequence[PagePlan]) -> str:
+    """Keep the first source name and make the modified nature explicit."""
+    first_source = next((page.source for page in pages if page.source is not None), None)
+    return f"{first_source.stem}_modifié" if first_source else "document_modifié"
+
+
 def assemble_pdf(pages: Sequence[PagePlan], target: Path) -> None:
     """Build a PDF from source pages and blanks in the requested order."""
     writer = PdfWriter()
