@@ -139,6 +139,48 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
 }
 
+_support_card_source = (
+    "Lou Còdi est un petit club de programmation qui imagine des outils de terrain "
+    "accessibles, efficaces et rapides à prendre en main. Votre soutien aide à faire vivre "
+    "le projet, développer de nouvelles idées et maintenir ces logiciels utiles à tous."
+)
+
+TRANSLATIONS["en"].update({
+    "Soutenir Lou Còdi": "Support Lou Còdi",
+    "Découvrir et soutenir ♥": "Discover and support ♥",
+    _support_card_source: "Lou Còdi is a small programming club that creates accessible, effective, easy-to-use tools for real-world needs. Your support helps keep the project alive, develop new ideas and maintain software that is useful to everyone.",
+})
+TRANSLATIONS["de"].update({
+    "Soutenir Lou Còdi": "Lou Còdi unterstützen",
+    "Découvrir et soutenir ♥": "Entdecken und unterstützen ♥",
+    _support_card_source: "Lou Còdi ist ein kleiner Programmierclub, der zugängliche, effiziente und schnell erlernbare Werkzeuge für die Praxis entwickelt. Ihre Unterstützung hilft, das Projekt weiterzuführen, neue Ideen zu entwickeln und diese nützlichen Programme zu pflegen.",
+})
+TRANSLATIONS["es"].update({
+    "Soutenir Lou Còdi": "Apoyar a Lou Còdi",
+    "Découvrir et soutenir ♥": "Descubrir y apoyar ♥",
+    _support_card_source: "Lou Còdi es un pequeño club de programación que crea herramientas prácticas, accesibles, eficaces y fáciles de aprender. Tu apoyo ayuda a mantener vivo el proyecto, desarrollar nuevas ideas y conservar programas útiles para todos.",
+})
+TRANSLATIONS["it"].update({
+    "Soutenir Lou Còdi": "Sostieni Lou Còdi",
+    "Découvrir et soutenir ♥": "Scopri e sostieni ♥",
+    _support_card_source: "Lou Còdi è un piccolo club di programmazione che crea strumenti pratici, accessibili, efficaci e facili da imparare. Il tuo sostegno aiuta a mantenere vivo il progetto, sviluppare nuove idee e curare software utili a tutti.",
+})
+TRANSLATIONS["zh"].update({
+    "Soutenir Lou Còdi": "支持 Lou Còdi",
+    "Découvrir et soutenir ♥": "了解并支持 ♥",
+    _support_card_source: "Lou Còdi 是一个小型编程俱乐部，致力于开发贴近实际、易于使用且高效的工具。您的支持将帮助项目持续发展、实现新想法，并维护这些对大家都有用的软件。",
+})
+TRANSLATIONS["tr"].update({
+    "Soutenir Lou Còdi": "Lou Còdi'yi destekleyin",
+    "Découvrir et soutenir ♥": "Keşfedin ve destekleyin ♥",
+    _support_card_source: "Lou Còdi, sahadaki ihtiyaçlar için erişilebilir, etkili ve kolay öğrenilen araçlar geliştiren küçük bir programlama kulübüdür. Desteğiniz projenin yaşamasına, yeni fikirlerin gelişmesine ve herkes için yararlı bu yazılımların sürdürülmesine katkı sağlar.",
+})
+TRANSLATIONS["ar"].update({
+    "Soutenir Lou Còdi": "ادعم Lou Còdi",
+    "Découvrir et soutenir ♥": "اكتشف وادعم ♥",
+    _support_card_source: "Lou Còdi نادٍ صغير للبرمجة يطوّر أدوات عملية وسهلة الاستخدام وفعّالة. يساعد دعمكم على استمرار المشروع وتطوير أفكار جديدة وصيانة برامج مفيدة للجميع.",
+})
+
 # Complete English catalogue used as a safe fallback for every translated interface.
 # Locale-specific catalogues override it, so untranslated text never falls back to French.
 TRANSLATIONS["en"].update(

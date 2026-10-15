@@ -27,6 +27,8 @@ from .ui.windowing import center_window, make_modal
 NAVY = "#193B66"
 BLUE = "#2368AF"
 BACKGROUND = "#F0F4F9"
+SUPPORT_GOLD = "#F4B942"
+SUPPORT_DARK = "#713B00"
 
 
 class Application(tk.Tk):
@@ -38,7 +40,10 @@ class Application(tk.Tk):
         ("Organiser les PDF", "Fusion, extraction, réorganisation et rotation des pages."),
         ("Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
         ("Créer un document", "Rédiger sur une page A4, insérer des tableaux et exporter en DOCX ou PDF."),
-        ("Modèles de documents", "Préparer et réutiliser vos papiers à en-tête et mises en page."),
+        (
+            "Soutenir Lou Còdi",
+            "Lou Còdi est un petit club de programmation qui imagine des outils de terrain accessibles, efficaces et rapides à prendre en main. Votre soutien aide à faire vivre le projet, développer de nouvelles idées et maintenir ces logiciels utiles à tous.",
+        ),
     )
 
     def __init__(self) -> None:
@@ -102,6 +107,9 @@ class Application(tk.Tk):
         grid = ttk.Frame(content, style="App.TFrame")
         grid.pack(fill="both", expand=True)
         for index, (title, description) in enumerate(self.MODULES):
+            if title == "Soutenir Lou Còdi":
+                self._build_support_card(grid, index, title, description)
+                continue
             card = ttk.Frame(grid, style="Card.TFrame", padding=16)
             card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=6, pady=6)
             ttk.Label(card, text=f"{index + 1:02d}  {title}", style="Title.TLabel").pack(anchor="w")
@@ -111,6 +119,45 @@ class Application(tk.Tk):
         grid.rowconfigure((0, 1), weight=1, uniform="modules")
         tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
         translate_widget_tree(self)
+
+    def _build_support_card(
+        self,
+        grid: ttk.Frame,
+        index: int,
+        title: str,
+        description: str,
+    ) -> None:
+        card = tk.Frame(grid, bg="#FFF1C9", padx=18, pady=16, highlightthickness=2, highlightbackground=SUPPORT_GOLD)
+        card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=6, pady=6)
+        tk.Label(
+            card,
+            text=f"♥  {title}",
+            bg="#FFF1C9",
+            fg=SUPPORT_DARK,
+            font=("Sans", 16, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            card,
+            text=description,
+            bg="#FFF1C9",
+            fg="#714F25",
+            font=("Sans", 10),
+            justify="left",
+            wraplength=270,
+        ).pack(anchor="w", pady=(8, 12))
+        tk.Button(
+            card,
+            text="Découvrir et soutenir ♥",
+            command=lambda: webbrowser.open(SUPPORT_URL),
+            bg="#D66A1F",
+            fg="white",
+            activebackground="#B95013",
+            activeforeground="white",
+            relief="flat",
+            font=("Sans", 10, "bold"),
+            padx=14,
+            pady=8,
+        ).pack(anchor="w")
 
     def _change_language(self, _event: tk.Event[tk.Misc]) -> None:
         selected = next(
@@ -155,9 +202,8 @@ class Application(tk.Tk):
             window = DocumentEditorWindow(self)
             self.wait_window(window)
             return
-        if name == "Modèles de documents":
-            window = DocumentEditorWindow(self, template_mode=True)
-            self.wait_window(window)
+        if name == "Soutenir Lou Còdi":
+            webbrowser.open(SUPPORT_URL)
             return
         dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
         dialog.title(f"{name} — PDF Converter Lou Còdi")
