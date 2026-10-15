@@ -100,7 +100,10 @@ class OrganizePdfWindow(tk.Toplevel):
             columns=("position", "source", "page", "rotation"),
             show="tree headings",
             selectmode="extended",
-            height=12,
+            # Keep the requested height below the available workspace so the
+            # validation controls always remain visible. The frame expands to
+            # use any additional screen space.
+            height=3,
             style="Organizer.Treeview",
         )
         self.tree.heading("#0", text="Aperçu")
@@ -130,7 +133,12 @@ class OrganizePdfWindow(tk.Toplevel):
 
         actions = ttk.Frame(body, style="App.TFrame")
         actions.pack(fill="x")
-        ttk.Button(actions, text="Exporter le PDF", style="Primary.TButton", command=self._export).pack(side="left")
+        ttk.Button(
+            actions,
+            text="Valider et exporter le PDF",
+            style="Primary.TButton",
+            command=self._export,
+        ).pack(side="left")
         self.open_button = ttk.Button(actions, text="Ouvrir le résultat", command=self._open_output, state="disabled")
         self.open_button.pack(side="left", padx=10)
         self.status = ttk.Label(
