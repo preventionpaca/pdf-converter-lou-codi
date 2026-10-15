@@ -6,6 +6,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
 )
@@ -38,6 +39,19 @@ def test_page_scope_supports_all_and_ranges() -> None:
 
 def test_dynamic_page_fields_are_resolved() -> None:
     assert resolve_dynamic_text("Page {{PAGE}} / {{PAGES}}", 1, 4) == "Page 2 / 4"
+
+
+def test_text_can_flow_between_linked_frames() -> None:
+    first = PageObject("text", 0, 10, 10, 120, 24, text="Un texte assez long pour continuer dans la seconde zone", font_size=12)
+    second = PageObject("text", 1, 10, 10, 240, 24, font_size=12)
+    first.flow_next_id = second.object_id
+
+    first_part = flowed_text_for_object(first, [first, second])
+    second_part = flowed_text_for_object(second, [first, second])
+
+    assert first_part
+    assert second_part
+    assert f"{first_part} {second_part}" == first.text
 
 
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:

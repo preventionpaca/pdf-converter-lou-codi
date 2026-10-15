@@ -39,6 +39,7 @@ class PageObject:
     font_family: str = "Sans-serif"
     object_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     source_id: str = ""
+    flow_next_id: str = ""
 
 
 @dataclass
@@ -128,7 +129,8 @@ def _draw_object(
     elif item.kind == "image" and Path(item.image_path).is_file():
         page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
     elif item.kind in {"text", "table"}:
-        rendered_text = resolve_dynamic_text(item.text, page_number, page_count, document_name)
+        content = flowed_text_for_object(item, objects) if item.kind == "text" else item.text
+        rendered_text = resolve_dynamic_text(content, page_number, page_count, document_name)
         if item.kind == "table":
             _draw_table(page, rectangle, item, rendered_text)
         else:
@@ -179,6 +181,60 @@ def resolve_dynamic_text(text: str, page_number: int, page_count: int, document_
         .replace("{{DATE}}", date.today().strftime("%d/%m/%Y"))
         .replace("{{DOCUMENT}}", document_name)
     )
+
+
+def flowed_text_for_object(item: PageObject, objects: list[PageObject]) -> str:
+    """Return the portion of a linked text flow displayed by ``item``."""
+    if item.kind != "text":
+        return item.text
+    by_id = {candidate.object_id: candidate for candidate in objects}
+    previous = {
+        candidate.flow_next_id: candidate
+        for candidate in objects
+        if candidate.kind == "text" and candidate.flow_next_id
+    }
+    root = item
+    visited: set[str] = set()
+    while root.object_id in previous and root.object_id not in visited:
+        visited.add(root.object_id)
+        root = previous[root.object_id]
+    chain: list[PageObject] = []
+    current = root
+    visited.clear()
+    while current.object_id not in visited:
+        visited.add(current.object_id)
+        chain.append(current)
+        if not current.flow_next_id or current.flow_next_id not in by_id:
+            break
+        current = by_id[current.flow_next_id]
+    segments = _flow_segments(root.text, chain)
+    try:
+        return segments[chain.index(item)]
+    except ValueError:
+        return item.text
+
+
+def _flow_segments(text: str, frames: list[PageObject]) -> list[str]:
+    remaining = text
+    segments: list[str] = []
+    for frame in frames:
+        if not remaining:
+            segments.append("")
+            continue
+        characters = max(1, int(frame.width / max(3.0, frame.font_size * 0.52)))
+        lines = max(1, int(frame.height / max(7.0, frame.font_size * 1.25)))
+        capacity = max(1, characters * lines)
+        if len(remaining) <= capacity:
+            segments.append(remaining)
+            remaining = ""
+            continue
+        cut = remaining.rfind(" ", int(capacity * 0.6), capacity + 1)
+        if cut < 0:
+            cut = capacity
+        segment = remaining[:cut].rstrip()
+        segments.append(segment)
+        remaining = remaining[cut:].lstrip("\n ")
+    return segments
 
 
 def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, text: str) -> None:

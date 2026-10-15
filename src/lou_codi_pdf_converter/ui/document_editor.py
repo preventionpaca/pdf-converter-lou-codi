@@ -18,6 +18,7 @@ from ..services.canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
 )
@@ -57,6 +58,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._drag_before: CanvasDocument | None = None
         self._editing_widget: tk.Text | None = None
         self._format_clipboard: dict[str, object] | None = None
+        self._object_clipboard: list[PageObject] = []
+        self.properties_visible = tk.BooleanVar(value=True)
         icon = getattr(self._root(), "app_icon", None)
         if icon is not None:
             self.iconphoto(False, icon)
@@ -73,11 +76,31 @@ class DocumentEditorWindow(tk.Toplevel):
         header.pack(fill="x")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
         tk.Label(header, text="Mise en page locale — canevas A4/PDF", bg=NAVY, fg="#CBDFF5", font=("Sans", 10)).pack(side="left", padx=18)
+        tk.Button(
+            header,
+            text="Propriétés  F4",
+            command=self._toggle_properties_panel,
+            bg="#285886",
+            fg="white",
+            activebackground="#3474AD",
+            activeforeground="white",
+            relief="flat",
+            padx=12,
+            pady=4,
+        ).pack(side="right")
 
-        formatting = ttk.Frame(self, style="App.TFrame", padding=(12, 5))
-        formatting.pack(fill="x")
+        ribbon = ttk.Notebook(self)
+        ribbon.pack(fill="x", padx=8, pady=(4, 2))
+        formatting = ttk.Frame(ribbon, style="App.TFrame", padding=(12, 7))
+        insertion = ttk.Frame(ribbon, style="App.TFrame", padding=(12, 7))
+        layout = ttk.Frame(ribbon, style="App.TFrame", padding=(12, 7))
+        ribbon.add(formatting, text="Accueil")
+        ribbon.add(insertion, text="Insertion")
+        ribbon.add(layout, text="Mise en page")
         self._buttons(formatting, (
             ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
+            ("Cop", self._copy_objects, "Copier les objets sélectionnés"),
+            ("Col", self._paste_objects, "Coller une copie indépendante sur cette page"),
             ("B", lambda: self._toggle("bold"), "Gras"),
             ("I", lambda: self._toggle("italic"), "Italique"),
             ("←", lambda: self._align("left"), "Aligner à gauche"),
@@ -116,20 +139,30 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         color_button.pack(side="left", padx=2)
         self._add_tooltip(color_button, "Couleur du texte")
-        ttk.Separator(formatting, orient="vertical").pack(side="left", fill="y", padx=8)
-        self._buttons(formatting, (
+        self._buttons(insertion, (
             ("T+", self._add_text, "Insérer une zone de texte"),
             ("Img", self._add_image, "Insérer une image"),
             ("Tab", self._add_table, "Insérer un tableau"),
+            ("Mas", self._add_mask, "Insérer un masque blanc"),
+            ("Trait", self._add_line, "Insérer un trait"),
             ("Ω", self._insert_symbol, "Insérer un caractère spécial"),
             ("•", lambda: self._make_list(False), "Liste à puces"),
             ("1.", lambda: self._make_list(True), "Liste numérotée"),
         ))
+        self._buttons(layout, (
+            ("Portrait", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
+            ("Paysage", lambda: self._set_orientation("landscape"), "Page en orientation paysage"),
+            ("En-tête", lambda: self._add_preset("header"), "Ajouter un en-tête répété"),
+            ("Pied", lambda: self._add_preset("footer"), "Ajouter un pied de page répété"),
+            ("Marge", lambda: self._add_preset("left_margin"), "Ajouter une marge de notes"),
+            ("Lier texte", self._link_text_frames, "Faire continuer le texte dans le cadre suivant"),
+            ("Délier", self._unlink_text_frame, "Supprimer le chaînage du cadre"),
+        ))
 
-        body = ttk.Panedwindow(self, orient="horizontal")
-        body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
-        canvas_frame = ttk.Frame(body, style="App.TFrame")
-        body.add(canvas_frame, weight=5)
+        self.body = ttk.Panedwindow(self, orient="horizontal")
+        self.body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
+        canvas_frame = ttk.Frame(self.body, style="App.TFrame")
+        self.body.add(canvas_frame, weight=5)
         self.canvas = tk.Canvas(canvas_frame, bg="#C8D0DA", highlightthickness=0)
         xbar = ttk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
         ybar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.canvas.yview)
@@ -144,8 +177,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<Double-1>", self._edit_selected)
 
-        panel = ttk.Frame(body, style="Card.TFrame", padding=14)
-        body.add(panel, weight=1)
+        panel = ttk.Frame(self.body, style="Card.TFrame", padding=14)
+        self.properties_panel = panel
+        self.body.add(panel, weight=1)
         ttk.Label(panel, text="OBJET SÉLECTIONNÉ", style="Section.TLabel").pack(anchor="w", pady=(0, 8))
         self.kind_label = ttk.Label(panel, text="Aucun objet", style="Body.TLabel")
         self.kind_label.pack(anchor="w", pady=(0, 8))
@@ -211,6 +245,9 @@ class DocumentEditorWindow(tk.Toplevel):
         edit_menu.add_command(label="Annuler", command=self._undo, accelerator="Ctrl+Z")
         edit_menu.add_command(label="Rétablir", command=self._redo, accelerator="Ctrl+Y")
         edit_menu.add_separator()
+        edit_menu.add_command(label="Copier les objets", command=self._copy_objects, accelerator="Ctrl+C")
+        edit_menu.add_command(label="Coller des copies indépendantes", command=self._paste_objects, accelerator="Ctrl+V")
+        edit_menu.add_separator()
         edit_menu.add_command(label="Copier le format", command=self._copy_format)
         edit_menu.add_command(label="Appliquer le format", command=self._apply_format)
         edit_menu.add_command(label="Supprimer l’objet", command=self._delete_selected, accelerator="Suppr")
@@ -263,6 +300,9 @@ class DocumentEditorWindow(tk.Toplevel):
         object_menu.add_separator()
         object_menu.add_command(label="Regrouper", command=self._group_selected)
         object_menu.add_command(label="Dissocier", command=self._ungroup_selected)
+        object_menu.add_separator()
+        object_menu.add_command(label="Lier les zones de texte", command=self._link_text_frames)
+        object_menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
         menu.add_cascade(label="Objets", menu=object_menu)
 
         page_menu = tk.Menu(menu, tearoff=False)
@@ -275,6 +315,13 @@ class DocumentEditorWindow(tk.Toplevel):
         menu.add_cascade(label="Page", menu=page_menu)
 
         view_menu = tk.Menu(menu, tearoff=False)
+        view_menu.add_checkbutton(
+            label="Volet des propriétés",
+            variable=self.properties_visible,
+            command=self._toggle_properties_panel,
+            accelerator="F4",
+        )
+        view_menu.add_separator()
         view_menu.add_command(label="Zoom avant", command=lambda: self._set_zoom(0.1), accelerator="Ctrl++")
         view_menu.add_command(label="Zoom arrière", command=lambda: self._set_zoom(-0.1), accelerator="Ctrl+-")
         menu.add_cascade(label="Affichage", menu=view_menu)
@@ -284,8 +331,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Control-s>", lambda _event: self._save())
         self.bind("<Control-z>", lambda _event: self._undo())
         self.bind("<Control-y>", lambda _event: self._redo())
+        self.bind("<Control-c>", self._copy_shortcut)
+        self.bind("<Control-v>", self._paste_shortcut)
         self.bind("<Control-p>", lambda _event: self._print())
         self.bind("<Delete>", lambda _event: self._delete_selected())
+        self.bind("<F4>", lambda _event: self._toggle_properties_panel())
 
     def _buttons(
         self,
@@ -346,6 +396,19 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Enter>", enter, add="+")
         widget.bind("<Leave>", hide, add="+")
         widget.bind("<ButtonPress>", hide, add="+")
+
+    def _toggle_properties_panel(self) -> None:
+        visible = self.properties_visible.get()
+        panes = tuple(map(str, self.body.panes()))
+        panel_name = str(self.properties_panel)
+        currently_visible = panel_name in panes
+        if visible == currently_visible:
+            visible = not currently_visible
+            self.properties_visible.set(visible)
+        if visible and not currently_visible:
+            self.body.add(self.properties_panel, weight=1)
+        elif not visible and currently_visible:
+            self.body.forget(self.properties_panel)
 
     def _checkpoint(self) -> None:
         self.undo_stack.append(copy.deepcopy(self.document))
@@ -477,7 +540,8 @@ class DocumentEditorWindow(tk.Toplevel):
             anchor = {"left": "nw", "center": "n", "right": "ne"}.get(item.align, "nw")
             tx = x if item.align in {"left", "justify"} else x + w / 2 if item.align == "center" else x + w
             source_name = Path(self.document.source_pdf).stem if self.document.source_pdf else (self.project_path.stem if self.project_path else "Nouveau document")
-            displayed_text = resolve_dynamic_text(item.text, self.current_page, self.document.page_count, source_name)
+            flowed_text = flowed_text_for_object(item, self.document.objects)
+            displayed_text = resolve_dynamic_text(flowed_text, self.current_page, self.document.page_count, source_name)
             self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=3 if selected else 1, tags=tags)
             family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2"}.get(item.font_family, "Liberation Sans")
             self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=(family, max(7, round(item.font_size * self.zoom)), style), tags=tags)
@@ -718,6 +782,37 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.text = value
                 self._render()
             return
+        predecessor = next(
+            (
+                (index, candidate)
+                for index, candidate in enumerate(self.document.objects)
+                if candidate.kind == "text" and candidate.flow_next_id == item.object_id
+            ),
+            None,
+        )
+        if predecessor is not None:
+            index, root = predecessor
+            visited = {item.object_id}
+            while root.object_id not in visited:
+                visited.add(root.object_id)
+                earlier = next(
+                    (
+                        (candidate_index, candidate)
+                        for candidate_index, candidate in enumerate(self.document.objects)
+                        if candidate.kind == "text" and candidate.flow_next_id == root.object_id
+                    ),
+                    None,
+                )
+                if earlier is None:
+                    break
+                index, root = earlier
+            self.current_page = root.page
+            self.selected = index
+            self.selected_indices = {index}
+            self._render()
+            self.status.configure(text="Modification du texte depuis le premier cadre de la chaîne.")
+            self.after_idle(lambda: self._start_inline_text_editor(root))
+            return
         self._start_inline_text_editor(item)
 
     def _start_inline_text_editor(self, item: PageObject) -> None:
@@ -813,6 +908,117 @@ class DocumentEditorWindow(tk.Toplevel):
             for key, value in self._format_clipboard.items():
                 setattr(item, key, value)
         self._mutate(apply)
+
+    def _copy_objects(self) -> None:
+        indices = sorted(self.selected_indices)
+        if not indices and self.selected is not None:
+            indices = [self.selected]
+        if not indices:
+            self.status.configure(text="Sélectionnez un ou plusieurs objets à copier.")
+            return
+        self._object_clipboard = [copy.deepcopy(self.document.objects[index]) for index in indices]
+        self.status.configure(
+            text=f"{len(self._object_clipboard)} objet(s) copié(s). Changez de page puis utilisez Coller."
+        )
+
+    def _copy_shortcut(self, _event: object = None) -> str | None:
+        if isinstance(self.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
+            return None
+        self._copy_objects()
+        return "break"
+
+    def _paste_shortcut(self, _event: object = None) -> str | None:
+        if isinstance(self.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
+            return None
+        self._paste_objects()
+        return "break"
+
+    def _paste_objects(self) -> None:
+        if not self._object_clipboard:
+            self.status.configure(text="Aucun objet n’a encore été copié.")
+            return
+        self._checkpoint()
+        id_map = {item.object_id: uuid.uuid4().hex for item in self._object_clipboard}
+        group_map: dict[str, str] = {}
+        pasted: list[int] = []
+        for original in self._object_clipboard:
+            item = copy.deepcopy(original)
+            item.object_id = id_map[original.object_id]
+            item.page = self.current_page
+            item.pages = ""
+            item.x += 12
+            item.y += 12
+            if item.group:
+                group_map.setdefault(item.group, uuid.uuid4().hex)
+                item.group = group_map[item.group]
+            item.source_id = id_map.get(item.source_id, "")
+            item.flow_next_id = id_map.get(item.flow_next_id, "")
+            self.document.objects.append(item)
+            pasted.append(len(self.document.objects) - 1)
+        self.selected_indices = set(pasted)
+        self.selected = pasted[-1]
+        self.status.configure(
+            text=f"{len(pasted)} copie(s) indépendante(s) collée(s) sur la page {self.current_page + 1}."
+        )
+        self._render()
+
+    def _link_text_frames(self) -> None:
+        indices = sorted(
+            index
+            for index in self.selected_indices
+            if self.document.objects[index].kind == "text"
+        )
+        if len(indices) != 2:
+            messagebox.showinfo(
+                "Chaînage du texte",
+                "Sélectionnez exactement deux zones de texte avec Ctrl+clic. Le texte ira de la première zone vers la seconde.",
+                parent=self,
+            )
+            return
+        first, second = (self.document.objects[index] for index in indices)
+        if (second.page, second.y, second.x) < (first.page, first.y, first.x):
+            first, second = second, first
+        by_id = {item.object_id: item for item in self.document.objects}
+        cursor = second
+        visited: set[str] = set()
+        while cursor.flow_next_id and cursor.object_id not in visited:
+            visited.add(cursor.object_id)
+            if cursor.flow_next_id == first.object_id:
+                messagebox.showwarning(
+                    "Chaînage du texte",
+                    "Ce lien créerait une boucle entre les zones de texte.",
+                    parent=self,
+                )
+                return
+            cursor = by_id.get(cursor.flow_next_id, cursor)
+        self._checkpoint()
+        first.flow_next_id = second.object_id
+        if second.text and second.text.strip():
+            first.text = f"{first.text}\n{second.text}".strip()
+            second.text = ""
+        self.status.configure(text="Zones liées : le texte trop long continue dans le second cadre.")
+        self._render()
+
+    def _unlink_text_frame(self) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "text":
+            return
+        item = self.document.objects[self.selected]
+        predecessor = next(
+            (
+                candidate
+                for candidate in self.document.objects
+                if candidate.kind == "text" and candidate.flow_next_id == item.object_id
+            ),
+            None,
+        )
+        if not item.flow_next_id and predecessor is None:
+            return
+        self._checkpoint()
+        if predecessor is not None:
+            predecessor.flow_next_id = ""
+        item.flow_next_id = ""
+        self.status.configure(text="Zone de texte déliée.")
+        self._render()
 
     def _delete_selected(self) -> None:
         if self.selected is not None:

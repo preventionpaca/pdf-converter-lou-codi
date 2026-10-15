@@ -14,6 +14,7 @@ from .canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
 )
@@ -48,7 +49,14 @@ def export_editable_docx(canvas_document: CanvasDocument, target: Path) -> None:
                     if item.kind == "text" and page_number in pages_for_object(item, canvas_document.page_count):
                         document_name = Path(canvas_document.source_pdf).stem if canvas_document.source_pdf else target.stem
                         paragraph._p.append(
-                            _textbox_xml(item, page_number, index, canvas_document.page_count, document_name)
+                            _textbox_xml(
+                                item,
+                                page_number,
+                                index,
+                                canvas_document.page_count,
+                                document_name,
+                                flowed_text_for_object(item, canvas_document.objects),
+                            )
                         )
                 if page_number < pdf.page_count - 1:
                     paragraph.add_run().add_break(WD_BREAK.PAGE)
@@ -62,8 +70,9 @@ def _textbox_xml(
     index: int,
     page_count: int,
     document_name: str,
+    content: str,
 ):
-    text = resolve_dynamic_text(item.text, page_number, page_count, document_name)
+    text = resolve_dynamic_text(content, page_number, page_count, document_name)
     fragments = "<w:br/>".join(f'<w:t xml:space="preserve">{escape(line)}</w:t>' for line in text.splitlines())
     bold = "<w:b/>" if item.bold else ""
     italic = "<w:i/>" if item.italic else ""
