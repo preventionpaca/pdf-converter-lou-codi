@@ -24,11 +24,18 @@ class DecorationSettings:
     watermark_opacity: float = 0.18
     watermark_color: str = "#7A8795"
     watermark_front: bool = True
+    logo_image: Path | None = None
+    logo_x_mm: float | None = None
+    logo_y_mm: float | None = None
+    logo_width_mm: float = 28
+    logo_opacity: float = 1
     header_text: str = ""
     header_position: str = "center"
+    header_x_mm: float | None = None
     header_y_mm: float = 12
     footer_text: str = ""
     footer_position: str = "center"
+    footer_x_mm: float | None = None
     footer_y_mm: float = 10
     text_size: float = 9
     text_color: str = "#193B66"
@@ -172,32 +179,64 @@ def _make_overlay(
         )
         drawing.restoreState()
 
+    if draw_layout and settings.logo_image and settings.logo_image.is_file():
+        drawing.saveState()
+        _set_alpha(drawing, settings.logo_opacity)
+        logo_width = max(5, settings.logo_width_mm) * MM
+        x = settings.logo_x_mm * MM if settings.logo_x_mm is not None else width / 2
+        y = settings.logo_y_mm * MM if settings.logo_y_mm is not None else height - 18 * MM
+        drawing.drawImage(
+            str(settings.logo_image),
+            x - logo_width / 2,
+            y - logo_width / 2,
+            width=logo_width,
+            height=logo_width,
+            preserveAspectRatio=True,
+            anchor="c",
+            mask="auto",
+        )
+        drawing.restoreState()
+
     if draw_layout:
         drawing.setFillColor(_color(settings.text_color))
         drawing.setStrokeColor(_color(settings.text_color))
         drawing.setFont("Helvetica", max(4, settings.text_size))
         if settings.header_text:
             text = _expand(settings.header_text, page_number, total, document_name)
-            _draw_aligned(
-                drawing,
-                text,
-                settings.header_position,
-                width,
-                height - settings.header_y_mm * MM,
-            )
+            if settings.header_x_mm is not None:
+                drawing.drawCentredString(
+                    settings.header_x_mm * MM,
+                    height - settings.header_y_mm * MM,
+                    text,
+                )
+            else:
+                _draw_aligned(
+                    drawing,
+                    text,
+                    settings.header_position,
+                    width,
+                    height - settings.header_y_mm * MM,
+                )
         if settings.footer_line:
             y = max(4, settings.footer_mask_height_mm * MM)
             drawing.setLineWidth(0.6)
             drawing.line(15 * MM, y, width - 15 * MM, y)
         if settings.footer_text:
             text = _expand(settings.footer_text, page_number, total, document_name)
-            _draw_aligned(
-                drawing,
-                text,
-                settings.footer_position,
-                width,
-                settings.footer_y_mm * MM,
-            )
+            if settings.footer_x_mm is not None:
+                drawing.drawCentredString(
+                    settings.footer_x_mm * MM,
+                    settings.footer_y_mm * MM,
+                    text,
+                )
+            else:
+                _draw_aligned(
+                    drawing,
+                    text,
+                    settings.footer_position,
+                    width,
+                    settings.footer_y_mm * MM,
+                )
 
     drawing.save()
     stream.seek(0)

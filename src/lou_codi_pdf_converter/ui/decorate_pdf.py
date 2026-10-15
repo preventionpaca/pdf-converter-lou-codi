@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 import pymupdf
 
@@ -16,7 +16,7 @@ from ..services.pdf_decoration import (
 from ..system import open_path
 from .dialogs import show_success
 from .directory_picker import choose_directory
-from .pdf_picker import choose_pdfs
+from .pdf_picker import choose_documents, choose_pdfs
 from .windowing import make_modal, maximize_window
 
 BACKGROUND = "#F0F4F9"
@@ -47,15 +47,29 @@ class DecoratePdfWindow(tk.Toplevel):
         self.watermark_x = tk.StringVar()
         self.watermark_y = tk.StringVar()
         self.watermark_front = tk.BooleanVar(value=True)
+        self.logo_image = tk.StringVar()
+        self.logo_x = tk.StringVar()
+        self.logo_y = tk.StringVar()
+        self.logo_width = tk.DoubleVar(value=28)
+        self.logo_opacity = tk.DoubleVar(value=0)
         self.header_text = tk.StringVar()
         self.header_position = tk.StringVar(value="center")
+        self.header_x = tk.StringVar()
+        self.header_y = tk.DoubleVar(value=12)
         self.footer_text = tk.StringVar(value="Page {page} / {pages}")
         self.footer_position = tk.StringVar(value="center")
+        self.footer_x = tk.StringVar()
+        self.footer_y = tk.DoubleVar(value=10)
         self.text_size = tk.DoubleVar(value=9)
         self.text_color = tk.StringVar(value="#193B66")
         self.footer_line = tk.BooleanVar(value=False)
         self.mask_footer = tk.BooleanVar(value=False)
         self.mask_height = tk.DoubleVar(value=18)
+        self.placement_target = tk.StringVar(value="watermark")
+        self.preview_scale = 1.0
+        self.preview_page_width = 0.0
+        self.preview_page_height = 0.0
+        self.preview_origin = (0.0, 0.0)
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._close)
         make_modal(self, parent)
@@ -93,12 +107,15 @@ class DecoratePdfWindow(tk.Toplevel):
         notebook = ttk.Notebook(left)
         notebook.pack(fill="both", expand=True, pady=(0, 8))
         watermark = ttk.Frame(notebook, padding=16)
+        logo = ttk.Frame(notebook, padding=16)
         texts = ttk.Frame(notebook, padding=16)
         masking = ttk.Frame(notebook, padding=16)
         notebook.add(watermark, text="Filigrane")
+        notebook.add(logo, text="Logo")
         notebook.add(texts, text="En-tête et pied de page")
         notebook.add(masking, text="Masquage visuel")
         self._build_watermark_tab(watermark)
+        self._build_logo_tab(logo)
         self._build_text_tab(texts)
         self._build_mask_tab(masking)
 
@@ -117,39 +134,99 @@ class DecoratePdfWindow(tk.Toplevel):
         self.status = ttk.Label(actions, text="Prêt.", background=BACKGROUND, foreground=MUTED)
         self.status.pack(side="right")
 
-        ttk.Label(right, text="APERÇU DE LA PREMIÈRE PAGE", style="Title.TLabel").pack(anchor="w")
-        self.preview_label = ttk.Label(
+        ttk.Label(right, text="PLACEMENT À LA SOURIS", style="Title.TLabel").pack(anchor="w")
+        placement = ttk.Frame(right, style="Card.TFrame")
+        placement.pack(fill="x", pady=(8, 4))
+        for text, value in (
+            ("Filigrane", "watermark"),
+            ("Logo", "logo"),
+            ("En-tête", "header"),
+            ("Pied", "footer"),
+        ):
+            ttk.Radiobutton(
+                placement,
+                text=text,
+                value=value,
+                variable=self.placement_target,
+            ).pack(side="left", padx=(0, 6))
+        ttk.Label(
             right,
-            text="Choisissez un PDF puis cliquez sur\n« Actualiser l’aperçu ».",
+            text="Cliquez ou faites glisser l’élément choisi sur la page.",
             style="Body.TLabel",
-            anchor="center",
+            wraplength=390,
+        ).pack(anchor="w", pady=(0, 6))
+        self.preview_canvas = tk.Canvas(
+            right,
+            background="white",
+            highlightthickness=1,
+            highlightbackground="#D9E2ED",
+            cursor="crosshair",
+        )
+        self.preview_canvas.pack(fill="both", expand=True, pady=6)
+        self.preview_canvas.create_text(
+            205,
+            280,
+            text="Choisissez un PDF puis cliquez sur\n« Actualiser l’aperçu ».",
+            fill=MUTED,
             justify="center",
         )
-        self.preview_label.pack(fill="both", expand=True, pady=12)
+        self.preview_canvas.bind("<Button-1>", self._place_element)
+        self.preview_canvas.bind("<B1-Motion>", self._place_element)
+        self.preview_canvas.bind("<ButtonRelease-1>", self._finish_placement)
 
     def _build_watermark_tab(self, tab: ttk.Frame) -> None:
         self._field(tab, "Texte libre", self.watermark_text, 0)
-        ttk.Label(tab, text="Image ou logo PNG", style="Body.TLabel").grid(row=1, column=0, sticky="w", pady=6)
-        ttk.Entry(tab, textvariable=self.watermark_image).grid(row=1, column=1, sticky="ew", padx=8)
-        ttk.Button(tab, text="Choisir…", command=self._choose_watermark_image).grid(row=1, column=2)
-        self._field(tab, "Taille", self.watermark_size, 2)
-        self._field(tab, "Rotation (degrés)", self.watermark_rotation, 3)
-        self._field(tab, "Transparence (%)", self.watermark_opacity, 4)
-        self._field(tab, "Couleur hexadécimale", self.watermark_color, 5)
-        self._field(tab, "Position X (mm, vide = centre)", self.watermark_x, 6)
-        self._field(tab, "Position Y (mm, vide = centre)", self.watermark_y, 7)
-        ttk.Checkbutton(tab, text="Placer au premier plan", variable=self.watermark_front).grid(row=8, column=1, sticky="w", pady=8)
+        presets = ttk.Frame(tab)
+        presets.grid(row=1, column=1, columnspan=2, sticky="w", padx=8, pady=(0, 6))
+        for label in ("Temporaire", "Financier", "Confidentiel", "Brouillon"):
+            ttk.Button(
+                presets,
+                text=label,
+                command=lambda value=label: self.watermark_text.set(value.upper()),
+            ).pack(side="left", padx=(0, 6))
+        ttk.Label(tab, text="Image de filigrane", style="Body.TLabel").grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Entry(tab, textvariable=self.watermark_image).grid(row=2, column=1, sticky="ew", padx=8)
+        ttk.Button(tab, text="Choisir…", command=self._choose_watermark_image).grid(row=2, column=2)
+        self._field(tab, "Taille", self.watermark_size, 3)
+        self._field(tab, "Rotation (degrés)", self.watermark_rotation, 4)
+        self._field(tab, "Transparence (%)", self.watermark_opacity, 5)
+        self._field(tab, "Couleur hexadécimale", self.watermark_color, 6)
+        self._field(tab, "Position X (mm, vide = centre)", self.watermark_x, 7)
+        self._field(tab, "Position Y (mm, vide = centre)", self.watermark_y, 8)
+        ttk.Checkbutton(tab, text="Placer au premier plan", variable=self.watermark_front).grid(row=9, column=1, sticky="w", pady=8)
+        tab.columnconfigure(1, weight=1)
+
+    def _build_logo_tab(self, tab: ttk.Frame) -> None:
+        ttk.Label(tab, text="Logo appliqué aux pages sélectionnées").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 12)
+        )
+        ttk.Label(tab, text="Fichier PNG ou JPG").grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Entry(tab, textvariable=self.logo_image).grid(row=1, column=1, sticky="ew", padx=8)
+        ttk.Button(tab, text="Choisir…", command=self._choose_logo_image).grid(row=1, column=2)
+        self._field(tab, "Largeur (mm)", self.logo_width, 2)
+        self._field(tab, "Transparence (%)", self.logo_opacity, 3)
+        self._field(tab, "Position X (mm, vide = centre)", self.logo_x, 4)
+        self._field(tab, "Position Y (mm, vide = haut)", self.logo_y, 5)
+        ttk.Label(
+            tab,
+            text="Sélectionnez « Logo » à droite, puis cliquez ou faites glisser sur l’aperçu.",
+            wraplength=700,
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=14)
         tab.columnconfigure(1, weight=1)
 
     def _build_text_tab(self, tab: ttk.Frame) -> None:
         self._field(tab, "En-tête", self.header_text, 0)
         self._position_field(tab, "Position en-tête", self.header_position, 1)
-        self._field(tab, "Pied de page", self.footer_text, 2)
-        self._position_field(tab, "Position pied", self.footer_position, 3)
-        self._field(tab, "Taille du texte", self.text_size, 4)
-        self._field(tab, "Couleur", self.text_color, 5)
-        ttk.Checkbutton(tab, text="Ajouter un liseré horizontal", variable=self.footer_line).grid(row=6, column=1, sticky="w", pady=8)
-        ttk.Label(tab, text="Variables : {page}  {pages}  {document}  {date}", style="Body.TLabel").grid(row=7, column=0, columnspan=3, sticky="w", pady=10)
+        self._field(tab, "En-tête X (mm, vide = alignement)", self.header_x, 2)
+        self._field(tab, "En-tête depuis le haut (mm)", self.header_y, 3)
+        self._field(tab, "Pied de page", self.footer_text, 4)
+        self._position_field(tab, "Position pied", self.footer_position, 5)
+        self._field(tab, "Pied X (mm, vide = alignement)", self.footer_x, 6)
+        self._field(tab, "Pied depuis le bas (mm)", self.footer_y, 7)
+        self._field(tab, "Taille du texte", self.text_size, 8)
+        self._field(tab, "Couleur", self.text_color, 9)
+        ttk.Checkbutton(tab, text="Ajouter un liseré horizontal", variable=self.footer_line).grid(row=10, column=1, sticky="w", pady=8)
+        ttk.Label(tab, text="Variables : {page}  {pages}  {document}  {date}", style="Body.TLabel").grid(row=11, column=0, columnspan=3, sticky="w", pady=10)
         tab.columnconfigure(1, weight=1)
 
     def _build_mask_tab(self, tab: ttk.Frame) -> None:
@@ -183,9 +260,14 @@ class DecoratePdfWindow(tk.Toplevel):
         self.source_label.configure(text=f"{self.source.name} — {self.page_count} page(s)")
 
     def _choose_watermark_image(self) -> None:
-        selected = filedialog.askopenfilename(parent=self, initialdir=downloads_directory(), filetypes=(("Images", "*.png *.jpg *.jpeg"),))
+        selected = choose_documents(self, {".png", ".jpg", ".jpeg"})
         if selected:
-            self.watermark_image.set(selected)
+            self.watermark_image.set(str(selected[0]))
+
+    def _choose_logo_image(self) -> None:
+        selected = choose_documents(self, {".png", ".jpg", ".jpeg"})
+        if selected:
+            self.logo_image.set(str(selected[0]))
 
     def _choose_destination(self) -> None:
         selected = choose_directory(self, Path(self.destination.get()).expanduser())
@@ -208,10 +290,19 @@ class DecoratePdfWindow(tk.Toplevel):
             watermark_opacity=1 - min(100, max(0, self.watermark_opacity.get())) / 100,
             watermark_color=self.watermark_color.get(),
             watermark_front=self.watermark_front.get(),
+            logo_image=Path(self.logo_image.get()) if self.logo_image.get().strip() else None,
+            logo_x_mm=_optional_float(self.logo_x.get()),
+            logo_y_mm=_optional_float(self.logo_y.get()),
+            logo_width_mm=self.logo_width.get(),
+            logo_opacity=1 - min(100, max(0, self.logo_opacity.get())) / 100,
             header_text=self.header_text.get(),
             header_position=self.header_position.get(),
+            header_x_mm=_optional_float(self.header_x.get()),
+            header_y_mm=self.header_y.get(),
             footer_text=self.footer_text.get(),
             footer_position=self.footer_position.get(),
+            footer_x_mm=_optional_float(self.footer_x.get()),
+            footer_y_mm=self.footer_y.get(),
             text_size=self.text_size.get(),
             text_color=self.text_color.get(),
             footer_line=self.footer_line.get(),
@@ -231,8 +322,16 @@ class DecoratePdfWindow(tk.Toplevel):
             scale = min(390 / page.rect.width, 600 / page.rect.height)
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
             self.preview_image = tk.PhotoImage(data=pixmap.tobytes("png"))
+            self.preview_scale = scale
+            self.preview_page_width = page.rect.width
+            self.preview_page_height = page.rect.height
             document.close()
-            self.preview_label.configure(image=self.preview_image, text="")
+            self.preview_canvas.update_idletasks()
+            origin_x = max(0, (self.preview_canvas.winfo_width() - self.preview_image.width()) / 2)
+            origin_y = max(0, (self.preview_canvas.winfo_height() - self.preview_image.height()) / 2)
+            self.preview_origin = (origin_x, origin_y)
+            self.preview_canvas.delete("all")
+            self.preview_canvas.create_image(origin_x, origin_y, image=self.preview_image, anchor="nw")
             self.status.configure(text="Aperçu actualisé.")
         except Exception as exc:  # noqa: BLE001 - présenter toute erreur de configuration
             messagebox.showerror("Aperçu impossible", str(exc), parent=self)
@@ -260,6 +359,46 @@ class DecoratePdfWindow(tk.Toplevel):
         if self.last_output and self.last_output.is_file():
             open_path(self.last_output)
 
+    def _place_element(self, event: tk.Event[tk.Misc]) -> None:
+        if not self.preview_image or not self.preview_page_width:
+            return
+        origin_x, origin_y = self.preview_origin
+        image_x = min(max(0, event.x - origin_x), self.preview_image.width())
+        image_y = min(max(0, event.y - origin_y), self.preview_image.height())
+        x_mm = image_x / self.preview_scale * 25.4 / 72
+        y_from_bottom_mm = (
+            self.preview_page_height - image_y / self.preview_scale
+        ) * 25.4 / 72
+        target = self.placement_target.get()
+        if target == "watermark":
+            self.watermark_x.set(f"{x_mm:.1f}")
+            self.watermark_y.set(f"{y_from_bottom_mm:.1f}")
+        elif target == "logo":
+            self.logo_x.set(f"{x_mm:.1f}")
+            self.logo_y.set(f"{y_from_bottom_mm:.1f}")
+        elif target == "header":
+            self.header_x.set(f"{x_mm:.1f}")
+            page_height_mm = self.preview_page_height * 25.4 / 72
+            self.header_y.set(round(page_height_mm - y_from_bottom_mm, 1))
+        else:
+            self.footer_x.set(f"{x_mm:.1f}")
+            self.footer_y.set(round(y_from_bottom_mm, 1))
+        self.preview_canvas.delete("placement")
+        self.preview_canvas.create_oval(
+            event.x - 7,
+            event.y - 7,
+            event.x + 7,
+            event.y + 7,
+            outline="#2368AF",
+            width=2,
+            tags="placement",
+        )
+        self.status.configure(text=f"Placement {target} : X {x_mm:.1f} mm")
+
+    def _finish_placement(self, _event: tk.Event[tk.Misc]) -> None:
+        if self.preview_image:
+            self._preview()
+
     def _close(self) -> None:
         self.temp_directory.cleanup()
         self.destroy()
@@ -267,4 +406,3 @@ class DecoratePdfWindow(tk.Toplevel):
 
 def _optional_float(value: str) -> float | None:
     return float(value.replace(",", ".")) if value.strip() else None
-
