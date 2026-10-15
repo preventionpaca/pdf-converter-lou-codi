@@ -6,6 +6,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from . import __version__
+from .ui.decorate_pdf import DecoratePdfWindow
 from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.organize_pdf import OrganizePdfWindow
 from .ui.pdf_to_office import PdfToOfficeWindow
@@ -89,6 +90,10 @@ class Application(tk.Tk):
             return
         if name == "Organiser les PDF":
             window = OrganizePdfWindow(self)
+            self.wait_window(window)
+            return
+        if name == "Habillage PDF":
+            window = DecoratePdfWindow(self)
             self.wait_window(window)
             return
         dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
