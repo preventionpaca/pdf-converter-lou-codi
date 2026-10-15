@@ -5,6 +5,7 @@ from pypdf import PdfReader, PdfWriter
 
 from lou_codi_pdf_converter.services.pdf_decoration import (
     DecorationSettings,
+    MaskZone,
     apply_pdf_decorations,
     parse_page_selection,
 )
@@ -68,3 +69,22 @@ def test_logo_can_be_positioned_independently(tmp_path: Path) -> None:
 
     page = PdfReader(target).pages[0]
     assert "/XObject" in page["/Resources"]
+
+
+def test_multiple_visual_masks_are_written(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"
+    target = tmp_path / "masked.pdf"
+    make_pdf(source, count=1)
+
+    apply_pdf_decorations(
+        source,
+        target,
+        DecorationSettings(
+            mask_zones=(
+                MaskZone("Marge gauche", 0, 0, 20, 297),
+                MaskZone("Zone libre", 50, 60, 80, 30),
+            )
+        ),
+    )
+
+    assert len(PdfReader(target).pages) == 1

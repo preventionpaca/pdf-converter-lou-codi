@@ -10,6 +10,7 @@ import pymupdf
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_decoration import (
     DecorationSettings,
+    MaskZone,
     apply_pdf_decorations,
     parse_page_selection,
 )
@@ -65,7 +66,15 @@ class DecoratePdfWindow(tk.Toplevel):
         self.footer_line = tk.BooleanVar(value=False)
         self.mask_footer = tk.BooleanVar(value=False)
         self.mask_height = tk.DoubleVar(value=18)
+        self.mask_zones: list[MaskZone] = []
+        self.mask_name = tk.StringVar(value="Zone libre")
+        self.mask_x = tk.DoubleVar(value=40)
+        self.mask_y = tk.DoubleVar(value=40)
+        self.mask_width = tk.DoubleVar(value=100)
+        self.mask_zone_height = tk.DoubleVar(value=35)
+        self.mask_color = tk.StringVar(value="#FFFFFF")
         self.placement_target = tk.StringVar(value="watermark")
+        self.mask_drag_start: tuple[float, float] | None = None
         self.preview_scale = 1.0
         self.preview_page_width = 0.0
         self.preview_page_height = 0.0
@@ -142,6 +151,7 @@ class DecoratePdfWindow(tk.Toplevel):
             ("Logo", "logo"),
             ("En-tête", "header"),
             ("Pied", "footer"),
+            ("Masque", "mask"),
         ):
             ttk.Radiobutton(
                 placement,
@@ -170,9 +180,9 @@ class DecoratePdfWindow(tk.Toplevel):
             fill=MUTED,
             justify="center",
         )
-        self.preview_canvas.bind("<Button-1>", self._place_element)
-        self.preview_canvas.bind("<B1-Motion>", self._place_element)
-        self.preview_canvas.bind("<ButtonRelease-1>", self._finish_placement)
+        self.preview_canvas.bind("<Button-1>", self._placement_press)
+        self.preview_canvas.bind("<B1-Motion>", self._placement_motion)
+        self.preview_canvas.bind("<ButtonRelease-1>", self._placement_release)
 
     def _build_watermark_tab(self, tab: ttk.Frame) -> None:
         self._field(tab, "Texte libre", self.watermark_text, 0)
@@ -230,18 +240,79 @@ class DecoratePdfWindow(tk.Toplevel):
         tab.columnconfigure(1, weight=1)
 
     def _build_mask_tab(self, tab: ttk.Frame) -> None:
-        ttk.Checkbutton(tab, text="Recouvrir l’ancien pied de page par une zone blanche", variable=self.mask_footer).pack(anchor="w", pady=8)
-        row = ttk.Frame(tab)
-        row.pack(fill="x", pady=8)
-        ttk.Label(row, text="Hauteur de la zone blanche (mm)").pack(side="left")
-        ttk.Entry(row, textvariable=self.mask_height, width=10).pack(side="left", padx=12)
+        presets = ttk.Frame(tab)
+        presets.pack(fill="x", pady=(0, 10))
+        ttk.Label(presets, text="Ajouter rapidement :").pack(side="left", padx=(0, 8))
+        for label, kind in (
+            ("Marge gauche", "left"),
+            ("Marge droite", "right"),
+            ("En-tête", "header"),
+            ("Pied de page", "footer"),
+            ("Zone libre", "free"),
+        ):
+            ttk.Button(
+                presets,
+                text=label,
+                command=lambda value=kind: self._add_mask_preset(value),
+            ).pack(side="left", padx=(0, 6))
+
+        table_row = ttk.Frame(tab)
+        table_row.pack(fill="both", expand=True)
+        self.mask_tree = ttk.Treeview(
+            table_row,
+            columns=("name", "x", "y", "width", "height"),
+            show="headings",
+            selectmode="browse",
+            height=5,
+        )
+        for column, label, width in (
+            ("name", "Zone", 180),
+            ("x", "X mm", 80),
+            ("y", "Y mm", 80),
+            ("width", "Largeur", 90),
+            ("height", "Hauteur", 90),
+        ):
+            self.mask_tree.heading(column, text=label)
+            self.mask_tree.column(column, width=width, stretch=column == "name")
+        self.mask_tree.pack(side="left", fill="both", expand=True)
+        self.mask_tree.bind("<<TreeviewSelect>>", self._load_selected_mask)
+
+        editor = ttk.Frame(tab, padding=(14, 0, 0, 0))
+        editor.pack(fill="x", pady=(12, 0))
+        fields = (
+            ("Nom", self.mask_name),
+            ("X (mm)", self.mask_x),
+            ("Y depuis le bas (mm)", self.mask_y),
+            ("Largeur (mm)", self.mask_width),
+            ("Hauteur (mm)", self.mask_zone_height),
+            ("Couleur", self.mask_color),
+        )
+        for index, (label, variable) in enumerate(fields):
+            ttk.Label(editor, text=label).grid(row=index // 3 * 2, column=index % 3, sticky="w")
+            ttk.Entry(editor, textvariable=variable, width=18).grid(
+                row=index // 3 * 2 + 1,
+                column=index % 3,
+                sticky="ew",
+                padx=(0, 10),
+                pady=(2, 8),
+            )
+        editor.columnconfigure((0, 1, 2), weight=1)
+        buttons = ttk.Frame(tab)
+        buttons.pack(fill="x", pady=6)
+        ttk.Button(buttons, text="Ajouter avec ces coordonnées", command=self._add_mask_from_fields).pack(side="left")
+        ttk.Button(buttons, text="Mettre à jour", command=self._update_selected_mask).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Supprimer", command=self._delete_selected_mask).pack(side="left")
+        ttk.Label(
+            buttons,
+            text="Pour tracer : sélectionnez « Masque » à droite puis faites glisser sur l’aperçu.",
+        ).pack(side="right")
         ttk.Label(
             tab,
-            text="Attention : ce masquage est uniquement visuel. Il ne supprime pas de façon sécurisée les informations confidentielles du PDF.",
+            text="Attention : ces masques sont uniquement visuels. Ils ne suppriment pas de façon sécurisée les informations confidentielles du PDF.",
             foreground="#9A4B20",
             wraplength=720,
             justify="left",
-        ).pack(anchor="w", pady=18)
+        ).pack(anchor="w", pady=(12, 0))
 
     def _field(self, parent: ttk.Frame, label: str, variable: tk.Variable, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=6)
@@ -273,6 +344,99 @@ class DecoratePdfWindow(tk.Toplevel):
         selected = choose_directory(self, Path(self.destination.get()).expanduser())
         if selected:
             self.destination.set(str(selected))
+
+    def _page_dimensions_mm(self) -> tuple[float, float]:
+        if self.source:
+            document = pymupdf.open(self.source)
+            rect = document[0].rect
+            document.close()
+            return rect.width * 25.4 / 72, rect.height * 25.4 / 72
+        return 210.0, 297.0
+
+    def _add_mask_preset(self, kind: str) -> None:
+        page_width, page_height = self._page_dimensions_mm()
+        margin = 20.0
+        if kind == "left":
+            zone = MaskZone("Marge gauche", 0, 0, margin, page_height)
+        elif kind == "right":
+            zone = MaskZone("Marge droite", page_width - margin, 0, margin, page_height)
+        elif kind == "header":
+            zone = MaskZone("En-tête", 0, page_height - margin, page_width, margin)
+        elif kind == "footer":
+            zone = MaskZone("Pied de page", 0, 0, page_width, margin)
+        else:
+            zone = MaskZone("Zone libre", 40, 40, min(100, page_width - 40), 35)
+        self.mask_zones.append(zone)
+        self._refresh_mask_tree(len(self.mask_zones) - 1)
+
+    def _add_mask_from_fields(self) -> None:
+        try:
+            zone = self._mask_from_fields()
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showerror("Masque invalide", str(exc), parent=self)
+            return
+        self.mask_zones.append(zone)
+        self._refresh_mask_tree(len(self.mask_zones) - 1)
+
+    def _mask_from_fields(self) -> MaskZone:
+        return MaskZone(
+            self.mask_name.get().strip() or "Zone libre",
+            self.mask_x.get(),
+            self.mask_y.get(),
+            self.mask_width.get(),
+            self.mask_zone_height.get(),
+            self.mask_color.get().strip() or "#FFFFFF",
+        )
+
+    def _refresh_mask_tree(self, selected_index: int | None = None) -> None:
+        self.mask_tree.delete(*self.mask_tree.get_children())
+        for index, zone in enumerate(self.mask_zones):
+            self.mask_tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    zone.name,
+                    f"{zone.x_mm:.1f}",
+                    f"{zone.y_mm:.1f}",
+                    f"{zone.width_mm:.1f}",
+                    f"{zone.height_mm:.1f}",
+                ),
+            )
+        if selected_index is not None and self.mask_tree.exists(str(selected_index)):
+            self.mask_tree.selection_set(str(selected_index))
+            self.mask_tree.see(str(selected_index))
+
+    def _load_selected_mask(self, _event: tk.Event[tk.Misc]) -> None:
+        selection = self.mask_tree.selection()
+        if not selection:
+            return
+        zone = self.mask_zones[int(selection[0])]
+        self.mask_name.set(zone.name)
+        self.mask_x.set(zone.x_mm)
+        self.mask_y.set(zone.y_mm)
+        self.mask_width.set(zone.width_mm)
+        self.mask_zone_height.set(zone.height_mm)
+        self.mask_color.set(zone.color)
+
+    def _update_selected_mask(self) -> None:
+        selection = self.mask_tree.selection()
+        if not selection:
+            return
+        index = int(selection[0])
+        try:
+            self.mask_zones[index] = self._mask_from_fields()
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showerror("Masque invalide", str(exc), parent=self)
+            return
+        self._refresh_mask_tree(index)
+
+    def _delete_selected_mask(self) -> None:
+        selection = self.mask_tree.selection()
+        if not selection:
+            return
+        self.mask_zones.pop(int(selection[0]))
+        self._refresh_mask_tree()
 
     def _settings(self) -> DecorationSettings:
         if not self.source:
@@ -308,6 +472,7 @@ class DecoratePdfWindow(tk.Toplevel):
             footer_line=self.footer_line.get(),
             mask_original_footer=self.mask_footer.get(),
             footer_mask_height_mm=self.mask_height.get(),
+            mask_zones=tuple(self.mask_zones),
         )
 
     def _preview(self) -> None:
@@ -359,16 +524,71 @@ class DecoratePdfWindow(tk.Toplevel):
         if self.last_output and self.last_output.is_file():
             open_path(self.last_output)
 
+    def _placement_press(self, event: tk.Event[tk.Misc]) -> None:
+        if self.placement_target.get() == "mask":
+            self.mask_drag_start = (event.x, event.y)
+            self.preview_canvas.delete("placement")
+            return
+        self._place_element(event)
+
+    def _placement_motion(self, event: tk.Event[tk.Misc]) -> None:
+        if self.placement_target.get() != "mask":
+            self._place_element(event)
+            return
+        if not self.mask_drag_start:
+            return
+        start_x, start_y = self.mask_drag_start
+        self.preview_canvas.delete("placement")
+        self.preview_canvas.create_rectangle(
+            start_x,
+            start_y,
+            event.x,
+            event.y,
+            outline="#2368AF",
+            width=2,
+            dash=(5, 3),
+            tags="placement",
+        )
+
+    def _placement_release(self, event: tk.Event[tk.Misc]) -> None:
+        if self.placement_target.get() == "mask":
+            self._finish_mask_placement(event)
+        else:
+            self._finish_placement(event)
+
+    def _event_to_pdf_mm(self, x: float, y: float) -> tuple[float, float]:
+        origin_x, origin_y = self.preview_origin
+        image_x = min(max(0, x - origin_x), self.preview_image.width())
+        image_y = min(max(0, y - origin_y), self.preview_image.height())
+        x_mm = image_x / self.preview_scale * 25.4 / 72
+        y_mm = (self.preview_page_height - image_y / self.preview_scale) * 25.4 / 72
+        return x_mm, y_mm
+
+    def _finish_mask_placement(self, event: tk.Event[tk.Misc]) -> None:
+        if not self.preview_image or not self.mask_drag_start:
+            self.mask_drag_start = None
+            return
+        start_x_mm, start_y_mm = self._event_to_pdf_mm(*self.mask_drag_start)
+        end_x_mm, end_y_mm = self._event_to_pdf_mm(event.x, event.y)
+        zone = MaskZone(
+            "Zone tracée",
+            min(start_x_mm, end_x_mm),
+            min(start_y_mm, end_y_mm),
+            abs(end_x_mm - start_x_mm),
+            abs(end_y_mm - start_y_mm),
+        )
+        self.mask_drag_start = None
+        if zone.width_mm < 1 or zone.height_mm < 1:
+            self.preview_canvas.delete("placement")
+            return
+        self.mask_zones.append(zone)
+        self._refresh_mask_tree(len(self.mask_zones) - 1)
+        self._preview()
+
     def _place_element(self, event: tk.Event[tk.Misc]) -> None:
         if not self.preview_image or not self.preview_page_width:
             return
-        origin_x, origin_y = self.preview_origin
-        image_x = min(max(0, event.x - origin_x), self.preview_image.width())
-        image_y = min(max(0, event.y - origin_y), self.preview_image.height())
-        x_mm = image_x / self.preview_scale * 25.4 / 72
-        y_from_bottom_mm = (
-            self.preview_page_height - image_y / self.preview_scale
-        ) * 25.4 / 72
+        x_mm, y_from_bottom_mm = self._event_to_pdf_mm(event.x, event.y)
         target = self.placement_target.get()
         if target == "watermark":
             self.watermark_x.set(f"{x_mm:.1f}")

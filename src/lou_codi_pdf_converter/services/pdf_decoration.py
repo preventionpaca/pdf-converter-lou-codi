@@ -13,6 +13,16 @@ MM = 72 / 25.4
 
 
 @dataclass(frozen=True)
+class MaskZone:
+    name: str
+    x_mm: float
+    y_mm: float
+    width_mm: float
+    height_mm: float
+    color: str = "#FFFFFF"
+
+
+@dataclass(frozen=True)
 class DecorationSettings:
     selected_pages: frozenset[int] | None = None
     watermark_text: str = ""
@@ -42,6 +52,7 @@ class DecorationSettings:
     footer_line: bool = False
     mask_original_footer: bool = False
     footer_mask_height_mm: float = 18
+    mask_zones: tuple[MaskZone, ...] = ()
 
 
 def parse_page_selection(expression: str, page_count: int) -> frozenset[int] | None:
@@ -146,6 +157,18 @@ def _make_overlay(
             fill=1,
             stroke=0,
         )
+
+    if draw_layout:
+        for zone in settings.mask_zones:
+            drawing.setFillColor(_color(zone.color))
+            drawing.rect(
+                zone.x_mm * MM,
+                zone.y_mm * MM,
+                max(0, zone.width_mm) * MM,
+                max(0, zone.height_mm) * MM,
+                fill=1,
+                stroke=0,
+            )
 
     if draw_watermark and settings.watermark_text:
         drawing.saveState()
