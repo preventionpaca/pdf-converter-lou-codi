@@ -14,10 +14,14 @@ from .i18n import (
     set_language,
     translate_widget_tree,
 )
+from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen, register_launch
+from .ui.about_dialog import show_about
 from .ui.decorate_pdf import DecoratePdfWindow
+from .ui.document_editor import DocumentEditorWindow
 from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.organize_pdf import OrganizePdfWindow
 from .ui.pdf_to_office import PdfToOfficeWindow
+from .ui.support_dialog import show_support_reminder, show_welcome
 from .ui.windowing import center_window, make_modal
 
 NAVY = "#193B66"
@@ -33,6 +37,7 @@ class Application(tk.Tk):
         ("Documents vers PDF", "Documents bureautiques et images, individuellement ou par lots."),
         ("Organiser les PDF", "Fusion, extraction, réorganisation et rotation des pages."),
         ("Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
+        ("Créer un document", "Rédiger sur une page A4, insérer des tableaux et exporter en DOCX ou PDF."),
     )
 
     def __init__(self) -> None:
@@ -46,6 +51,8 @@ class Application(tk.Tk):
         center_window(self, 1100, 720)
         self._configure_styles()
         self._build()
+        self.launch_state = register_launch()
+        self.after(350, self._show_launch_information)
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self)
@@ -72,7 +79,8 @@ class Application(tk.Tk):
         titles.pack(side="left", pady=20)
         tk.Label(titles, text="PDF Converter", bg=NAVY, fg="white", font=("Sans", 21, "bold")).pack(anchor="w")
         tk.Label(titles, text="LOU CÒDI  •  TRAITEMENT LOCAL", bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(anchor="w")
-        tk.Button(header, text="Soutenir Lou Còdi ♥", command=lambda: webbrowser.open("https://loucodi.fr"), bg="#28507D", fg="white", relief="flat", padx=16, pady=8).pack(side="right", padx=24)
+        tk.Button(header, text="Soutenir Lou Còdi ♥", command=lambda: webbrowser.open(SUPPORT_URL), bg="#28507D", fg="white", relief="flat", padx=16, pady=8).pack(side="right", padx=(8, 24))
+        tk.Button(header, text="À propos", command=lambda: show_about(self), bg="#28507D", fg="white", relief="flat", padx=14, pady=8).pack(side="right", padx=4)
         self.language_name = tk.StringVar(value=LANGUAGES[get_language()])
         language_selector = ttk.Combobox(
             header,
@@ -94,12 +102,13 @@ class Application(tk.Tk):
         grid.pack(fill="both", expand=True)
         for index, (title, description) in enumerate(self.MODULES):
             card = ttk.Frame(grid, style="Card.TFrame", padding=22)
-            card.grid(row=index // 2, column=index % 2, sticky="nsew", padx=8, pady=8)
+            column_span = 2 if index == 4 else 1
+            card.grid(row=index // 2, column=index % 2, columnspan=column_span, sticky="nsew", padx=8, pady=8)
             ttk.Label(card, text=f"{index + 1:02d}  {title}", style="Title.TLabel").pack(anchor="w")
             ttk.Label(card, text=description, style="Body.TLabel", wraplength=390).pack(anchor="w", pady=(12, 18))
             ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda name=title: self._open_module(name)).pack(anchor="w")
         grid.columnconfigure((0, 1), weight=1, uniform="modules")
-        grid.rowconfigure((0, 1), weight=1, uniform="modules")
+        grid.rowconfigure((0, 1, 2), weight=1, uniform="modules")
         tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
         translate_widget_tree(self)
 
@@ -112,6 +121,18 @@ class Application(tk.Tk):
         for child in self.winfo_children():
             child.destroy()
         self._build()
+
+    def _show_launch_information(self) -> None:
+        if self.launch_state.show_welcome:
+            show_welcome(self)
+            mark_welcome_seen()
+            return
+        if self.launch_state.show_support_reminder:
+            disabled = show_support_reminder(self)
+            mark_support_reminder_shown(
+                self.launch_state.launch_count,
+                disable_future_reminders=disabled,
+            )
 
     def _open_module(self, name: str) -> None:
         if name == "PDF vers Office":
@@ -128,6 +149,10 @@ class Application(tk.Tk):
             return
         if name == "Habillage PDF":
             window = DecoratePdfWindow(self)
+            self.wait_window(window)
+            return
+        if name == "Créer un document":
+            window = DocumentEditorWindow(self)
             self.wait_window(window)
             return
         dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")

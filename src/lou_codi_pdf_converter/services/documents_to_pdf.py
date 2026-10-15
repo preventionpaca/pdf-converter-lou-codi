@@ -4,8 +4,11 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 from PIL import Image
+
+from .office_runtime import find_office_engine
 
 OFFICE_SUFFIXES = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
@@ -22,15 +25,21 @@ def convert_document_to_pdf(source: Path, target: Path) -> None:
         return
     if suffix not in OFFICE_SUFFIXES:
         raise ValueError(f"Format non pris en charge : {source.suffix}")
-    executable = shutil.which("libreoffice") or shutil.which("soffice")
+    executable = find_office_engine()
     if not executable:
-        raise LibreOfficeUnavailable("LibreOffice est requis pour convertir ce document.")
+        raise LibreOfficeUnavailable("Le moteur bureautique intégré est absent de cette édition.")
 
     with tempfile.TemporaryDirectory(prefix="lou-codi-pdf-") as temporary:
+        profile = Path(temporary) / "profile"
+        profile_uri = f"file://{quote(profile.as_posix())}"
         result = subprocess.run(
             [
-                executable,
+                str(executable),
                 "--headless",
+                "--nologo",
+                "--nodefault",
+                "--nofirststartwizard",
+                f"-env:UserInstallation={profile_uri}",
                 "--convert-to",
                 "pdf",
                 "--outdir",
@@ -68,4 +77,3 @@ def _image_to_pdf(source: Path, target: Path) -> None:
             pass
         first, *rest = frames
         first.save(target, "PDF", save_all=True, append_images=rest, resolution=150)
-

@@ -19,10 +19,28 @@ python3 -m venv .venv
 .venv/bin/lou-codi-pdf-converter
 ```
 
-Pour convertir les documents Office vers PDF, LibreOffice doit être installé
-localement. Aucun document n'est envoyé sur Internet.
+Les installateurs de livraison embarquent leur propre moteur bureautique local pour
+convertir les documents Office. L’utilisateur n’a rien à installer séparément et aucun
+document n’est envoyé sur Internet. Une installation LibreOffice du système peut être
+utilisée comme solution de repli uniquement dans l’environnement de développement.
+
+Au premier lancement, l’application présente son fonctionnement gratuit. Un rappel de
+soutien volontaire est ensuite proposé toutes les vingt ouvertures ; il peut être
+désactivé définitivement. Le paiement reste facultatif et ne bloque aucune fonction.
+
+Les livraisons autonomes embarquent Python et leurs bibliothèques afin de ne dépendre
+d’aucun téléchargement à l’exécution. Leur procédure de construction est décrite dans
+`packaging/standalone/README.md`.
 
 ## Licence
 
-GPL-3.0-or-later. © Lou Còdi.
+PDF Converter – Lou Còdi est un logiciel libre distribué sous licence
+**GNU Affero General Public License v3.0 ou ultérieure** (`AGPL-3.0-or-later`).
 
+Le code source correspondant à chaque version publiée doit rester disponible avec
+ses scripts de construction. Les bibliothèques et moteurs embarqués conservent leurs
+propres licences, répertoriées dans `THIRD_PARTY_NOTICES.md`.
+
+© Lou Còdi — Club de programmation.
+
+Code source : <https://github.com/preventionpaca/pdf-converter-lou-codi>

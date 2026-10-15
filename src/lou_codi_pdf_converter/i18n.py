@@ -246,6 +246,191 @@ TRANSLATIONS["ar"].update(
     }
 )
 
+_support_source_message = (
+    "Ce logiciel est mis gratuitement à votre disposition par Lou Còdi, club de "
+    "programmation. Il est le fruit d’un travail bénévole et tous les traitements "
+    "de vos documents sont réalisés localement sur votre ordinateur.\n\n"
+    "Vous pourrez soutenir librement la création et la maintenance de nouveaux "
+    "outils, sans jamais bloquer l’utilisation du logiciel."
+)
+_reminder_source_message = (
+    "PDF Converter est mis gratuitement à votre disposition par Lou Còdi. "
+    "Votre contribution volontaire aide le club à financer la création, la "
+    "maintenance et la mise à disposition de nouveaux outils respectueux de "
+    "votre vie privée.\n\nVous pouvez également continuer gratuitement."
+)
+_missing_office_runtime = "Le moteur bureautique intégré est absent de cette édition."
+
+TRANSLATIONS["en"].update(
+    {
+        "Bienvenue": "Welcome",
+        "Bienvenue dans PDF Converter – Lou Còdi": "Welcome to PDF Converter – Lou Còdi",
+        _support_source_message: (
+            "This software is provided free of charge by Lou Còdi, a programming club. "
+            "It is the result of volunteer work, and all your documents are processed "
+            "locally on your computer.\n\nYou may freely support the creation and maintenance "
+            "of new tools, without the software ever being restricted."
+        ),
+        "Découvrir Lou Còdi": "Discover Lou Còdi",
+        "Commencer": "Get started",
+        "Soutenir Lou Còdi": "Support Lou Còdi",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "Thank you for using PDF Converter – Lou Còdi",
+        _reminder_source_message: (
+            "PDF Converter is provided free of charge by Lou Còdi. Your voluntary "
+            "contribution helps the club fund the creation, maintenance and availability "
+            "of new privacy-friendly tools.\n\nYou can also continue free of charge."
+        ),
+        "Continuer gratuitement": "Continue for free",
+        "Ne plus afficher les rappels de soutien": "Do not show support reminders again",
+        _missing_office_runtime: "The built-in office engine is missing from this edition.",
+    }
+)
+
+TRANSLATIONS["de"].update(
+    {
+        "Bienvenue": "Willkommen",
+        "Bienvenue dans PDF Converter – Lou Còdi": "Willkommen bei PDF Converter – Lou Còdi",
+        _support_source_message: (
+            "Diese Software wird vom Programmierclub Lou Còdi kostenlos bereitgestellt. "
+            "Sie ist das Ergebnis ehrenamtlicher Arbeit, und alle Dokumente werden lokal "
+            "auf Ihrem Computer verarbeitet.\n\nSie können die Entwicklung und Pflege neuer "
+            "Werkzeuge freiwillig unterstützen, ohne dass die Nutzung eingeschränkt wird."
+        ),
+        "Découvrir Lou Còdi": "Lou Còdi entdecken",
+        "Commencer": "Starten",
+        "Soutenir Lou Còdi": "Lou Còdi unterstützen",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "Danke, dass Sie PDF Converter – Lou Còdi verwenden",
+        _reminder_source_message: (
+            "PDF Converter wird von Lou Còdi kostenlos bereitgestellt. Ihr freiwilliger "
+            "Beitrag hilft dem Club, neue datenschutzfreundliche Werkzeuge zu entwickeln, "
+            "zu pflegen und bereitzustellen.\n\nSie können auch kostenlos fortfahren."
+        ),
+        "Continuer gratuitement": "Kostenlos fortfahren",
+        "Ne plus afficher les rappels de soutien": "Keine Unterstützungs­hinweise mehr anzeigen",
+        _missing_office_runtime: "Die integrierte Office-Engine fehlt in dieser Ausgabe.",
+    }
+)
+
+TRANSLATIONS["es"].update(
+    {
+        "Bienvenue": "Bienvenido",
+        "Bienvenue dans PDF Converter – Lou Còdi": "Bienvenido a PDF Converter – Lou Còdi",
+        _support_source_message: (
+            "Este programa es ofrecido gratuitamente por Lou Còdi, un club de programación. "
+            "Es fruto de un trabajo voluntario y todos los documentos se procesan localmente "
+            "en su ordenador.\n\nPuede apoyar libremente la creación y el mantenimiento de "
+            "nuevas herramientas sin que se bloquee nunca el programa."
+        ),
+        "Découvrir Lou Còdi": "Descubrir Lou Còdi",
+        "Commencer": "Empezar",
+        "Soutenir Lou Còdi": "Apoyar a Lou Còdi",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "Gracias por usar PDF Converter – Lou Còdi",
+        _reminder_source_message: (
+            "Lou Còdi ofrece PDF Converter gratuitamente. Su contribución voluntaria ayuda "
+            "al club a financiar la creación, el mantenimiento y la disponibilidad de nuevas "
+            "herramientas respetuosas con su privacidad.\n\nTambién puede continuar gratis."
+        ),
+        "Continuer gratuitement": "Continuar gratis",
+        "Ne plus afficher les rappels de soutien": "No volver a mostrar recordatorios de apoyo",
+        _missing_office_runtime: "Falta el motor ofimático integrado en esta edición.",
+    }
+)
+
+TRANSLATIONS["it"].update(
+    {
+        "Bienvenue": "Benvenuto",
+        "Bienvenue dans PDF Converter – Lou Còdi": "Benvenuto in PDF Converter – Lou Còdi",
+        _support_source_message: (
+            "Questo software è messo gratuitamente a disposizione da Lou Còdi, un club di "
+            "programmazione. È frutto di lavoro volontario e tutti i documenti vengono "
+            "elaborati localmente sul computer.\n\nPuoi sostenere liberamente la creazione e "
+            "la manutenzione di nuovi strumenti senza che il software venga mai bloccato."
+        ),
+        "Découvrir Lou Còdi": "Scopri Lou Còdi",
+        "Commencer": "Inizia",
+        "Soutenir Lou Còdi": "Sostieni Lou Còdi",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "Grazie per aver scelto PDF Converter – Lou Còdi",
+        _reminder_source_message: (
+            "PDF Converter è offerto gratuitamente da Lou Còdi. Il tuo contributo volontario "
+            "aiuta il club a finanziare la creazione, la manutenzione e la disponibilità di "
+            "nuovi strumenti rispettosi della privacy.\n\nPuoi anche continuare gratuitamente."
+        ),
+        "Continuer gratuitement": "Continua gratuitamente",
+        "Ne plus afficher les rappels de soutien": "Non mostrare più i promemoria di sostegno",
+        _missing_office_runtime: "Il motore per ufficio integrato non è presente in questa edizione.",
+    }
+)
+
+TRANSLATIONS["zh"].update(
+    {
+        "Bienvenue": "欢迎",
+        "Bienvenue dans PDF Converter – Lou Còdi": "欢迎使用 PDF Converter – Lou Còdi",
+        _support_source_message: (
+            "本软件由编程俱乐部 Lou Còdi 免费提供，是志愿工作的成果。您的所有文档都只在本机处理。"
+            "\n\n您可以自愿支持新工具的开发和维护，软件的使用绝不会因此受到限制。"
+        ),
+        "Découvrir Lou Còdi": "了解 Lou Còdi",
+        "Commencer": "开始",
+        "Soutenir Lou Còdi": "支持 Lou Còdi",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "感谢您使用 PDF Converter – Lou Còdi",
+        _reminder_source_message: (
+            "PDF Converter 由 Lou Còdi 免费提供。您的自愿支持将帮助俱乐部开发、维护并提供尊重隐私的新工具。"
+            "\n\n您也可以继续免费使用。"
+        ),
+        "Continuer gratuitement": "继续免费使用",
+        "Ne plus afficher les rappels de soutien": "不再显示支持提醒",
+        _missing_office_runtime: "此版本缺少内置办公文档引擎。",
+    }
+)
+
+TRANSLATIONS["tr"].update(
+    {
+        "Bienvenue": "Hoş geldiniz",
+        "Bienvenue dans PDF Converter – Lou Còdi": "PDF Converter – Lou Còdi'ye hoş geldiniz",
+        _support_source_message: (
+            "Bu yazılım, bir programlama kulübü olan Lou Còdi tarafından ücretsiz sunulmaktadır. "
+            "Gönüllü bir çalışmanın ürünüdür ve tüm belgeleriniz bilgisayarınızda yerel olarak "
+            "işlenir.\n\nYazılımın kullanımı hiçbir zaman engellenmeden yeni araçların geliştirilmesini "
+            "ve bakımını gönüllü olarak destekleyebilirsiniz."
+        ),
+        "Découvrir Lou Còdi": "Lou Còdi'yi keşfet",
+        "Commencer": "Başla",
+        "Soutenir Lou Còdi": "Lou Còdi'yi destekle",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "PDF Converter – Lou Còdi'yi kullandığınız için teşekkürler",
+        _reminder_source_message: (
+            "PDF Converter, Lou Còdi tarafından ücretsiz sunulmaktadır. Gönüllü katkınız, "
+            "kulübün gizliliğinize saygılı yeni araçlar geliştirmesine ve bunların bakımını "
+            "sağlamasına yardımcı olur.\n\nÜcretsiz olarak devam edebilirsiniz."
+        ),
+        "Continuer gratuitement": "Ücretsiz devam et",
+        "Ne plus afficher les rappels de soutien": "Destek hatırlatmalarını bir daha gösterme",
+        _missing_office_runtime: "Bu sürümde yerleşik ofis motoru bulunmuyor.",
+    }
+)
+
+TRANSLATIONS["ar"].update(
+    {
+        "Bienvenue": "مرحباً",
+        "Bienvenue dans PDF Converter – Lou Còdi": "مرحباً بك في PDF Converter – Lou Còdi",
+        _support_source_message: (
+            "يوفر نادي البرمجة Lou Còdi هذا البرنامج مجاناً. وهو ثمرة عمل تطوعي، وتتم معالجة "
+            "جميع مستنداتك محلياً على جهازك.\n\nيمكنك دعم إنشاء الأدوات الجديدة وصيانتها طوعاً، "
+            "من دون تقييد استخدام البرنامج أبداً."
+        ),
+        "Découvrir Lou Còdi": "اكتشف Lou Còdi",
+        "Commencer": "ابدأ",
+        "Soutenir Lou Còdi": "ادعم Lou Còdi",
+        "Merci d’utiliser PDF Converter – Lou Còdi": "شكراً لاستخدام PDF Converter – Lou Còdi",
+        _reminder_source_message: (
+            "يوفر Lou Còdi برنامج PDF Converter مجاناً. تساعد مساهمتك الطوعية النادي على تمويل "
+            "إنشاء أدوات جديدة تحترم خصوصيتك وصيانتها وإتاحتها.\n\nيمكنك أيضاً المتابعة مجاناً."
+        ),
+        "Continuer gratuitement": "المتابعة مجاناً",
+        "Ne plus afficher les rappels de soutien": "عدم إظهار تذكيرات الدعم مرة أخرى",
+        _missing_office_runtime: "محرك المستندات المكتبية المدمج غير موجود في هذه النسخة.",
+    }
+)
+
 TRANSLATIONS["de"]["Aucun document transmis sur Internet"] = "Kein Dokument wird über das Internet übertragen"
 TRANSLATIONS["es"]["Aucun document transmis sur Internet"] = "Ningún documento se transmite por Internet"
 TRANSLATIONS["it"]["Aucun document transmis sur Internet"] = "Nessun documento viene trasmesso via Internet"
