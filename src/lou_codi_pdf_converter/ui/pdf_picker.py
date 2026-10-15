@@ -25,6 +25,7 @@ class PdfPicker(tk.Toplevel):
         heading: str = "Choisir les documents PDF",
         accept_label: str = "Ajouter les PDF sélectionnés",
         selection_help: str = "Sélectionnez un ou plusieurs documents PDF.",
+        initial_directory: Path | None = None,
     ) -> None:
         super().__init__(parent, class_="LouCodiPdfConverter")
         self.title(window_title)
@@ -36,7 +37,9 @@ class PdfPicker(tk.Toplevel):
         self.heading = heading
         self.accept_label = accept_label
         self.selection_help = selection_help
-        self.current_directory = downloads_directory()
+        self.current_directory = (
+            initial_directory if initial_directory and initial_directory.is_dir() else downloads_directory()
+        )
         self.paths: dict[str, Path] = {}
         self.path_text = tk.StringVar(value=str(self.current_directory))
         self._build()
@@ -172,7 +175,12 @@ def choose_pdfs(parent: tk.Misc) -> list[Path]:
     return picker.selected_files
 
 
-def choose_documents(parent: tk.Misc, allowed_suffixes: set[str]) -> list[Path]:
+def choose_documents(
+    parent: tk.Misc,
+    allowed_suffixes: set[str],
+    *,
+    initial_directory: Path | None = None,
+) -> list[Path]:
     picker = PdfPicker(
         parent,
         allowed_suffixes=allowed_suffixes,
@@ -180,6 +188,7 @@ def choose_documents(parent: tk.Misc, allowed_suffixes: set[str]) -> list[Path]:
         heading="Choisir les documents ou images",
         accept_label="Ajouter les fichiers sélectionnés",
         selection_help="Sélectionnez un ou plusieurs documents ou images pris en charge.",
+        initial_directory=initial_directory,
     )
     picker.wait_window()
     return picker.selected_files

@@ -38,6 +38,7 @@ class Application(tk.Tk):
         ("Organiser les PDF", "Fusion, extraction, réorganisation et rotation des pages."),
         ("Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
         ("Créer un document", "Rédiger sur une page A4, insérer des tableaux et exporter en DOCX ou PDF."),
+        ("Modèles de documents", "Préparer et réutiliser vos papiers à en-tête et mises en page."),
     )
 
     def __init__(self) -> None:
@@ -101,14 +102,13 @@ class Application(tk.Tk):
         grid = ttk.Frame(content, style="App.TFrame")
         grid.pack(fill="both", expand=True)
         for index, (title, description) in enumerate(self.MODULES):
-            card = ttk.Frame(grid, style="Card.TFrame", padding=22)
-            column_span = 2 if index == 4 else 1
-            card.grid(row=index // 2, column=index % 2, columnspan=column_span, sticky="nsew", padx=8, pady=8)
+            card = ttk.Frame(grid, style="Card.TFrame", padding=16)
+            card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=6, pady=6)
             ttk.Label(card, text=f"{index + 1:02d}  {title}", style="Title.TLabel").pack(anchor="w")
-            ttk.Label(card, text=description, style="Body.TLabel", wraplength=390).pack(anchor="w", pady=(12, 18))
+            ttk.Label(card, text=description, style="Body.TLabel", wraplength=260).pack(anchor="w", pady=(8, 12))
             ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda name=title: self._open_module(name)).pack(anchor="w")
-        grid.columnconfigure((0, 1), weight=1, uniform="modules")
-        grid.rowconfigure((0, 1, 2), weight=1, uniform="modules")
+        grid.columnconfigure((0, 1, 2), weight=1, uniform="modules")
+        grid.rowconfigure((0, 1), weight=1, uniform="modules")
         tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
         translate_widget_tree(self)
 
@@ -153,6 +153,10 @@ class Application(tk.Tk):
             return
         if name == "Créer un document":
             window = DocumentEditorWindow(self)
+            self.wait_window(window)
+            return
+        if name == "Modèles de documents":
+            window = DocumentEditorWindow(self, template_mode=True)
             self.wait_window(window)
             return
         dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
