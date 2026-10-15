@@ -60,6 +60,14 @@ def parse_page_selection(expression: str, page_count: int) -> frozenset[int] | N
     value = expression.strip().lower()
     if not value or value in {"toutes", "tout", "all"}:
         return None
+    if value in {"première page", "premiere page", "première"}:
+        return frozenset({0})
+    if value in {"dernière page", "derniere page", "dernière"}:
+        return frozenset({page_count - 1})
+    if value == "pages paires":
+        return frozenset(range(1, page_count, 2))
+    if value == "pages impaires":
+        return frozenset(range(0, page_count, 2))
     selected: set[int] = set()
     for raw_part in value.replace(";", ",").split(","):
         part = raw_part.strip()

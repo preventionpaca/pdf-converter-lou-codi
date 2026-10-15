@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import colorchooser, messagebox, ttk
 
 import pymupdf
 
@@ -85,6 +85,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self.redo_stack: list[dict[str, object]] = []
         self._restoring_history = False
         self._edit_snapshot: dict[str, object] | None = None
+        self.color_buttons: dict[str, tk.Button] = {}
         self._build()
         self.bind_all("<Control-z>", lambda _event: self._undo())
         self.bind_all("<Control-y>", lambda _event: self._redo())
@@ -120,7 +121,23 @@ class DecoratePdfWindow(tk.Toplevel):
         self.source_label = ttk.Label(source_card, text="Aucun document", style="Body.TLabel")
         self.source_label.pack(side="left", padx=12)
         ttk.Label(source_card, text="Pages :", style="Body.TLabel").pack(side="right")
-        ttk.Entry(source_card, textvariable=self.pages, width=16).pack(side="right", padx=6)
+        self.page_selector = ttk.Combobox(
+            source_card,
+            textvariable=self.pages,
+            values=(
+                "Toutes",
+                "Première page",
+                "Dernière page",
+                "Pages paires",
+                "Pages impaires",
+                "Personnalisé…",
+            ),
+            width=20,
+        )
+        self.page_selector.pack(side="right", padx=6)
+        self.page_selector.bind("<<ComboboxSelected>>", self._page_choice_changed)
+        self.page_selector.bind("<FocusIn>", self._begin_edit)
+        self.page_selector.bind("<FocusOut>", self._finish_edit)
 
         notebook = ttk.Notebook(left)
         notebook.pack(fill="both", expand=True, pady=(0, 8))
@@ -237,7 +254,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self._field(tab, "Taille", self.watermark_size, 3)
         self._field(tab, "Rotation (degrés)", self.watermark_rotation, 4)
         self._field(tab, "Transparence (%)", self.watermark_opacity, 5)
-        self._field(tab, "Couleur hexadécimale", self.watermark_color, 6)
+        self._color_field(tab, "Couleur", self.watermark_color, 6, "watermark")
         self._field(tab, "Position X (mm, vide = centre)", self.watermark_x, 7)
         self._field(tab, "Position Y (mm, vide = centre)", self.watermark_y, 8)
         ttk.Checkbutton(tab, text="Placer au premier plan", variable=self.watermark_front).grid(row=9, column=1, sticky="w", pady=8)
@@ -271,7 +288,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self._field(tab, "Pied X (mm, vide = alignement)", self.footer_x, 6)
         self._field(tab, "Pied depuis le bas (mm)", self.footer_y, 7)
         self._field(tab, "Taille du texte", self.text_size, 8)
-        self._field(tab, "Couleur", self.text_color, 9)
+        self._color_field(tab, "Couleur", self.text_color, 9, "text")
         ttk.Checkbutton(tab, text="Ajouter un liseré horizontal", variable=self.footer_line).grid(row=10, column=1, sticky="w", pady=8)
         ttk.Label(tab, text="Variables : {page}  {pages}  {document}  {date}", style="Body.TLabel").grid(row=11, column=0, columnspan=3, sticky="w", pady=10)
         tab.columnconfigure(1, weight=1)
@@ -326,13 +343,20 @@ class DecoratePdfWindow(tk.Toplevel):
         )
         for index, (label, variable) in enumerate(fields):
             ttk.Label(editor, text=label).grid(row=index // 3 * 2, column=index % 3, sticky="w")
-            ttk.Entry(editor, textvariable=variable, width=18).grid(
-                row=index // 3 * 2 + 1,
-                column=index % 3,
-                sticky="ew",
-                padx=(0, 10),
-                pady=(2, 8),
-            )
+            if variable is self.mask_color:
+                color_row = ttk.Frame(editor)
+                color_row.grid(row=3, column=2, sticky="ew", padx=(0, 10), pady=(2, 8))
+                color_row.columnconfigure(0, weight=1)
+                ttk.Entry(color_row, textvariable=variable, width=12).grid(row=0, column=0, sticky="ew")
+                self._make_color_button(color_row, variable, "mask").grid(row=0, column=1, padx=(5, 0))
+            else:
+                ttk.Entry(editor, textvariable=variable, width=18).grid(
+                    row=index // 3 * 2 + 1,
+                    column=index % 3,
+                    sticky="ew",
+                    padx=(0, 10),
+                    pady=(2, 8),
+                )
         editor.columnconfigure((0, 1, 2), weight=1)
         buttons = ttk.Frame(tab)
         buttons.pack(fill="x", pady=6)
@@ -357,6 +381,65 @@ class DecoratePdfWindow(tk.Toplevel):
         entry.grid(row=row, column=1, columnspan=2, sticky="ew", padx=8)
         entry.bind("<FocusIn>", self._begin_edit)
         entry.bind("<FocusOut>", self._finish_edit)
+
+    def _color_field(
+        self,
+        parent: ttk.Frame,
+        label: str,
+        variable: tk.StringVar,
+        row: int,
+        key: str,
+    ) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=6)
+        entry = ttk.Entry(parent, textvariable=variable)
+        entry.grid(row=row, column=1, sticky="ew", padx=8)
+        entry.bind("<FocusIn>", self._begin_edit)
+        entry.bind("<FocusOut>", self._finish_edit)
+        self._make_color_button(parent, variable, key).grid(row=row, column=2, sticky="ew")
+
+    def _make_color_button(
+        self,
+        parent: tk.Misc,
+        variable: tk.StringVar,
+        key: str,
+    ) -> tk.Button:
+        button = tk.Button(
+            parent,
+            text="Choisir…",
+            background=variable.get(),
+            activebackground=variable.get(),
+            command=lambda: self._choose_color(variable, key),
+        )
+        self.color_buttons[key] = button
+        return button
+
+    def _choose_color(self, variable: tk.StringVar, key: str) -> None:
+        _rgb, selected = colorchooser.askcolor(
+            color=variable.get(),
+            title="Choisir une couleur — Lou Còdi",
+            parent=self,
+        )
+        if not selected:
+            return
+        self._remember_state()
+        variable.set(selected.upper())
+        self._update_color_button(key, selected)
+        if self.source:
+            self._preview()
+
+    def _update_color_button(self, key: str, color: str) -> None:
+        button = self.color_buttons.get(key)
+        if button:
+            button.configure(background=color, activebackground=color)
+
+    def _page_choice_changed(self, _event: tk.Event[tk.Misc]) -> None:
+        if self.pages.get() == "Personnalisé…":
+            self.pages.set("1")
+            self.page_selector.focus_set()
+            self.page_selector.selection_range(0, "end")
+            self.status.configure(text="Saisissez par exemple : 1, 3-5, 8")
+        elif self.source:
+            self._preview()
 
     def _position_field(self, parent: ttk.Frame, label: str, variable: tk.StringVar, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=6)
@@ -418,6 +501,9 @@ class DecoratePdfWindow(tk.Toplevel):
             self._refresh_mask_tree()
         finally:
             self._restoring_history = False
+        self._update_color_button("watermark", self.watermark_color.get())
+        self._update_color_button("text", self.text_color.get())
+        self._update_color_button("mask", self.mask_color.get())
         self._update_history_buttons()
         if self.source:
             self._preview()
@@ -563,6 +649,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self.mask_width.set(zone.width_mm)
         self.mask_zone_height.set(zone.height_mm)
         self.mask_color.set(zone.color)
+        self._update_color_button("mask", zone.color)
 
     def _update_selected_mask(self) -> None:
         selection = self.mask_tree.selection()

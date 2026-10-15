@@ -22,6 +22,10 @@ def make_pdf(path: Path, count: int = 2) -> None:
 def test_parse_page_selection() -> None:
     assert parse_page_selection("", 5) is None
     assert parse_page_selection("1, 3-5", 5) == frozenset({0, 2, 3, 4})
+    assert parse_page_selection("Première page", 5) == frozenset({0})
+    assert parse_page_selection("Dernière page", 5) == frozenset({4})
+    assert parse_page_selection("Pages paires", 5) == frozenset({1, 3})
+    assert parse_page_selection("Pages impaires", 5) == frozenset({0, 2, 4})
 
 
 def test_decoration_keeps_pages_and_adds_selected_text(tmp_path: Path) -> None:
