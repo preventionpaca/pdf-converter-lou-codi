@@ -6,6 +6,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from ..i18n import translate_widget_tree
 from ..paths import collision_free_target, downloads_directory
 from ..services.documents_to_pdf import IMAGE_SUFFIXES, OFFICE_SUFFIXES, convert_document_to_pdf
 from ..services.pdf_organizer import merge_pdfs
@@ -36,6 +37,7 @@ class DocumentsToPdfWindow(tk.Toplevel):
         self.destination = tk.StringVar(value=str(downloads_directory()))
         self.merge_results = tk.BooleanVar(value=False)
         self._build()
+        translate_widget_tree(self)
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self.after(100, self._poll)
         make_modal(self, parent)

@@ -7,6 +7,7 @@ from tkinter import colorchooser, messagebox, ttk
 
 import pymupdf
 
+from ..i18n import tr, translate_widget_tree, untr
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_decoration import (
     DecorationSettings,
@@ -38,7 +39,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self.last_output: Path | None = None
         self.temp_directory = tempfile.TemporaryDirectory(prefix="lou-codi-preview-")
         self.destination = tk.StringVar(value=str(downloads_directory()))
-        self.pages = tk.StringVar(value="Toutes")
+        self.pages = tk.StringVar(value=tr("Toutes"))
         self.watermark_text = tk.StringVar()
         self.watermark_image = tk.StringVar()
         self.watermark_size = tk.DoubleVar(value=52)
@@ -87,6 +88,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self._edit_snapshot: dict[str, object] | None = None
         self.color_buttons: dict[str, tk.Button] = {}
         self._build()
+        translate_widget_tree(self)
         self.bind_all("<Control-z>", lambda _event: self._undo())
         self.bind_all("<Control-y>", lambda _event: self._redo())
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -124,13 +126,16 @@ class DecoratePdfWindow(tk.Toplevel):
         self.page_selector = ttk.Combobox(
             source_card,
             textvariable=self.pages,
-            values=(
-                "Toutes",
-                "Première page",
-                "Dernière page",
-                "Pages paires",
-                "Pages impaires",
-                "Personnalisé…",
+            values=tuple(
+                tr(value)
+                for value in (
+                    "Toutes",
+                    "Première page",
+                    "Dernière page",
+                    "Pages paires",
+                    "Pages impaires",
+                    "Personnalisé…",
+                )
             ),
             width=20,
         )
@@ -433,7 +438,7 @@ class DecoratePdfWindow(tk.Toplevel):
             button.configure(background=color, activebackground=color)
 
     def _page_choice_changed(self, _event: tk.Event[tk.Misc]) -> None:
-        if self.pages.get() == "Personnalisé…":
+        if untr(self.pages.get()) == "Personnalisé…":
             self.pages.set("1")
             self.page_selector.focus_set()
             self.page_selector.selection_range(0, "end")
@@ -676,7 +681,7 @@ class DecoratePdfWindow(tk.Toplevel):
     def _settings(self) -> DecorationSettings:
         if not self.source:
             raise ValueError("Choisissez d’abord un document PDF.")
-        selected_pages = parse_page_selection(self.pages.get(), self.page_count)
+        selected_pages = parse_page_selection(untr(self.pages.get()), self.page_count)
         image_text = self.watermark_image.get().strip()
         return DecorationSettings(
             selected_pages=selected_pages,

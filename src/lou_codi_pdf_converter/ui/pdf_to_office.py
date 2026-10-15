@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from ..i18n import translate_widget_tree
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
@@ -45,6 +46,7 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.destination = tk.StringVar(value=str(downloads_directory()))
         self.password = tk.StringVar()
         self._build()
+        translate_widget_tree(self)
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self.after(100, self._poll)
         make_modal(self, parent)

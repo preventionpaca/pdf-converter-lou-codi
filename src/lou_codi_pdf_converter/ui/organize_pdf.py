@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 import pymupdf
 from pypdf import PdfReader
 
+from ..i18n import translate_widget_tree
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_organizer import PagePlan, assemble_pdf, suggested_organized_stem
 from ..system import open_path
@@ -51,6 +52,7 @@ class OrganizePdfWindow(tk.Toplevel):
         self.last_output: Path | None = None
         self.destination = tk.StringVar(value=str(downloads_directory()))
         self._build()
+        translate_widget_tree(self)
         make_modal(self, parent)
 
     def _build(self) -> None:

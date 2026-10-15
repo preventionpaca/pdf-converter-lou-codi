@@ -6,6 +6,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from . import __version__
+from .i18n import LANGUAGES, get_language, load_language, set_language, tr, translate_widget_tree
 from .ui.decorate_pdf import DecoratePdfWindow
 from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.organize_pdf import OrganizePdfWindow
@@ -28,6 +29,7 @@ class Application(tk.Tk):
     )
 
     def __init__(self) -> None:
+        set_language(load_language(), save=False)
         super().__init__(className="LouCodiPdfConverter")
         self.title(f"PDF Converter – Lou Còdi | v{__version__}")
         self.geometry("1100x720")
@@ -63,6 +65,19 @@ class Application(tk.Tk):
         tk.Label(titles, text="PDF Converter", bg=NAVY, fg="white", font=("Sans", 21, "bold")).pack(anchor="w")
         tk.Label(titles, text="LOU CÒDI  •  TRAITEMENT LOCAL", bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(anchor="w")
         tk.Button(header, text="Soutenir Lou Còdi ♥", command=lambda: webbrowser.open("https://loucodi.fr"), bg="#28507D", fg="white", relief="flat", padx=16, pady=8).pack(side="right", padx=24)
+        self.language_name = tk.StringVar(value=LANGUAGES[get_language()])
+        language_selector = ttk.Combobox(
+            header,
+            textvariable=self.language_name,
+            values=tuple(LANGUAGES.values()),
+            state="readonly",
+            width=12,
+        )
+        language_selector.pack(side="right", padx=(8, 0), pady=31)
+        language_selector.bind("<<ComboboxSelected>>", self._change_language)
+        tk.Label(header, text="Langue", bg=NAVY, fg="white", font=("Sans", 9)).pack(
+            side="right", pady=31
+        )
 
         content = ttk.Frame(self, style="App.TFrame", padding=24)
         content.pack(fill="both", expand=True)
@@ -77,7 +92,18 @@ class Application(tk.Tk):
             ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda name=title: self._open_module(name)).pack(anchor="w")
         grid.columnconfigure((0, 1), weight=1, uniform="modules")
         grid.rowconfigure((0, 1), weight=1, uniform="modules")
-        tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
+        tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  {tr('Aucun document transmis sur Internet')}", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
+        translate_widget_tree(self)
+
+    def _change_language(self, _event: tk.Event[tk.Misc]) -> None:
+        selected = next(
+            (code for code, name in LANGUAGES.items() if name == self.language_name.get()),
+            "fr",
+        )
+        set_language(selected)
+        for child in self.winfo_children():
+            child.destroy()
+        self._build()
 
     def _open_module(self, name: str) -> None:
         if name == "PDF vers Office":

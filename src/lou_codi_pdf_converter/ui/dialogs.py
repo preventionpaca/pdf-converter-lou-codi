@@ -4,6 +4,7 @@ import tkinter as tk
 from collections.abc import Callable
 from tkinter import ttk
 
+from ..i18n import tr, translate_widget_tree
 from .windowing import center_window, make_modal
 
 NAVY = "#193B66"
@@ -22,7 +23,7 @@ def show_success(
 ) -> None:
     """Show a branded modal confirmation instead of a native Tk message box."""
     dialog = tk.Toplevel(parent, class_="LouCodiPdfConverter")
-    dialog.title(title)
+    dialog.title(tr(title))
     dialog.resizable(False, False)
     dialog.configure(bg=BACKGROUND)
     app_icon = getattr(dialog._root(), "app_icon", None)
@@ -38,7 +39,7 @@ def show_success(
         )
     tk.Label(
         header,
-        text=title,
+        text=tr(title),
         bg=NAVY,
         fg="white",
         font=("Sans", 16, "bold"),
@@ -62,7 +63,7 @@ def show_success(
     ).pack(anchor="w", pady=(0, 8))
     ttk.Label(
         text_area,
-        text=message,
+        text=tr(message),
         style="Body.TLabel",
         wraplength=570,
         justify="left",
@@ -79,14 +80,14 @@ def show_success(
 
         ttk.Button(
             buttons,
-            text=action_label,
+            text=tr(action_label),
             style="Primary.TButton",
             command=run_action,
         ).pack(side="right", padx=(0, 10))
 
+    translate_widget_tree(dialog)
     center_window(dialog, 700, 330)
     make_modal(dialog, parent)
     dialog.wait_window()
     if parent.winfo_exists():
         parent.grab_set()
-
