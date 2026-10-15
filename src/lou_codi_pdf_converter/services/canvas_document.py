@@ -16,6 +16,7 @@ from .table_formulas import evaluate_table
 
 A4_WIDTH = 595.28
 A4_HEIGHT = 841.89
+FLOW_BREAK_TOKEN = "{{CADRE_SUIVANT}}"
 
 
 @dataclass
@@ -221,26 +222,32 @@ def _flow_segments(text: str, frames: list[PageObject]) -> list[str]:
         if not remaining:
             segments.append("")
             continue
-        if _text_fits(remaining, frame):
-            segments.append(remaining)
-            remaining = ""
+        break_at = remaining.find(FLOW_BREAK_TOKEN)
+        candidate = remaining[:break_at] if break_at >= 0 else remaining
+        if _text_fits(candidate, frame):
+            segments.append(candidate.rstrip())
+            remaining = (
+                remaining[break_at + len(FLOW_BREAK_TOKEN) :].lstrip("\n ")
+                if break_at >= 0
+                else ""
+            )
             continue
-        low, high = 1, len(remaining)
+        low, high = 1, len(candidate)
         while low < high:
             middle = (low + high + 1) // 2
-            if _text_fits(remaining[:middle], frame):
+            if _text_fits(candidate[:middle], frame):
                 low = middle
             else:
                 high = middle - 1
         cut = max(1, low)
-        if cut >= len(remaining) or not remaining[cut].isspace():
+        if cut >= len(candidate) or not candidate[cut].isspace():
             word_boundary = max(
-                remaining.rfind(" ", int(cut * 0.6), cut),
-                remaining.rfind("\n", 0, cut),
+                candidate.rfind(" ", int(cut * 0.6), cut),
+                candidate.rfind("\n", 0, cut),
             )
             if word_boundary > 0:
                 cut = word_boundary
-        segment = remaining[:cut].rstrip()
+        segment = candidate[:cut].rstrip()
         segments.append(segment)
         remaining = remaining[cut:].lstrip("\n ")
     return segments
@@ -249,9 +256,9 @@ def _flow_segments(text: str, frames: list[PageObject]) -> list[str]:
 def _text_fits(text: str, frame: PageObject) -> bool:
     font_name = {"Serif": "tiro", "Monospace": "cour"}.get(frame.font_family, "helv")
     font = pymupdf.Font(font_name)
-    available_width = max(4.0, frame.width - 8)
-    line_height = max(7.0, frame.font_size * 1.2)
-    maximum_lines = max(1, int((frame.height - 4) / line_height))
+    available_width = max(4.0, frame.width - 12)
+    line_height = max(7.0, frame.font_size * 1.35)
+    maximum_lines = max(1, int((frame.height - 8) / line_height))
     lines = 0
     for paragraph in text.split("\n"):
         if not paragraph:

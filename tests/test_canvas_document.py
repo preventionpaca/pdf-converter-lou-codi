@@ -4,6 +4,7 @@ from pypdf import PdfReader
 
 from lou_codi_pdf_converter.services.canvas_document import (
     CanvasDocument,
+    FLOW_BREAK_TOKEN,
     PageObject,
     export_canvas_pdf,
     flowed_text_for_object,
@@ -66,6 +67,15 @@ def test_text_flow_respects_explicit_line_breaks() -> None:
     second.x += 75
     second.y += 40
     assert flowed_text_for_object(second, [first, second]) == before_move
+
+
+def test_text_flow_can_be_forced_to_next_frame() -> None:
+    first = PageObject("text", 0, 10, 10, 300, 80, text=f"Premier{FLOW_BREAK_TOKEN}Second")
+    second = PageObject("text", 0, 10, 100, 300, 80)
+    first.flow_next_id = second.object_id
+
+    assert flowed_text_for_object(first, [first, second]) == "Premier"
+    assert flowed_text_for_object(second, [first, second]) == "Second"
 
 
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:

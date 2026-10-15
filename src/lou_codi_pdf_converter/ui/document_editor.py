@@ -8,13 +8,14 @@ from pathlib import Path
 from tkinter import colorchooser, messagebox, ttk
 
 import pymupdf
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
 from ..paths import collision_free_target, downloads_directory
 from ..services.canvas_document import (
     A4_HEIGHT,
     A4_WIDTH,
+    FLOW_BREAK_TOKEN,
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
@@ -628,16 +629,23 @@ class DocumentEditorWindow(tk.Toplevel):
         elif item.kind == "chart":
             self._draw_chart_preview(item, x, y, w, h, tags)
         else:
-            style = "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal"
-            anchor = {"left": "nw", "center": "n", "right": "ne"}.get(item.align, "nw")
-            tx = x if item.align in {"left", "justify"} else x + w / 2 if item.align == "center" else x + w
             source_name = Path(self.document.source_pdf).stem if self.document.source_pdf else (self.project_path.stem if self.project_path else "Nouveau document")
             flowed_text = flowed_text_for_object(item, self.document.objects)
             displayed_text = resolve_dynamic_text(flowed_text, self.current_page, self.document.page_count, source_name)
             emphasized = selected or bool(self._pending_text_link_id and item.kind == "text")
             self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=4 if emphasized else 1, tags=tags)
-            family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2"}.get(item.font_family, "Liberation Sans")
-            self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=(family, max(7, round(item.font_size * self.zoom)), style), tags=tags)
+            picture = self._text_preview(item, displayed_text, max(1, round(w)), max(1, round(h)))
+            self._overlay_images.append(picture)
+            self.canvas.create_image(x, y, image=picture, anchor="nw", tags=tags)
+            self.canvas.create_rectangle(
+                x,
+                y,
+                x + w,
+                y + h,
+                outline=outline,
+                width=4 if emphasized else 1,
+                tags=tags,
+            )
             linked = item.flow_next_id or any(
                 candidate.flow_next_id == item.object_id for candidate in self.document.objects
             )
@@ -662,6 +670,42 @@ class DocumentEditorWindow(tk.Toplevel):
                 outline="white",
                 tags=(f"resize:{index}", "resize"),
             )
+
+    def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
+        """Render and clip a text frame exactly inside its visible rectangle."""
+        image = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(image)
+        size = max(7, round(item.font_size * self.zoom))
+        suffix = "-BoldOblique" if item.bold and item.italic else "-Bold" if item.bold else "-Oblique" if item.italic else ""
+        family = "DejaVuSansMono" if item.font_family == "Monospace" else "DejaVuSerif" if item.font_family == "Serif" else "DejaVuSans"
+        try:
+            font = ImageFont.truetype(f"{family}{suffix}.ttf", size)
+        except OSError:
+            font = ImageFont.load_default()
+        maximum = max(1, width - 10)
+        lines: list[str] = []
+        for paragraph in text.split("\n"):
+            if not paragraph:
+                lines.append("")
+                continue
+            current = ""
+            for word in paragraph.split(" "):
+                candidate = word if not current else f"{current} {word}"
+                if current and draw.textlength(candidate, font=font) > maximum:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = candidate
+            lines.append(current)
+        line_height = max(size + 3, round(size * 1.35))
+        for row, line in enumerate(lines):
+            py = 4 + row * line_height
+            if py + line_height > height:
+                break
+            length = draw.textlength(line, font=font)
+            px = 5 if item.align in {"left", "justify"} else (width - length) / 2 if item.align == "center" else width - length - 5
+            draw.text((px, py), line, font=font, fill=item.color)
+        return ImageTk.PhotoImage(image)
 
     def _add_object(self, item: PageObject) -> None:
         self._checkpoint()
@@ -1014,6 +1058,8 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.insert("1.0", item.text)
         actions = tk.Frame(dialog, bg=BACKGROUND)
         actions.pack(fill="x", padx=14, pady=(0, 10))
+        distribution = tk.Label(actions, bg=BACKGROUND, fg="#385571", font=("Sans", 9))
+        distribution.pack(side="left")
         tk.Button(
             actions,
             text="Terminer",
@@ -1026,6 +1072,14 @@ class DocumentEditorWindow(tk.Toplevel):
             padx=18,
             pady=6,
         ).pack(side="right")
+        tk.Button(
+            actions,
+            text="Passer au cadre suivant →",
+            command=lambda: widget.insert("insert", f"\n{FLOW_BREAK_TOKEN}\n"),
+            relief="flat",
+            padx=12,
+            pady=6,
+        ).pack(side="right", padx=(8, 0))
         self._editing_widget = widget
         self._editing_dialog = dialog
         self._editing_object_id = item.object_id
@@ -1037,10 +1091,29 @@ class DocumentEditorWindow(tk.Toplevel):
             item.text = widget.get("1.0", "end-1c")
             widget.edit_modified(False)
             self._redraw_text_chain(item)
+            chain: list[PageObject] = []
+            cursor = item
+            known = {candidate.object_id: candidate for candidate in self.document.objects}
+            visited: set[str] = set()
+            while cursor.object_id not in visited:
+                visited.add(cursor.object_id)
+                chain.append(cursor)
+                if not cursor.flow_next_id or cursor.flow_next_id not in known:
+                    break
+                cursor = known[cursor.flow_next_id]
+            counts = [len(flowed_text_for_object(frame, self.document.objects)) for frame in chain]
+            distribution.configure(
+                text="Répartition : "
+                + "  •  ".join(
+                    f"cadre {number + 1} : {count}" for number, count in enumerate(counts)
+                )
+            )
 
         widget.bind("<<Modified>>", preview)
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
         widget.edit_modified(False)
+        widget.edit_modified(True)
+        preview()
         dialog.protocol("WM_DELETE_WINDOW", self._commit_inline_editor)
         widget.focus_set()
 
