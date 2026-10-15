@@ -12,6 +12,7 @@ from pypdf import PdfReader
 from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_organizer import PagePlan, assemble_pdf, suggested_organized_stem
 from ..system import open_path
+from .dialogs import show_success
 from .directory_picker import choose_directory
 from .pdf_picker import choose_pdfs
 from .windowing import make_modal, maximize_window
@@ -354,7 +355,13 @@ class OrganizePdfWindow(tk.Toplevel):
         self.last_output = target
         self.open_button.configure(state="normal")
         self.status.configure(text=f"PDF créé : {target.name}")
-        messagebox.showinfo("Export terminé", f"Le document a été créé :\n{target}", parent=self)
+        show_success(
+            self,
+            "Export terminé",
+            f"Le document a été créé dans :\n\n{target}",
+            action_label="Ouvrir le PDF",
+            action=lambda: open_path(target),
+        )
 
     def _open_output(self) -> None:
         if self.last_output and self.last_output.is_file():
