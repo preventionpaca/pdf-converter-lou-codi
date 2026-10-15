@@ -10,6 +10,7 @@ from ..paths import collision_free_target, downloads_directory
 from ..services.documents_to_pdf import IMAGE_SUFFIXES, OFFICE_SUFFIXES, convert_document_to_pdf
 from ..services.pdf_organizer import merge_pdfs
 from ..system import open_path
+from .dialogs import show_success
 from .directory_picker import choose_directory
 from .pdf_picker import choose_documents
 from .windowing import make_modal, maximize_window
@@ -239,7 +240,15 @@ class DocumentsToPdfWindow(tk.Toplevel):
         if failures:
             messagebox.showwarning("Conversion terminée", "\n".join(failures[:8]), parent=self)
         else:
-            messagebox.showinfo("Conversion terminée", f"{len(generated)} PDF créé(s).", parent=self)
+            target = generated[0] if len(generated) == 1 else generated[0].parent
+            action_label = "Ouvrir le PDF" if len(generated) == 1 else "Ouvrir le dossier"
+            show_success(
+                self,
+                "Conversion terminée",
+                f"{len(generated)} PDF créé(s) dans :\n\n{generated[0].parent}",
+                action_label=action_label,
+                action=lambda: open_path(target),
+            )
 
     def _open_results(self) -> None:
         if len(self.generated) == 1:

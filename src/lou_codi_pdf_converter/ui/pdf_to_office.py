@@ -11,6 +11,7 @@ from ..paths import collision_free_target, downloads_directory
 from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
 from ..system import open_path
+from .dialogs import show_success
 from .directory_picker import choose_directory
 from .pdf_picker import choose_pdfs
 from .windowing import make_modal, maximize_window
@@ -226,7 +227,16 @@ class PdfToOfficeWindow(tk.Toplevel):
             details = "\n".join(f"• {result.source.name} : {result.error}" for result in failures[:8])
             messagebox.showwarning("Conversion terminée", details, parent=self)
         else:
-            messagebox.showinfo("Conversion terminée", f"{len(self.generated)} document(s) créé(s).", parent=self)
+            target = self.generated[0] if len(self.generated) == 1 else self.generated[0].parent
+            action_label = "Ouvrir le document" if len(self.generated) == 1 else "Ouvrir le dossier"
+            show_success(
+                self,
+                "Conversion terminée",
+                f"{len(self.generated)} document(s) créé(s) dans :\n\n"
+                f"{self.generated[0].parent}",
+                action_label=action_label,
+                action=lambda: open_path(target),
+            )
 
     def _open_results(self) -> None:
         if len(self.generated) == 1:
