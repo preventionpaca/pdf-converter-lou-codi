@@ -24,7 +24,7 @@ from ..services.canvas_document import (
 from ..services.docx_canvas import export_editable_docx
 from ..services.table_formulas import evaluate_table
 from ..system import open_path
-from .input_dialogs import ask_table_size, ask_text, edit_table
+from .input_dialogs import ask_table_size, ask_text, edit_table, pick_symbol
 from .pdf_picker import choose_documents
 from .windowing import make_modal, maximize_window
 
@@ -68,6 +68,7 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _build(self) -> None:
         self._build_menu()
+        ttk.Style(self).configure("EditorTool.TButton", padding=(5, 2), font=("Sans", 10))
         header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
@@ -81,6 +82,17 @@ class DocumentEditorWindow(tk.Toplevel):
             ("≡←", lambda: self._align("left")), ("≡↔", lambda: self._align("center")),
             ("→≡", lambda: self._align("right")), ("≡", lambda: self._align("justify")),
         ))
+        ttk.Label(formatting, text="Police", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self.font_family_var = tk.StringVar(value="Sans-serif")
+        font_family = ttk.Combobox(
+            formatting,
+            textvariable=self.font_family_var,
+            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Symboles"),
+            state="readonly",
+            width=11,
+        )
+        font_family.pack(side="left", padx=2)
+        font_family.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
         ttk.Label(formatting, text="Taille", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.font_size_var = tk.StringVar(value="12")
         font_size = ttk.Combobox(
@@ -96,12 +108,10 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Separator(formatting, orient="vertical").pack(side="left", fill="y", padx=8)
         self._buttons(formatting, (
             ("T+", self._add_text), ("▧", self._add_image), ("▤", self._add_table),
-            ("□", self._add_mask), ("╱", self._add_line), ("•", lambda: self._make_list(False)),
+            ("□", self._add_mask), ("╱", self._add_line), ("Ω", self._insert_symbol),
+            ("•", lambda: self._make_list(False)),
             ("1.", lambda: self._make_list(True)), ("⌗", self._copy_format), ("✓⌗", self._apply_format),
         ))
-        ttk.Button(formatting, text="PDF", style="Primary.TButton", command=self._export_pdf).pack(side="right", padx=2)
-        ttk.Button(formatting, text="DOCX", command=self._export_docx).pack(side="right", padx=2)
-        ttk.Button(formatting, text="🗑", command=self._delete_selected).pack(side="right", padx=2)
 
         body = ttk.Panedwindow(self, orient="horizontal")
         body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
@@ -199,6 +209,10 @@ class DocumentEditorWindow(tk.Toplevel):
         insert_menu.add_command(label="Tableau…", command=self._add_table)
         insert_menu.add_command(label="Masque blanc", command=self._add_mask)
         insert_menu.add_command(label="Trait", command=self._add_line)
+        insert_menu.add_command(label="Caractère spécial…", command=self._insert_symbol)
+        insert_menu.add_separator()
+        insert_menu.add_command(label="Graphique en barres lié au tableau", command=lambda: self._add_chart("bar"))
+        insert_menu.add_command(label="Camembert lié au tableau", command=lambda: self._add_chart("pie"))
         insert_menu.add_separator()
         insert_menu.add_command(label="En-tête libre", command=lambda: self._add_preset("header"))
         insert_menu.add_command(label="Pied de page libre", command=lambda: self._add_preset("footer"))
@@ -238,6 +252,15 @@ class DocumentEditorWindow(tk.Toplevel):
         object_menu.add_command(label="Dissocier", command=self._ungroup_selected)
         menu.add_cascade(label="Objets", menu=object_menu)
 
+        page_menu = tk.Menu(menu, tearoff=False)
+        page_menu.add_command(label="Orientation portrait", command=lambda: self._set_orientation("portrait"))
+        page_menu.add_command(label="Orientation paysage", command=lambda: self._set_orientation("landscape"))
+        page_menu.add_separator()
+        page_menu.add_command(label="Page précédente", command=lambda: self._change_page(-1))
+        page_menu.add_command(label="Page suivante", command=lambda: self._change_page(1))
+        page_menu.add_command(label="Ajouter une page blanche", command=self._add_blank_page)
+        menu.add_cascade(label="Page", menu=page_menu)
+
         view_menu = tk.Menu(menu, tearoff=False)
         view_menu.add_command(label="Zoom avant", command=lambda: self._set_zoom(0.1), accelerator="Ctrl++")
         view_menu.add_command(label="Zoom arrière", command=lambda: self._set_zoom(-0.1), accelerator="Ctrl+-")
@@ -254,7 +277,7 @@ class DocumentEditorWindow(tk.Toplevel):
     @staticmethod
     def _buttons(parent: tk.Misc, items: tuple[tuple[str, object], ...]) -> None:
         for label, command in items:
-            ttk.Button(parent, text=label, command=command).pack(side="left", padx=2)
+            ttk.Button(parent, text=label, command=command, style="EditorTool.TButton").pack(side="left", padx=1)
 
     def _checkpoint(self) -> None:
         self.undo_stack.append(copy.deepcopy(self.document))
@@ -316,7 +339,7 @@ class DocumentEditorWindow(tk.Toplevel):
                         return rect.width, rect.height
             except (OSError, RuntimeError, ValueError):
                 pass
-        return A4_WIDTH, A4_HEIGHT
+        return self.document.page_width, self.document.page_height
 
     def _render(self) -> None:
         self.canvas.delete("all")
@@ -379,6 +402,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.canvas.create_rectangle(x, y, x + w, y + h, outline=outline, width=3, tags=tags)
         elif item.kind == "line":
             self.canvas.create_line(x, y, x + w, y + h, fill=item.color, width=max(1, item.font_size / 6), tags=tags)
+        elif item.kind == "chart":
+            self._draw_chart_preview(item, x, y, w, h, tags)
         else:
             style = "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal"
             anchor = {"left": "nw", "center": "n", "right": "ne"}.get(item.align, "nw")
@@ -386,7 +411,8 @@ class DocumentEditorWindow(tk.Toplevel):
             source_name = Path(self.document.source_pdf).stem if self.document.source_pdf else (self.project_path.stem if self.project_path else "Nouveau document")
             displayed_text = resolve_dynamic_text(item.text, self.current_page, self.document.page_count, source_name)
             self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=3 if selected else 1, tags=tags)
-            self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=("Liberation Sans", max(7, round(item.font_size * self.zoom)), style), tags=tags)
+            family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2"}.get(item.font_family, "Liberation Sans")
+            self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=(family, max(7, round(item.font_size * self.zoom)), style), tags=tags)
         if selected:
             size = 12
             self.canvas.create_rectangle(
@@ -427,6 +453,55 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _add_line(self) -> None:
         self._add_object(PageObject("line", self.current_page, 70, 120, 260, 0, font_size=8))
+
+    def _insert_symbol(self) -> None:
+        symbol = pick_symbol(self)
+        if not symbol:
+            return
+        if self.selected is not None and self.document.objects[self.selected].kind == "text":
+            self._checkpoint()
+            self.document.objects[self.selected].text += symbol
+            self._render()
+        else:
+            family = "Flèches" if symbol in "←→↑↓↔⇒⇐➜" else "Symboles"
+            self._add_object(PageObject("text", self.current_page, 70, 80, 80, 50, text=symbol, font_size=24, font_family=family))
+
+    def _add_chart(self, chart_type: str) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "table":
+            messagebox.showinfo("Graphique", "Sélectionnez d’abord le tableau qui contient les données.", parent=self)
+            return
+        table = self.document.objects[self.selected]
+        self._add_object(PageObject("chart", self.current_page, table.x, table.y + table.height + 25, 320, 210, fill=chart_type, source_id=table.object_id))
+
+    def _draw_chart_preview(self, item: PageObject, x: float, y: float, width: float, height: float, tags: tuple[str, str]) -> None:
+        source = next((candidate for candidate in self.document.objects if candidate.object_id == item.source_id), None)
+        rows = evaluate_table(source.text) if source else []
+        values: list[tuple[str, float]] = []
+        for index, row in enumerate(rows):
+            try:
+                values.append((row[0] or str(index + 1), float(row[-1].replace(",", "."))))
+            except (ValueError, IndexError):
+                continue
+        self.canvas.create_rectangle(x, y, x + width, y + height, fill="white", outline="#72879C", tags=tags)
+        if not values:
+            self.canvas.create_text(x + width / 2, y + height / 2, text="Aucune donnée numérique", tags=tags)
+            return
+        colors = ("#2368AF", "#E8642E", "#45A37D", "#F0B738", "#875CB5")
+        if item.fill == "pie":
+            total = sum(abs(value) for _, value in values) or 1
+            start = 0.0
+            size = min(width, height) * 0.75
+            for index, (_label, value) in enumerate(values):
+                extent = 360 * abs(value) / total
+                self.canvas.create_arc(x + (width - size) / 2, y + (height - size) / 2, x + (width + size) / 2, y + (height + size) / 2, start=start, extent=extent, fill=colors[index % len(colors)], outline="white", tags=tags)
+                start += extent
+        else:
+            maximum = max(abs(value) for _, value in values) or 1
+            gap = width / len(values)
+            for index, (label, value) in enumerate(values):
+                bar_height = (height - 30) * abs(value) / maximum
+                self.canvas.create_rectangle(x + index * gap + 5, y + height - 20 - bar_height, x + (index + 1) * gap - 5, y + height - 20, fill=colors[index % len(colors)], outline="", tags=tags)
+                self.canvas.create_text(x + (index + 0.5) * gap, y + height - 10, text=label[:8], font=("Sans", 7), tags=tags)
 
     def _make_list(self, numbered: bool) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
@@ -649,6 +724,9 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._mutate(lambda item: setattr(item, "font_size", value))
 
+    def _apply_font_family(self) -> None:
+        self._mutate(lambda item: setattr(item, "font_family", self.font_family_var.get()))
+
     def _resize(self, factor: float) -> None:
         def resize(item: PageObject) -> None:
             item.width, item.height = max(20, item.width * factor), max(20, item.height * factor)
@@ -726,12 +804,13 @@ class DocumentEditorWindow(tk.Toplevel):
             self.pages_var.set("")
             return
         item = self.document.objects[self.selected]
-        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait"}
+        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait", "chart": "Graphique"}
         selection = f" — {len(self.selected_indices)} objets" if len(self.selected_indices) > 1 else ""
         self.kind_label.configure(text=names.get(item.kind, item.kind) + selection)
         for key, var in self.property_vars.items():
             var.set(f"{getattr(item, key):.1f}")
         self.font_size_var.set(f"{item.font_size:g}")
+        self.font_family_var.set(item.font_family)
         self.scope_var.set("Toutes les pages" if item.pages == "all" else "Pages choisies" if item.pages else "Cette page")
         self.pages_var.set("" if item.pages == "all" else item.pages)
 
@@ -771,6 +850,17 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _set_zoom(self, change: float) -> None:
         self.zoom = max(0.4, min(1.8, self.zoom + change))
+        self._render()
+
+    def _set_orientation(self, orientation: str) -> None:
+        if self.document.source_pdf:
+            messagebox.showinfo("Orientation", "Pour un PDF importé, utilisez le module Organiser les PDF afin de faire pivoter les pages.", parent=self)
+            return
+        self._checkpoint()
+        if orientation == "landscape":
+            self.document.page_width, self.document.page_height = max(A4_WIDTH, A4_HEIGHT), min(A4_WIDTH, A4_HEIGHT)
+        else:
+            self.document.page_width, self.document.page_height = min(A4_WIDTH, A4_HEIGHT), max(A4_WIDTH, A4_HEIGHT)
         self._render()
 
     def _project_directory(self) -> Path:

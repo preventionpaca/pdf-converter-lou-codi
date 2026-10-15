@@ -32,7 +32,8 @@ def export_editable_docx(canvas_document: CanvasDocument, target: Path) -> None:
         export_canvas_pdf(background, pdf_path)
         document = Document()
         section = document.sections[0]
-        section.page_width, section.page_height = Inches(8.27), Inches(11.69)
+        section.page_width = Inches(canvas_document.page_width / 72)
+        section.page_height = Inches(canvas_document.page_height / 72)
         section.left_margin = section.right_margin = Inches(0)
         section.top_margin = section.bottom_margin = Inches(0)
         with pymupdf.open(pdf_path) as pdf:
@@ -42,7 +43,7 @@ def export_editable_docx(canvas_document: CanvasDocument, target: Path) -> None:
                 paragraph.paragraph_format.space_after = Pt(0)
                 image_path = temporary / f"page-{page_number + 1}.png"
                 page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False).save(image_path)
-                paragraph.add_run().add_picture(str(image_path), width=Inches(8.20))
+                paragraph.add_run().add_picture(str(image_path), width=Inches((canvas_document.page_width - 5) / 72))
                 for index, item in enumerate(canvas_document.objects):
                     if item.kind == "text" and page_number in pages_for_object(item, canvas_document.page_count):
                         document_name = Path(canvas_document.source_pdf).stem if canvas_document.source_pdf else target.stem
@@ -68,6 +69,7 @@ def _textbox_xml(
     italic = "<w:i/>" if item.italic else ""
     font_size = round(item.font_size * 2)
     color = item.color.lstrip("#")
+    family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2", "Flèches": "Noto Sans Symbols"}.get(item.font_family, "Liberation Sans")
     alignment = {"left": "left", "center": "center", "right": "right", "justify": "both"}.get(item.align, "left")
     xml = f"""
     <w:r xmlns:w="{WORD}" xmlns:v="{VML}">
@@ -79,7 +81,7 @@ def _textbox_xml(
             <w:txbxContent>
               <w:p>
                 <w:pPr><w:jc w:val="{alignment}"/></w:pPr>
-                <w:r><w:rPr>{bold}{italic}<w:sz w:val="{font_size}"/><w:color w:val="{color}"/></w:rPr>{fragments}</w:r>
+                <w:r><w:rPr>{bold}{italic}<w:rFonts w:ascii="{family}" w:hAnsi="{family}"/><w:sz w:val="{font_size}"/><w:color w:val="{color}"/></w:rPr>{fragments}</w:r>
               </w:p>
             </w:txbxContent>
           </v:textbox>

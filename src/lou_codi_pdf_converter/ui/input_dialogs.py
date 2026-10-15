@@ -131,3 +131,35 @@ def _column_name(index: int) -> str:
         index, remainder = divmod(index - 1, 26)
         name = chr(65 + remainder) + name
     return name
+
+
+def pick_symbol(parent: tk.Misc) -> str | None:
+    symbols = (
+        "•", "◦", "▪", "▫", "◆", "◇", "★", "☆",
+        "☐", "☑", "☒", "✓", "✗", "□", "■", "○", "●",
+        "←", "→", "↑", "↓", "↔", "⇒", "⇐", "➜",
+        "€", "£", "$", "%", "©", "®", "™", "§", "°", "±",
+        "☎", "✉", "⌂", "⚠", "ℹ", "♥", "♦", "♣", "♠",
+    )
+    dialog = tk.Toplevel(parent, class_="LouCodiPdfConverter")
+    dialog.title("Caractères spéciaux")
+    dialog.configure(bg=BACKGROUND)
+    result: list[str] = []
+    icon = getattr(dialog._root(), "app_icon", None)
+    if icon is not None:
+        dialog.iconphoto(False, icon)
+    tk.Label(dialog, text="Caractères spéciaux", bg=NAVY, fg="white", font=("Sans", 16, "bold"), padx=22, pady=14).pack(fill="x")
+    grid = ttk.Frame(dialog, style="Card.TFrame", padding=18)
+    grid.pack(fill="both", expand=True, padx=14, pady=14)
+
+    def choose(value: str) -> None:
+        result.append(value)
+        dialog.destroy()
+
+    for index, symbol in enumerate(symbols):
+        tk.Button(grid, text=symbol, font=("DejaVu Sans", 18), width=3, height=1, command=lambda value=symbol: choose(value)).grid(row=index // 8, column=index % 8, padx=3, pady=3)
+    ttk.Button(dialog, text="Annuler", command=dialog.destroy).pack(pady=(0, 14))
+    center_window(dialog, 520, 450)
+    make_modal(dialog, parent)
+    dialog.wait_window()
+    return result[0] if result else None

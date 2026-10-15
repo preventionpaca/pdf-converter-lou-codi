@@ -38,3 +38,20 @@ def test_page_scope_supports_all_and_ranges() -> None:
 
 def test_dynamic_page_fields_are_resolved() -> None:
     assert resolve_dynamic_text("Page {{PAGE}} / {{PAGES}}", 1, 4) == "Page 2 / 4"
+
+
+def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
+    table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
+    bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")
+    pie = PageObject("chart", 0, 310, 160, 250, 160, source_id=table.object_id, fill="pie")
+    document = CanvasDocument(
+        objects=[table, bars, pie],
+        page_width=841.89,
+        page_height=595.28,
+    )
+    target = tmp_path / "graphiques.pdf"
+
+    export_canvas_pdf(document, target)
+
+    page = PdfReader(target).pages[0]
+    assert float(page.mediabox.width) > float(page.mediabox.height)
