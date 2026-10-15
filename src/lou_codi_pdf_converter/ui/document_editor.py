@@ -60,6 +60,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._format_clipboard: dict[str, object] | None = None
         self._object_clipboard: list[PageObject] = []
         self.properties_visible = tk.BooleanVar(value=True)
+        self.ribbon_visible = tk.BooleanVar(value=True)
+        self._pending_text_link_id = ""
         icon = getattr(self._root(), "app_icon", None)
         if icon is not None:
             self.iconphoto(False, icon)
@@ -78,7 +80,7 @@ class DocumentEditorWindow(tk.Toplevel):
         tk.Label(header, text="Mise en page locale — canevas A4/PDF", bg=NAVY, fg="#CBDFF5", font=("Sans", 10)).pack(side="left", padx=18)
         tk.Button(
             header,
-            text="Propriétés  F4",
+            text="⚙  Propriétés  F4",
             command=self._toggle_properties_panel,
             bg="#285886",
             fg="white",
@@ -88,15 +90,27 @@ class DocumentEditorWindow(tk.Toplevel):
             padx=12,
             pady=4,
         ).pack(side="right")
+        tk.Button(
+            header,
+            text="▦  Ruban",
+            command=self._toggle_ribbon,
+            bg="#285886",
+            fg="white",
+            activebackground="#3474AD",
+            activeforeground="white",
+            relief="flat",
+            padx=12,
+            pady=4,
+        ).pack(side="right", padx=(0, 8))
 
-        ribbon = ttk.Notebook(self)
-        ribbon.pack(fill="x", padx=8, pady=(4, 2))
-        formatting = ttk.Frame(ribbon, style="App.TFrame", padding=(12, 7))
-        insertion = ttk.Frame(ribbon, style="App.TFrame", padding=(12, 7))
-        layout = ttk.Frame(ribbon, style="App.TFrame", padding=(12, 7))
-        ribbon.add(formatting, text="Accueil")
-        ribbon.add(insertion, text="Insertion")
-        ribbon.add(layout, text="Mise en page")
+        self.ribbon = ttk.Notebook(self)
+        self.ribbon.pack(fill="x", padx=8, pady=(4, 2))
+        formatting = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        insertion = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        layout = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        self.ribbon.add(formatting, text="Accueil")
+        self.ribbon.add(insertion, text="Insertion")
+        self.ribbon.add(layout, text="Mise en page")
         self._buttons(formatting, (
             ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
             ("Cop", self._copy_objects, "Copier les objets sélectionnés"),
@@ -107,7 +121,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("↔", lambda: self._align("center"), "Centrer"),
             ("→", lambda: self._align("right"), "Aligner à droite"),
             ("J", lambda: self._align("justify"), "Justifier"),
-        ))
+        ), color="#DCEBFA")
         ttk.Label(formatting, text="Police", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.font_family_var = tk.StringVar(value="Sans-serif")
         font_family = ttk.Combobox(
@@ -130,12 +144,14 @@ class DocumentEditorWindow(tk.Toplevel):
         font_size.pack(side="left", padx=2)
         font_size.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
         font_size.bind("<Return>", lambda _event: self._apply_font_size())
-        color_button = ttk.Button(
+        color_button = tk.Button(
             formatting,
             text="A▾",
             width=3,
             command=self._choose_color,
-            style="EditorTool.TButton",
+            bg="#DCEBFA",
+            activebackground="#B8D7F4",
+            relief="flat",
         )
         color_button.pack(side="left", padx=2)
         self._add_tooltip(color_button, "Couleur du texte")
@@ -148,7 +164,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Ω", self._insert_symbol, "Insérer un caractère spécial"),
             ("•", lambda: self._make_list(False), "Liste à puces"),
             ("1.", lambda: self._make_list(True), "Liste numérotée"),
-        ))
+        ), color="#DDF3E7")
         self._buttons(layout, (
             ("Portrait", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
             ("Paysage", lambda: self._set_orientation("landscape"), "Page en orientation paysage"),
@@ -157,7 +173,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Marge", lambda: self._add_preset("left_margin"), "Ajouter une marge de notes"),
             ("Lier texte", self._link_text_frames, "Faire continuer le texte dans le cadre suivant"),
             ("Délier", self._unlink_text_frame, "Supprimer le chaînage du cadre"),
-        ))
+        ), color="#F9E8C8")
 
         self.body = ttk.Panedwindow(self, orient="horizontal")
         self.body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
@@ -176,6 +192,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
         self.canvas.bind("<Double-1>", self._edit_selected)
+        self.canvas.bind("<Button-3>", self._show_context_menu)
 
         panel = ttk.Frame(self.body, style="Card.TFrame", padding=14)
         self.properties_panel = panel
@@ -201,6 +218,11 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         self.scope_box.pack(fill="x", pady=(0, 5))
         self.scope_box.bind("<<ComboboxSelected>>", lambda _event: self._apply_scope())
+        scope_actions = tk.Frame(panel, bg="white")
+        scope_actions.pack(fill="x", pady=(2, 6))
+        self._scope_button(scope_actions, "▣ Page", "Cette page", "#DCEBFA")
+        self._scope_button(scope_actions, "▦ Toutes", "Toutes les pages", "#DDF3E7")
+        self._scope_button(scope_actions, "☗ Choisir", "Pages choisies", "#F9E8C8")
         ttk.Label(panel, text="Pages (ex. 1,3-5)", style="Body.TLabel").pack(anchor="w")
         self.pages_var = tk.StringVar()
         pages_entry = ttk.Entry(panel, textvariable=self.pages_var)
@@ -208,6 +230,8 @@ class DocumentEditorWindow(tk.Toplevel):
         pages_entry.bind("<Return>", lambda _event: self._apply_scope())
         ttk.Button(panel, text="Appliquer aux pages", command=self._apply_scope).pack(fill="x", pady=4)
         ttk.Label(panel, text="Glissez un objet pour le déplacer. Double-cliquez pour modifier son contenu.", style="Body.TLabel", wraplength=230, justify="left").pack(anchor="w", pady=14)
+
+        self._build_context_menu()
 
         bottom = ttk.Frame(self, style="App.TFrame", padding=(14, 6))
         bottom.pack(fill="x")
@@ -321,6 +345,11 @@ class DocumentEditorWindow(tk.Toplevel):
             command=self._toggle_properties_panel,
             accelerator="F4",
         )
+        view_menu.add_checkbutton(
+            label="Ruban d’outils",
+            variable=self.ribbon_visible,
+            command=self._toggle_ribbon,
+        )
         view_menu.add_separator()
         view_menu.add_command(label="Zoom avant", command=lambda: self._set_zoom(0.1), accelerator="Ctrl++")
         view_menu.add_command(label="Zoom arrière", command=lambda: self._set_zoom(-0.1), accelerator="Ctrl+-")
@@ -341,21 +370,60 @@ class DocumentEditorWindow(tk.Toplevel):
         self,
         parent: tk.Misc,
         items: tuple[tuple[str, object] | tuple[str, object, str], ...],
+        *,
+        color: str | None = None,
     ) -> None:
         for item in items:
             label, command = item[:2]
             tooltip = item[2] if len(item) == 3 else ""
             options = {"width": max(2, len(label))} if len(label) <= 4 else {}
-            button = ttk.Button(
-                parent,
-                text=label,
-                command=command,
-                style="EditorTool.TButton",
-                **options,
-            )
+            if color:
+                button = tk.Button(
+                    parent,
+                    text=label,
+                    command=command,
+                    bg=color,
+                    activebackground=self._darker(color),
+                    relief="flat",
+                    padx=7,
+                    pady=3,
+                    **options,
+                )
+            else:
+                button = ttk.Button(
+                    parent,
+                    text=label,
+                    command=command,
+                    style="EditorTool.TButton",
+                    **options,
+                )
             button.pack(side="left", padx=1)
             if tooltip:
                 self._add_tooltip(button, tooltip)
+
+    @staticmethod
+    def _darker(color: str) -> str:
+        red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
+        return f"#{max(0, red - 24):02X}{max(0, green - 24):02X}{max(0, blue - 24):02X}"
+
+    def _scope_button(self, parent: tk.Misc, label: str, scope: str, color: str) -> None:
+        tk.Button(
+            parent,
+            text=label,
+            command=lambda: self._set_scope(scope),
+            bg=color,
+            activebackground=self._darker(color),
+            relief="flat",
+            padx=5,
+            pady=3,
+        ).pack(side="left", fill="x", expand=True, padx=1)
+
+    def _set_scope(self, scope: str) -> None:
+        self.scope_var.set(scope)
+        if scope != "Pages choisies":
+            self._apply_scope()
+        else:
+            self.status.configure(text="Indiquez les pages souhaitées, par exemple 1,3-5, puis validez.")
 
     def _add_tooltip(self, widget: tk.Widget, text: str) -> None:
         popup: list[tk.Toplevel | None] = [None]
@@ -409,6 +477,59 @@ class DocumentEditorWindow(tk.Toplevel):
             self.body.add(self.properties_panel, weight=1)
         elif not visible and currently_visible:
             self.body.forget(self.properties_panel)
+
+    def _toggle_ribbon(self) -> None:
+        visible = self.ribbon_visible.get()
+        managed = self.ribbon.winfo_manager() == "pack"
+        if visible == managed:
+            visible = not managed
+            self.ribbon_visible.set(visible)
+        if visible and not managed:
+            self.ribbon.pack(fill="x", padx=8, pady=(4, 2), before=self.body)
+        elif not visible and managed:
+            self.ribbon.pack_forget()
+
+    def _build_context_menu(self) -> None:
+        menu = tk.Menu(self, tearoff=False)
+        menu.add_command(label="Modifier le contenu", command=self._edit_selected)
+        menu.add_command(label="Copier", command=self._copy_objects)
+        menu.add_command(label="Coller une copie indépendante", command=self._paste_objects)
+        menu.add_command(label="Dupliquer ici", command=self._duplicate_objects)
+        menu.add_separator()
+        menu.add_command(label="Appliquer à cette page", command=lambda: self._set_scope("Cette page"))
+        menu.add_command(label="Appliquer à toutes les pages", command=lambda: self._set_scope("Toutes les pages"))
+        menu.add_command(label="Choisir les pages…", command=lambda: self._set_scope("Pages choisies"))
+        menu.add_separator()
+        menu.add_command(label="Chaîner vers une autre zone de texte…", command=self._link_text_frames)
+        menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
+        menu.add_separator()
+        menu.add_command(label="Afficher / masquer les propriétés", command=self._toggle_properties_panel)
+        menu.add_command(label="Supprimer", command=self._delete_selected)
+        self.context_menu = menu
+
+    def _show_context_menu(self, event: tk.Event[tk.Misc]) -> None:
+        clicked = self._object_at_event(event)
+        if self._pending_text_link_id and clicked is not None:
+            target = self.document.objects[clicked]
+            source = next(
+                (item for item in self.document.objects if item.object_id == self._pending_text_link_id),
+                None,
+            )
+            if source is not None and target.kind == "text" and target.object_id != source.object_id:
+                self._pending_text_link_id = ""
+                self.canvas.configure(cursor="")
+                self._connect_text_frames(source, target)
+                return
+            self.status.configure(text="Cliquez sur une autre zone de texte pour terminer le chaînage.")
+            return
+        if clicked is not None and clicked not in self.selected_indices:
+            self.selected = clicked
+            self.selected_indices = {clicked}
+            self._render()
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
 
     def _checkpoint(self) -> None:
         self.undo_stack.append(copy.deepcopy(self.document))
@@ -545,6 +666,19 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=3 if selected else 1, tags=tags)
             family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2"}.get(item.font_family, "Liberation Sans")
             self.canvas.create_text(tx, y + 3, text=displayed_text, fill=item.color, anchor=anchor, justify=item.align if item.align != "justify" else "left", width=max(5, w - 8), font=(family, max(7, round(item.font_size * self.zoom)), style), tags=tags)
+            linked = item.flow_next_id or any(
+                candidate.flow_next_id == item.object_id for candidate in self.document.objects
+            )
+            if linked:
+                self.canvas.create_text(
+                    x + w - 5,
+                    y + h - 5,
+                    text="↳",
+                    fill="#1769AA",
+                    anchor="se",
+                    font=("Sans", 14, "bold"),
+                    tags=tags,
+                )
         if selected:
             size = 12
             self.canvas.create_rectangle(
@@ -962,22 +1096,37 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         self._render()
 
+    def _duplicate_objects(self) -> None:
+        self._copy_objects()
+        self._paste_objects()
+
     def _link_text_frames(self) -> None:
         indices = sorted(
             index
             for index in self.selected_indices
             if self.document.objects[index].kind == "text"
         )
+        if len(indices) == 1:
+            source = self.document.objects[indices[0]]
+            self._pending_text_link_id = source.object_id
+            self.canvas.configure(cursor="crosshair")
+            self.status.configure(
+                text="Chaînage actif : cliquez maintenant sur la zone de texte qui doit recevoir la suite."
+            )
+            return
         if len(indices) != 2:
             messagebox.showinfo(
                 "Chaînage du texte",
-                "Sélectionnez exactement deux zones de texte avec Ctrl+clic. Le texte ira de la première zone vers la seconde.",
+                "Sélectionnez une zone de texte, cliquez sur Chaîner, puis cliquez sur la zone suivante.",
                 parent=self,
             )
             return
         first, second = (self.document.objects[index] for index in indices)
         if (second.page, second.y, second.x) < (first.page, first.y, first.x):
             first, second = second, first
+        self._connect_text_frames(first, second)
+
+    def _connect_text_frames(self, first: PageObject, second: PageObject) -> None:
         by_id = {item.object_id: item for item in self.document.objects}
         cursor = second
         visited: set[str] = set()
