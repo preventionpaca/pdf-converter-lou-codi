@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 import webbrowser
+from pathlib import Path
 from tkinter import ttk
 
 from . import __version__
@@ -44,7 +45,11 @@ class Application(tk.Tk):
         header = tk.Frame(self, bg=NAVY, height=95)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="✚", bg=NAVY, fg="#7CC8FF", font=("Sans", 32, "bold")).pack(side="left", padx=(25, 15))
+        logo_path = Path(__file__).with_name("assets") / "croix-lou-codi.png"
+        self.brand_logo = tk.PhotoImage(file=str(logo_path))
+        tk.Label(header, image=self.brand_logo, bg=NAVY, borderwidth=0).pack(
+            side="left", padx=(22, 15), pady=7
+        )
         titles = tk.Frame(header, bg=NAVY)
         titles.pack(side="left", pady=20)
         tk.Label(titles, text="PDF Converter", bg=NAVY, fg="white", font=("Sans", 21, "bold")).pack(anchor="w")
@@ -83,4 +88,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
