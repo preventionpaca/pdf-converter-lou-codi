@@ -5,7 +5,7 @@ import tempfile
 import tkinter as tk
 import uuid
 from pathlib import Path
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import colorchooser, messagebox, simpledialog, ttk
 
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -63,7 +63,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._format_clipboard: dict[str, object] | None = None
         self._object_clipboard: list[PageObject] = []
-        self.properties_visible = tk.BooleanVar(value=True)
+        self.properties_visible = tk.BooleanVar(value=False)
         self.ribbon_visible = tk.BooleanVar(value=True)
         self._pending_text_link_id = ""
         self._last_clicked_index: int | None = None
@@ -71,6 +71,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if icon is not None:
             self.iconphoto(False, icon)
         self._build()
+        self._toggle_properties_panel()
         translate_widget_tree(self)
         maximize_window(self)
         make_modal(self, parent)
@@ -128,6 +129,8 @@ class DocumentEditorWindow(tk.Toplevel):
             ("↔", lambda: self._align("center"), "Centrer"),
             ("→", lambda: self._align("right"), "Aligner à droite"),
             ("J", lambda: self._align("justify"), "Justifier"),
+            ("A−", lambda: self._change_font(-1), "Réduire la taille du texte"),
+            ("A+", lambda: self._change_font(1), "Agrandir la taille du texte"),
         ), color="#DCEBFA")
         ttk.Label(formatting, text="Police", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.font_family_var = tk.StringVar(value="Sans-serif")
@@ -151,17 +154,8 @@ class DocumentEditorWindow(tk.Toplevel):
         font_size.pack(side="left", padx=2)
         font_size.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
         font_size.bind("<Return>", lambda _event: self._apply_font_size())
-        color_button = tk.Button(
-            formatting,
-            text="A▾",
-            width=3,
-            command=self._choose_color,
-            bg="#DCEBFA",
-            activebackground="#B8D7F4",
-            relief="flat",
-        )
-        color_button.pack(side="left", padx=2)
-        self._add_tooltip(color_button, "Couleur du texte")
+        self._color_menu_button(formatting, "A▾", "color", "Couleur du texte")
+        self._color_menu_button(formatting, "Fond▾", "fill", "Couleur de fond de la zone")
         self._buttons(insertion, (
             ("T+", self._add_text, "Insérer une zone de texte"),
             ("Img", self._add_image, "Insérer une image"),
@@ -213,7 +207,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
-        self.canvas.bind("<Double-1>", self._edit_selected)
+        self.canvas.bind("<Double-Button-1>", self._double_click)
         self.canvas.bind("<Button-3>", self._show_context_menu)
 
         panel = ttk.Frame(self.body, style="Card.TFrame", padding=14)
@@ -351,6 +345,45 @@ class DocumentEditorWindow(tk.Toplevel):
             if tooltip:
                 self._add_tooltip(button, tooltip)
 
+    def _color_menu_button(self, parent: tk.Misc, label: str, attribute: str, tooltip: str) -> None:
+        button = tk.Menubutton(
+            parent,
+            text=label,
+            bg="#DCEBFA",
+            activebackground="#B8D7F4",
+            relief="flat",
+            padx=7,
+            pady=3,
+        )
+        menu = tk.Menu(button, tearoff=False)
+        presets = (
+            ("Noir", "#000000"),
+            ("Bleu", "#2368AF"),
+            ("Rouge", "#C83232"),
+            ("Vert", "#258A55"),
+            ("Orange", "#E87524"),
+            ("Violet", "#7B4DB5"),
+            ("Blanc", "#FFFFFF"),
+        )
+        for name, value in presets:
+            menu.add_command(
+                label=f"■  {name}   {value}",
+                foreground=value,
+                command=lambda color=value, key=attribute: self._set_object_color(key, color),
+            )
+        menu.add_separator()
+        menu.add_command(
+            label="Saisir un code hexadécimal…",
+            command=lambda key=attribute: self._enter_hex_color(key),
+        )
+        menu.add_command(
+            label="Sélecteur de couleur…",
+            command=lambda key=attribute: self._choose_color(key),
+        )
+        button.configure(menu=menu)
+        button.pack(side="left", padx=2)
+        self._add_tooltip(button, tooltip)
+
     @staticmethod
     def _darker(color: str) -> str:
         red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
@@ -476,6 +509,14 @@ class DocumentEditorWindow(tk.Toplevel):
             self.selected = clicked
             self.selected_indices = {clicked}
             self._render()
+        selected_kind = (
+            self.document.objects[self.selected].kind
+            if self.selected is not None and self.selected < len(self.document.objects)
+            else ""
+        )
+        text_state = "normal" if selected_kind == "text" else "disabled"
+        self.context_menu.entryconfigure("Chaîner vers une autre zone de texte…", state=text_state)
+        self.context_menu.entryconfigure("Délier la zone de texte", state=text_state)
         try:
             self.context_menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -674,7 +715,7 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
         """Render and clip a text frame exactly inside its visible rectangle."""
-        image = Image.new("RGB", (width, height), "white")
+        image = Image.new("RGB", (width, height), item.fill)
         draw = ImageDraw.Draw(image)
         size = max(7, round(item.font_size * self.zoom))
         suffix = "-BoldOblique" if item.bold and item.italic else "-Bold" if item.bold else "-Oblique" if item.italic else ""
@@ -911,6 +952,13 @@ class DocumentEditorWindow(tk.Toplevel):
             self._drag_origin = None
         self._render()
 
+    def _double_click(self, _event: tk.Event[tk.Misc]) -> str:
+        if self._last_clicked_index is not None and self._last_clicked_index < len(self.document.objects):
+            self.selected = self._last_clicked_index
+            self.selected_indices = {self.selected}
+            self.after_idle(self._edit_selected)
+        return "break"
+
     def _drag(self, event: tk.Event[tk.Misc]) -> None:
         if self.selected is not None and self._resize_origin is not None:
             sx, sy, old_width, old_height = self._resize_origin
@@ -936,25 +984,30 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas.move(f"resize:{index}", move_x, move_y)
 
     def _release(self, _event: tk.Event[tk.Misc]) -> None:
+        changed = False
         if self._resize_origin is not None and self.selected is not None:
             _, _, old_width, old_height = self._resize_origin
             item = self.document.objects[self.selected]
             if (item.width, item.height) != (old_width, old_height):
+                changed = True
                 snapshot = copy.deepcopy(self.document)
                 snapshot.objects[self.selected].width = old_width
                 snapshot.objects[self.selected].height = old_height
                 self.undo_stack.append(snapshot)
                 self.redo_stack.clear()
         self._resize_origin = None
-        if self._drag_origin is not None and self._drag_before is not None and any(
+        moved = self._drag_origin is not None and self._drag_before is not None and any(
             (self.document.objects[index].x, self.document.objects[index].y) != position
             for index, position in self._drag_positions.items()
-        ):
+        )
+        if moved:
+            changed = True
             self.undo_stack.append(self._drag_before)
             self.redo_stack.clear()
         self._drag_origin = None
         self._drag_before = None
-        self._render()
+        if changed:
+            self._render()
 
     def _edit_selected(self, _event: object = None) -> None:
         if self.selected is None and self._last_clicked_index is not None:
@@ -1224,11 +1277,39 @@ class DocumentEditorWindow(tk.Toplevel):
     def _align(self, value: str) -> None:
         self._mutate(lambda item: setattr(item, "align", value))
 
-    def _choose_color(self) -> None:
+    def _set_object_color(self, attribute: str, value: str) -> None:
+        normalized = value if value.startswith("#") else f"#{value}"
+        try:
+            self.winfo_rgb(normalized)
+        except tk.TclError:
+            messagebox.showerror(
+                "Couleur incorrecte",
+                "Utilisez un code hexadécimal, par exemple #2368AF.",
+                parent=self,
+            )
+            return
+        self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
+
+    def _enter_hex_color(self, attribute: str) -> None:
+        if self.selected is None:
+            return
+        current = getattr(self.document.objects[self.selected], attribute)
+        value = simpledialog.askstring(
+            "Code couleur",
+            "Code hexadécimal (exemple : #2368AF) :",
+            initialvalue=current,
+            parent=self,
+        )
+        if value:
+            self._set_object_color(attribute, value.strip())
+
+    def _choose_color(self, attribute: str = "color") -> None:
         if self.selected is not None:
-            chosen = colorchooser.askcolor(self.document.objects[self.selected].color, parent=self)[1]
+            chosen = colorchooser.askcolor(
+                getattr(self.document.objects[self.selected], attribute), parent=self
+            )[1]
             if chosen:
-                self._mutate(lambda item: setattr(item, "color", chosen))
+                self._set_object_color(attribute, chosen)
 
     def _change_font(self, change: int) -> None:
         self._mutate(lambda item: setattr(item, "font_size", max(6, item.font_size + change)))

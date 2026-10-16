@@ -135,6 +135,13 @@ def _draw_object(
         if item.kind == "table":
             _draw_table(page, rectangle, item, rendered_text)
         else:
+            if item.fill.upper() != "#FFFFFF":
+                page.draw_rect(
+                    rectangle,
+                    color=_rgb(item.fill),
+                    fill=_rgb(item.fill),
+                    overlay=True,
+                )
             font_file = _font_file(item.font_family, item.bold, item.italic)
             if font_file:
                 font_name = f"lc{item.font_family.replace('-', '')}{'b' if item.bold else ''}{'i' if item.italic else ''}"
