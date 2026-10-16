@@ -93,3 +93,22 @@ def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
 
     page = PdfReader(target).pages[0]
     assert float(page.mediabox.width) > float(page.mediabox.height)
+
+
+def test_technical_shapes_are_saved_and_exported(tmp_path: Path) -> None:
+    project = tmp_path / "schema.loucodi-document"
+    target = tmp_path / "schema.pdf"
+    document = CanvasDocument(
+        objects=[
+            PageObject("shape", 0, 40, 40, 120, 70, shape="rectangle", fill="#DCEBFA"),
+            PageObject("shape", 0, 190, 40, 100, 70, shape="ellipse", border_style="dashed"),
+            PageObject("shape", 0, 320, 40, 140, 70, shape="arrow", fill="#F9E8C8"),
+        ]
+    )
+
+    document.save(project)
+    restored = CanvasDocument.load(project)
+    export_canvas_pdf(restored, target)
+
+    assert [item.shape for item in restored.objects] == ["rectangle", "ellipse", "arrow"]
+    assert len(PdfReader(target).pages) == 1

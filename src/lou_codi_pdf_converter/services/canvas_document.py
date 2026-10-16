@@ -41,6 +41,13 @@ class PageObject:
     object_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     source_id: str = ""
     flow_next_id: str = ""
+    shape: str = ""
+    border_color: str = "#72879C"
+    border_width: float = 0.0
+    border_style: str = "solid"
+    rotation: int = 0
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
 
 
 @dataclass
@@ -123,6 +130,8 @@ def _draw_object(
         page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
     elif item.kind == "line":
         page.draw_line(rectangle.top_left, rectangle.bottom_right, color=_rgb(item.color), width=max(0.5, item.font_size / 6), overlay=True)
+    elif item.kind == "shape":
+        _draw_shape(page, rectangle, item)
     elif item.kind == "chart":
         source = next((candidate for candidate in objects if candidate.object_id == item.source_id), None)
         if source is not None:
@@ -135,11 +144,13 @@ def _draw_object(
         if item.kind == "table":
             _draw_table(page, rectangle, item, rendered_text)
         else:
-            if item.fill.upper() != "#FFFFFF":
+            if item.fill.upper() != "#FFFFFF" or item.border_width > 0:
                 page.draw_rect(
                     rectangle,
-                    color=_rgb(item.fill),
-                    fill=_rgb(item.fill),
+                    color=_rgb(item.border_color) if item.border_width > 0 else _rgb(item.fill),
+                    fill=_rgb(item.fill) if item.fill.lower() not in {"", "none", "transparent"} else None,
+                    width=max(0.5, item.border_width),
+                    dashes="[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
                     overlay=True,
                 )
             font_file = _font_file(item.font_family, item.bold, item.italic)
@@ -158,6 +169,44 @@ def _draw_object(
                 align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
                 overlay=True,
             )
+
+
+def _draw_shape(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject) -> None:
+    shape = page.new_shape()
+    x0, y0, x1, y1 = rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1
+    if item.shape == "ellipse":
+        shape.draw_oval(rectangle)
+    elif item.shape == "triangle":
+        shape.draw_polyline([(x0 + rectangle.width / 2, y0), (x1, y1), (x0, y1), (x0 + rectangle.width / 2, y0)])
+    elif item.shape == "trapezoid":
+        inset = rectangle.width * 0.2
+        shape.draw_polyline([(x0 + inset, y0), (x1 - inset, y0), (x1, y1), (x0, y1), (x0 + inset, y0)])
+    elif item.shape == "arrow":
+        if item.rotation % 180 == 90:
+            middle, head, thickness = x0 + rectangle.width / 2, rectangle.height * 0.28, rectangle.width * 0.28
+            points = [
+                (middle - thickness, y0), (middle - thickness, y1 - head),
+                (x0, y1 - head), (middle, y1), (x1, y1 - head),
+                (middle + thickness, y1 - head), (middle + thickness, y0),
+            ]
+            if item.flip_vertical:
+                points = [(x, y0 + y1 - y) for x, y in points]
+        else:
+            middle, head, thickness = y0 + rectangle.height / 2, rectangle.width * 0.28, rectangle.height * 0.28
+            points = [
+                (x0, middle - thickness), (x1 - head, middle - thickness),
+                (x1 - head, y0), (x1, middle), (x1 - head, y1),
+                (x1 - head, middle + thickness), (x0, middle + thickness),
+            ]
+            if item.flip_horizontal:
+                points = [(x0 + x1 - x, y) for x, y in points]
+        shape.draw_polyline(points)
+    else:
+        shape.draw_rect(rectangle)
+    dashes = "[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None
+    fill = None if item.fill.lower() in {"", "none", "transparent"} else _rgb(item.fill)
+    shape.finish(color=_rgb(item.border_color), fill=fill, width=max(0.5, item.border_width), dashes=dashes, closePath=True)
+    shape.commit(overlay=True)
 
 
 def pages_for_object(item: PageObject, page_count: int) -> list[int]:

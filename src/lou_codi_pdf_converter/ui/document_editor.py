@@ -114,9 +114,11 @@ class DocumentEditorWindow(tk.Toplevel):
         formatting = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         insertion = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         layout = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        diagrams = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         self.ribbon.add(formatting, text="Accueil")
         self.ribbon.add(insertion, text="Insertion")
         self.ribbon.add(layout, text="Mise en page")
+        self.ribbon.add(diagrams, text="Schémas")
         self._buttons(formatting, (
             ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
             ("Cop", self._copy_objects, "Copier les objets sélectionnés"),
@@ -190,6 +192,40 @@ class DocumentEditorWindow(tk.Toplevel):
             padx=10,
             pady=5,
         ).pack(side="right", padx=(12, 0))
+        self._buttons(diagrams, (
+            ("▭ Rectangle", lambda: self._add_shape("rectangle"), "Insérer un rectangle"),
+            ("◯ Ellipse", lambda: self._add_shape("ellipse"), "Insérer une ellipse"),
+            ("△ Triangle", lambda: self._add_shape("triangle"), "Insérer un triangle"),
+            ("Trapèze", lambda: self._add_shape("trapezoid"), "Insérer un trapèze"),
+            ("➜ Flèche", lambda: self._add_shape("arrow"), "Insérer une flèche"),
+            ("↻ 90°", self._rotate_selected, "Faire pivoter de 90 degrés"),
+            ("⇆ Miroir H", lambda: self._mirror_selected("horizontal"), "Symétrie horizontale"),
+            ("⇅ Miroir V", lambda: self._mirror_selected("vertical"), "Symétrie verticale"),
+            ("Aligner G", lambda: self._align_objects("left"), "Aligner les objets à gauche"),
+            ("Aligner H", lambda: self._align_objects("middle"), "Aligner verticalement"),
+        ), color="#E8E0F5")
+        ttk.Label(diagrams, text="Trait", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self.border_style_var = tk.StringVar(value="Continu")
+        border_style = ttk.Combobox(
+            diagrams,
+            textvariable=self.border_style_var,
+            values=("Continu", "Pointillé", "Tirets"),
+            state="readonly",
+            width=9,
+        )
+        border_style.pack(side="left", padx=2)
+        border_style.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_style())
+        self.border_width_var = tk.StringVar(value="1.5")
+        border_width = ttk.Combobox(
+            diagrams,
+            textvariable=self.border_width_var,
+            values=("0", "0.5", "1", "1.5", "2", "3", "4", "6"),
+            width=4,
+        )
+        border_width.pack(side="left", padx=2)
+        border_width.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_width())
+        border_width.bind("<Return>", lambda _event: self._apply_border_width())
+        self._color_menu_button(diagrams, "Bordure▾", "border_color", "Couleur de la bordure")
 
         self.body = ttk.Panedwindow(self, orient="horizontal")
         self.body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
@@ -666,6 +702,44 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.canvas.create_text(cx + 4, cy + 3, text=value, anchor="nw", width=max(5, cw - 8), font=("Sans", max(7, round(item.font_size * self.zoom))), tags=tags)
             if selected:
                 self.canvas.create_rectangle(x, y, x + w, y + h, outline=outline, width=3, tags=tags)
+        elif item.kind == "shape":
+            dash = (5, 3) if item.border_style == "dashed" else (1, 3) if item.border_style == "dotted" else None
+            options = {
+                "fill": "" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
+                "outline": item.border_color,
+                "width": max(1, round(item.border_width * self.zoom)),
+                "dash": dash,
+                "tags": tags,
+            }
+            if item.shape == "ellipse":
+                self.canvas.create_oval(x, y, x + w, y + h, **options)
+            elif item.shape == "triangle":
+                self.canvas.create_polygon(x + w / 2, y, x + w, y + h, x, y + h, **options)
+            elif item.shape == "trapezoid":
+                inset = w * 0.2
+                self.canvas.create_polygon(x + inset, y, x + w - inset, y, x + w, y + h, x, y + h, **options)
+            elif item.shape == "arrow":
+                if item.rotation % 180 == 90:
+                    middle, head, thickness = x + w / 2, h * 0.28, w * 0.28
+                    points = [
+                        (middle - thickness, y), (middle - thickness, y + h - head),
+                        (x, y + h - head), (middle, y + h), (x + w, y + h - head),
+                        (middle + thickness, y + h - head), (middle + thickness, y),
+                    ]
+                    if item.flip_vertical:
+                        points = [(px, 2 * y + h - py) for px, py in points]
+                else:
+                    middle, head, thickness = y + h / 2, w * 0.28, h * 0.28
+                    points = [
+                        (x, middle - thickness), (x + w - head, middle - thickness),
+                        (x + w - head, y), (x + w, middle), (x + w - head, y + h),
+                        (x + w - head, middle + thickness), (x, middle + thickness),
+                    ]
+                    if item.flip_horizontal:
+                        points = [(2 * x + w - px, py) for px, py in points]
+                self.canvas.create_polygon(*(coordinate for point in points for coordinate in point), **options)
+            else:
+                self.canvas.create_rectangle(x, y, x + w, y + h, **options)
         elif item.kind == "line":
             self.canvas.create_line(x, y, x + w, y + h, fill=item.color, width=max(1, item.font_size / 6), tags=tags)
         elif item.kind == "chart":
@@ -684,8 +758,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 y,
                 x + w,
                 y + h,
-                outline=outline,
-                width=4 if emphasized else 1,
+                outline=outline if emphasized else item.border_color,
+                width=4 if emphasized else max(1, round(item.border_width * self.zoom)),
+                dash=None if emphasized or item.border_style == "solid" else (5, 3) if item.border_style == "dashed" else (1, 3),
                 tags=tags,
             )
             linked = item.flow_next_id or any(
@@ -790,6 +865,24 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _add_line(self) -> None:
         self._add_object(PageObject("line", self.current_page, 70, 120, 260, 0, font_size=8))
+
+    def _add_shape(self, shape: str) -> None:
+        width, height = (180, 75) if shape == "arrow" else (150, 100)
+        self._add_object(
+            PageObject(
+                "shape",
+                self.current_page,
+                80,
+                100,
+                width,
+                height,
+                shape=shape,
+                color="#193B66",
+                border_color="#193B66",
+                border_width=1.5,
+                fill="#FFFFFF",
+            )
+        )
 
     def _insert_symbol(self) -> None:
         symbol = pick_symbol(self)
@@ -1514,6 +1607,47 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.y = anchor.y + anchor.height - item.height
         self._render()
 
+    def _rotate_selected(self) -> None:
+        if not self.selected_indices:
+            return
+        self._checkpoint()
+        for index in self.selected_indices:
+            item = self.document.objects[index]
+            center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
+            item.width, item.height = item.height, item.width
+            item.x, item.y = center_x - item.width / 2, center_y - item.height / 2
+            item.rotation = (item.rotation + 90) % 360
+        self._render()
+
+    def _mirror_selected(self, direction: str) -> None:
+        if not self.selected_indices:
+            return
+        self._checkpoint()
+        objects = [self.document.objects[index] for index in self.selected_indices]
+        left = min(item.x for item in objects)
+        right = max(item.x + item.width for item in objects)
+        top = min(item.y for item in objects)
+        bottom = max(item.y + item.height for item in objects)
+        for item in objects:
+            if direction == "horizontal":
+                item.x = left + right - item.x - item.width
+                item.flip_horizontal = not item.flip_horizontal
+            else:
+                item.y = top + bottom - item.y - item.height
+                item.flip_vertical = not item.flip_vertical
+        self._render()
+
+    def _apply_border_style(self) -> None:
+        styles = {"Continu": "solid", "Pointillé": "dotted", "Tirets": "dashed"}
+        self._mutate(lambda item: setattr(item, "border_style", styles[self.border_style_var.get()]))
+
+    def _apply_border_width(self) -> None:
+        try:
+            width = max(0.0, min(20.0, float(self.border_width_var.get().replace(",", "."))))
+        except ValueError:
+            return
+        self._mutate(lambda item: setattr(item, "border_width", width))
+
     def _group_selected(self) -> None:
         if len(self.selected_indices) < 2:
             return
@@ -1542,13 +1676,15 @@ class DocumentEditorWindow(tk.Toplevel):
             self.pages_var.set("")
             return
         item = self.document.objects[self.selected]
-        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait", "chart": "Graphique"}
+        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait", "chart": "Graphique", "shape": "Forme"}
         selection = f" — {len(self.selected_indices)} objets" if len(self.selected_indices) > 1 else ""
         self.kind_label.configure(text=names.get(item.kind, item.kind) + selection)
         for key, var in self.property_vars.items():
             var.set(f"{getattr(item, key):.1f}")
         self.font_size_var.set(f"{item.font_size:g}")
         self.font_family_var.set(item.font_family)
+        self.border_width_var.set(f"{item.border_width:g}")
+        self.border_style_var.set({"solid": "Continu", "dotted": "Pointillé", "dashed": "Tirets"}.get(item.border_style, "Continu"))
         self.scope_var.set("Toutes les pages" if item.pages == "all" else "Pages choisies" if item.pages else "Cette page")
         self.pages_var.set("" if item.pages == "all" else item.pages)
 
