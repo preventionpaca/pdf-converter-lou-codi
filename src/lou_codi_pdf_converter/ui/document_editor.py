@@ -924,9 +924,13 @@ class DocumentEditorWindow(tk.Toplevel):
         dy = (self.canvas.canvasy(event.y) - sy) / self.zoom
         for index, (start_x, start_y) in self._drag_positions.items():
             item = self.document.objects[index]
-            item.x = max(0, min(pw - item.width, start_x + dx))
-            item.y = max(0, min(ph - item.height, start_y + dy))
-        self._render()
+            new_x = max(0, min(pw - item.width, start_x + dx))
+            new_y = max(0, min(ph - item.height, start_y + dy))
+            move_x = (new_x - item.x) * self.zoom
+            move_y = (new_y - item.y) * self.zoom
+            item.x, item.y = new_x, new_y
+            self.canvas.move(f"object:{index}", move_x, move_y)
+            self.canvas.move(f"resize:{index}", move_x, move_y)
 
     def _release(self, _event: tk.Event[tk.Misc]) -> None:
         if self._resize_origin is not None and self.selected is not None:
@@ -947,6 +951,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self.redo_stack.clear()
         self._drag_origin = None
         self._drag_before = None
+        self._render()
 
     def _edit_selected(self, _event: object = None) -> None:
         if self.selected is None:
@@ -997,12 +1002,6 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
-        linked = item.flow_next_id or any(
-            candidate.flow_next_id == item.object_id for candidate in self.document.objects
-        )
-        if linked:
-            self._start_linked_text_editor(item)
-            return
         x = self.page_x + item.x * self.zoom
         y = self.page_y + item.y * self.zoom
         widget = tk.Text(
@@ -1159,6 +1158,12 @@ class DocumentEditorWindow(tk.Toplevel):
             if candidate.object_id in chain_ids and self.current_page in pages_for_object(
                 candidate, self.document.page_count
             ):
+                if (
+                    candidate.object_id == self._editing_object_id
+                    and self._editing_widget is not None
+                    and self._editing_dialog is None
+                ):
+                    continue
                 self.canvas.delete(f"object:{index}")
                 self.canvas.delete(f"resize:{index}")
                 self._draw_object(index, candidate)
@@ -1365,10 +1370,10 @@ class DocumentEditorWindow(tk.Toplevel):
         self.selected = first_index
         self.selected_indices = {first_index}
         self.status.configure(
-            text="Zones liées. Saisissez le texte dans l’éditeur : la suite apparaît dans le cadre suivant."
+            text="Liaison validée automatiquement. Écrivez directement dans le premier cadre : la suite apparaît dans les suivants."
         )
         self._render()
-        self.after_idle(lambda: self._start_linked_text_editor(first))
+        self.after_idle(lambda: self._start_inline_text_editor(first))
 
     def _unlink_text_frame(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
