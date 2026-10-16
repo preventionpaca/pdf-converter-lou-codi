@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import tempfile
 import tkinter as tk
 import uuid
@@ -185,6 +186,17 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Grouper", self._group_selected, "Regrouper les objets sélectionnés"),
             ("Dissocier", self._ungroup_selected, "Dissocier les objets"),
         ), color="#F9E8C8")
+        ttk.Label(layout, text="Format", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self.page_format_var = tk.StringVar(value="A4")
+        page_format = ttk.Combobox(
+            layout,
+            textvariable=self.page_format_var,
+            values=("A4", "A3"),
+            state="readonly",
+            width=4,
+        )
+        page_format.pack(side="left", padx=2)
+        page_format.bind("<<ComboboxSelected>>", lambda _event: self._set_page_format())
         tk.Label(
             layout,
             text="Chaînage : 1  sélectionnez la première zone   →   2  cliquez sur Lier texte   →   3  cliquez sur la zone verte",
@@ -203,7 +215,8 @@ class DocumentEditorWindow(tk.Toplevel):
             ("／ Trait", self._add_line, "Tracer un trait"),
             ("⌁ Polyligne", self._start_polyline, "Tracer un profil point par point"),
             ("┄ Axe", self._add_axis, "Insérer un trait d’axe"),
-            ("↻ 90°", self._rotate_selected, "Faire pivoter de 90 degrés"),
+            ("↺", lambda: self._rotate_selected(-1), "Pivoter selon le pas vers la gauche"),
+            ("↻", lambda: self._rotate_selected(1), "Pivoter selon le pas vers la droite"),
             ("⇆ Miroir H", lambda: self._mirror_selected("horizontal"), "Symétrie horizontale"),
             ("⇅ Miroir V", lambda: self._mirror_selected("vertical"), "Symétrie verticale"),
             ("Miroir + copie", self._mirror_copy_about_axis, "Créer la partie opposée autour du trait d’axe sélectionné"),
@@ -232,6 +245,25 @@ class DocumentEditorWindow(tk.Toplevel):
         border_width.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_width())
         border_width.bind("<Return>", lambda _event: self._apply_border_width())
         self._color_menu_button(diagrams, "Bordure▾", "border_color", "Couleur de la bordure")
+        ttk.Label(diagrams, text="Rotation", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self.rotation_step_var = tk.StringVar(value="15")
+        ttk.Combobox(
+            diagrams,
+            textvariable=self.rotation_step_var,
+            values=("15", "30", "45", "60", "90"),
+            state="readonly",
+            width=4,
+        ).pack(side="left", padx=2)
+        self.angle_var = tk.StringVar(value="0")
+        angle = ttk.Combobox(
+            diagrams,
+            textvariable=self.angle_var,
+            values=("0", "15", "30", "45", "60", "90", "120", "135", "150"),
+            width=5,
+        )
+        angle.pack(side="left", padx=2)
+        angle.bind("<<ComboboxSelected>>", lambda _event: self._apply_absolute_angle())
+        angle.bind("<Return>", lambda _event: self._apply_absolute_angle())
         ttk.Label(diagrams, text="Pas (mm)", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.nudge_var = tk.StringVar(value="1")
         ttk.Combobox(
@@ -654,6 +686,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.delete("all")
         self._overlay_images.clear()
         width, height = self._page_size()
+        if not self.document.source_pdf:
+            self.page_format_var.set("A3" if max(width, height) > A4_HEIGHT + 100 else "A4")
         dw, dh = width * self.zoom, height * self.zoom
         viewport = max(self.canvas.winfo_width(), 900)
         self.page_x, self.page_y = max(48.0, (viewport - dw) / 2), 48.0
@@ -1243,8 +1277,14 @@ class DocumentEditorWindow(tk.Toplevel):
         dy = (self.canvas.canvasy(event.y) - sy) / self.zoom
         for index, (start_x, start_y) in self._drag_positions.items():
             item = self.document.objects[index]
-            new_x = max(0, min(pw - item.width, start_x + dx))
-            new_y = max(0, min(ph - item.height, start_y + dy))
+            if item.kind == "line":
+                minimum_x, maximum_x = min(0.0, item.width), max(0.0, item.width)
+                minimum_y, maximum_y = min(0.0, item.height), max(0.0, item.height)
+                new_x = max(-minimum_x, min(pw - maximum_x, start_x + dx))
+                new_y = max(-minimum_y, min(ph - maximum_y, start_y + dy))
+            else:
+                new_x = max(0, min(pw - item.width, start_x + dx))
+                new_y = max(0, min(ph - item.height, start_y + dy))
             move_x = (new_x - item.x) * self.zoom
             move_y = (new_y - item.y) * self.zoom
             item.x, item.y = new_x, new_y
@@ -1787,20 +1827,89 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.y = anchor.y + anchor.height - item.height
         self._render()
 
-    def _rotate_selected(self) -> None:
+    def _rotate_selected(self, direction: int = 1) -> None:
         if not self.selected_indices:
+            return
+        try:
+            degrees = float(self.rotation_step_var.get().replace(",", ".")) * direction
+        except ValueError:
+            degrees = 15.0 * direction
+        self._checkpoint()
+        for index in self.selected_indices:
+            item = self.document.objects[index]
+            if item.kind == "line":
+                self._rotate_line(item, degrees)
+                continue
+            if item.kind == "polyline":
+                self._rotate_polyline(item, degrees)
+                continue
+            center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
+            if abs(degrees) % 180 == 90:
+                item.width, item.height = item.height, item.width
+            item.x, item.y = center_x - item.width / 2, center_y - item.height / 2
+            item.rotation = round((item.rotation + degrees) % 360)
+        self._render()
+
+    def _apply_absolute_angle(self) -> None:
+        if not self.selected_indices:
+            return
+        try:
+            target = float(self.angle_var.get().replace(",", "."))
+        except ValueError:
             return
         self._checkpoint()
         for index in self.selected_indices:
             item = self.document.objects[index]
-            center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
-            old_width, old_height = item.width, item.height
-            if item.kind == "polyline":
-                item.points = [[old_height - point[1], point[0]] for point in item.points]
-            item.width, item.height = item.height, item.width
-            item.x, item.y = center_x - item.width / 2, center_y - item.height / 2
-            item.rotation = (item.rotation + 90) % 360
+            delta = target - self._object_angle(item)
+            if item.kind == "line":
+                self._rotate_line(item, delta)
+            elif item.kind == "polyline":
+                self._rotate_polyline(item, delta)
+            else:
+                item.rotation = round(target % 360)
         self._render()
+
+    @staticmethod
+    def _object_angle(item: PageObject) -> float:
+        if item.kind == "line":
+            return math.degrees(math.atan2(item.height, item.width)) % 360
+        return float(item.rotation)
+
+    @staticmethod
+    def _rotate_line(item: PageObject, degrees: float) -> None:
+        center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
+        length = math.hypot(item.width, item.height)
+        angle = math.atan2(item.height, item.width) + math.radians(degrees)
+        delta_x, delta_y = length * math.cos(angle), length * math.sin(angle)
+        item.x, item.y = center_x - delta_x / 2, center_y - delta_y / 2
+        item.width, item.height = delta_x, delta_y
+        item.rotation = round(math.degrees(angle) % 360)
+
+    @staticmethod
+    def _rotate_polyline(item: PageObject, degrees: float) -> None:
+        if not item.points:
+            return
+        center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
+        angle = math.radians(degrees)
+        cosine, sine = math.cos(angle), math.sin(angle)
+        rotated: list[tuple[float, float]] = []
+        for point_x, point_y in item.points:
+            absolute_x, absolute_y = item.x + point_x, item.y + point_y
+            relative_x, relative_y = absolute_x - center_x, absolute_y - center_y
+            rotated.append(
+                (
+                    center_x + relative_x * cosine - relative_y * sine,
+                    center_y + relative_x * sine + relative_y * cosine,
+                )
+            )
+        minimum_x = min(point[0] for point in rotated)
+        minimum_y = min(point[1] for point in rotated)
+        maximum_x = max(point[0] for point in rotated)
+        maximum_y = max(point[1] for point in rotated)
+        item.x, item.y = minimum_x, minimum_y
+        item.width, item.height = maximum_x - minimum_x, maximum_y - minimum_y
+        item.points = [[x - minimum_x, y - minimum_y] for x, y in rotated]
+        item.rotation = round((item.rotation + degrees) % 360)
 
     def _mirror_selected(self, direction: str) -> None:
         if not self.selected_indices:
@@ -1915,6 +2024,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.font_family_var.set(item.font_family)
         self.border_width_var.set(f"{item.border_width:g}")
         self.border_style_var.set({"solid": "Continu", "dotted": "Pointillé", "dashed": "Tirets"}.get(item.border_style, "Continu"))
+        self.angle_var.set(f"{self._object_angle(item):g}")
         self.scope_var.set("Toutes les pages" if item.pages == "all" else "Pages choisies" if item.pages else "Cette page")
         self.pages_var.set("" if item.pages == "all" else item.pages)
 
@@ -1947,7 +2057,13 @@ class DocumentEditorWindow(tk.Toplevel):
             for key, value in values.items():
                 if key in {"x", "y", "width", "height"}:
                     value = value * 72 / 25.4
-                setattr(item, key, max(0 if key in {"x", "y"} else 6, value))
+                if key in {"x", "y"}:
+                    value = max(0, value)
+                elif key == "font_size":
+                    value = max(6, value)
+                elif item.kind != "line":
+                    value = max(6, value)
+                setattr(item, key, value)
             if item.kind == "polyline" and old_width and old_height:
                 item.points = [
                     [point[0] * item.width / old_width, point[1] * item.height / old_height]
@@ -1971,8 +2087,14 @@ class DocumentEditorWindow(tk.Toplevel):
         page_width, page_height = self._page_size()
         for index in self.selected_indices:
             item = self.document.objects[index]
-            item.x = max(0, min(page_width - item.width, item.x + horizontal * delta))
-            item.y = max(0, min(page_height - item.height, item.y + vertical * delta))
+            if item.kind == "line":
+                minimum_x, maximum_x = min(0.0, item.width), max(0.0, item.width)
+                minimum_y, maximum_y = min(0.0, item.height), max(0.0, item.height)
+                item.x = max(-minimum_x, min(page_width - maximum_x, item.x + horizontal * delta))
+                item.y = max(-minimum_y, min(page_height - maximum_y, item.y + vertical * delta))
+            else:
+                item.x = max(0, min(page_width - item.width, item.x + horizontal * delta))
+                item.y = max(0, min(page_height - item.height, item.y + vertical * delta))
         self._render()
         self.status.configure(text=f"Déplacement précis : {millimetres:g} mm.")
         return "break"
@@ -2004,9 +2126,24 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._checkpoint()
         if orientation == "landscape":
-            self.document.page_width, self.document.page_height = max(A4_WIDTH, A4_HEIGHT), min(A4_WIDTH, A4_HEIGHT)
+            self.document.page_width, self.document.page_height = max(self.document.page_width, self.document.page_height), min(self.document.page_width, self.document.page_height)
         else:
-            self.document.page_width, self.document.page_height = min(A4_WIDTH, A4_HEIGHT), max(A4_WIDTH, A4_HEIGHT)
+            self.document.page_width, self.document.page_height = min(self.document.page_width, self.document.page_height), max(self.document.page_width, self.document.page_height)
+        self._render()
+
+    def _set_page_format(self) -> None:
+        if self.document.source_pdf:
+            messagebox.showinfo("Format de page", "Le format d’un PDF importé est conservé.", parent=self)
+            return
+        landscape = self.document.page_width > self.document.page_height
+        dimensions = {
+            "A4": (A4_WIDTH, A4_HEIGHT),
+            "A3": (A4_HEIGHT, 1190.55),
+        }
+        width, height = dimensions.get(self.page_format_var.get(), dimensions["A4"])
+        self._checkpoint()
+        self.document.page_width, self.document.page_height = ((height, width) if landscape else (width, height))
+        self.status.configure(text=f"Format {self.page_format_var.get()} appliqué.")
         self._render()
 
     def _project_directory(self) -> Path:
