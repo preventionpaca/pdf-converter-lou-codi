@@ -715,7 +715,20 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _add_text(self) -> None:
-        self._add_object(PageObject("text", self.current_page, 70, 80, 280, 80))
+        width, height = self._page_size()
+        occupied = [
+            item
+            for item in self.document.objects
+            if item.kind == "text" and self.current_page in pages_for_object(item, self.document.page_count)
+        ]
+        x, y = 70.0, 80.0
+        for step in range(1, 25):
+            if not any(abs(item.x - x) < 12 and abs(item.y - y) < 12 for item in occupied):
+                break
+            offset = step * 22
+            x = min(max(20.0, width - 300.0), 70.0 + offset)
+            y = min(max(20.0, height - 100.0), 80.0 + offset)
+        self._add_object(PageObject("text", self.current_page, x, y, 280, 80))
         self.after_idle(lambda: self._start_inline_text_editor(self.document.objects[self.selected]) if self.selected is not None else None)
 
     def _add_image(self) -> None:
@@ -852,6 +865,21 @@ class DocumentEditorWindow(tk.Toplevel):
                     self._drag_origin = None
                     return
         clicked = self._object_at_event(event)
+        if self._pending_text_link_id:
+            source = next(
+                (item for item in self.document.objects if item.object_id == self._pending_text_link_id),
+                None,
+            )
+            target = self.document.objects[clicked] if clicked is not None else None
+            if source is not None and target is not None and target.kind == "text" and target.object_id != source.object_id:
+                self._pending_text_link_id = ""
+                self.canvas.configure(cursor="")
+                self._connect_text_frames(source, target)
+            else:
+                self.status.configure(
+                    text="Chaînage en attente : cliquez dans une autre zone de texte verte, ou Échap pour annuler."
+                )
+            return
         control = bool(event.state & 0x0004)
         if clicked is None:
             self.selected = None
@@ -1115,6 +1143,7 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.edit_modified(True)
         preview()
         dialog.protocol("WM_DELETE_WINDOW", self._commit_inline_editor)
+        dialog.lift()
         widget.focus_set()
 
     def _redraw_text_chain(self, root: PageObject) -> None:
