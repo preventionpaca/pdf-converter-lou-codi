@@ -198,9 +198,12 @@ class DocumentEditorWindow(tk.Toplevel):
             ("△ Triangle", lambda: self._add_shape("triangle"), "Insérer un triangle"),
             ("Trapèze", lambda: self._add_shape("trapezoid"), "Insérer un trapèze"),
             ("➜ Flèche", lambda: self._add_shape("arrow"), "Insérer une flèche"),
+            ("／ Trait", self._add_line, "Tracer un trait"),
+            ("┄ Axe", self._add_axis, "Insérer un trait d’axe"),
             ("↻ 90°", self._rotate_selected, "Faire pivoter de 90 degrés"),
             ("⇆ Miroir H", lambda: self._mirror_selected("horizontal"), "Symétrie horizontale"),
             ("⇅ Miroir V", lambda: self._mirror_selected("vertical"), "Symétrie verticale"),
+            ("Miroir + copie", self._mirror_copy_about_axis, "Créer la partie opposée autour du trait d’axe sélectionné"),
             ("Aligner G", lambda: self._align_objects("left"), "Aligner les objets à gauche"),
             ("Aligner H", lambda: self._align_objects("middle"), "Aligner verticalement"),
         ), color="#E8E0F5")
@@ -253,7 +256,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.kind_label = ttk.Label(panel, text="Aucun objet", style="Body.TLabel")
         self.kind_label.pack(anchor="w", pady=(0, 8))
         self.property_vars: dict[str, tk.StringVar] = {}
-        for key, label in (("x", "X"), ("y", "Y"), ("width", "Largeur"), ("height", "Hauteur"), ("font_size", "Taille du texte")):
+        for key, label in (("x", "X (mm)"), ("y", "Y (mm)"), ("width", "Largeur (mm)"), ("height", "Hauteur (mm)"), ("font_size", "Taille du texte (pt)")):
             ttk.Label(panel, text=label, style="Body.TLabel").pack(anchor="w")
             var = tk.StringVar()
             self.property_vars[key] = var
@@ -406,6 +409,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 label=f"■  {name}   {value}",
                 foreground=value,
                 command=lambda color=value, key=attribute: self._set_object_color(key, color),
+            )
+        if attribute == "fill":
+            menu.add_command(
+                label="▧  Transparent",
+                command=lambda: self._set_object_color("fill", "transparent"),
             )
         menu.add_separator()
         menu.add_command(
@@ -628,7 +636,7 @@ class DocumentEditorWindow(tk.Toplevel):
         width, height = self._page_size()
         dw, dh = width * self.zoom, height * self.zoom
         viewport = max(self.canvas.winfo_width(), 900)
-        self.page_x, self.page_y = max(30.0, (viewport - dw) / 2), 28.0
+        self.page_x, self.page_y = max(48.0, (viewport - dw) / 2), 48.0
         rendered = False
         if self.document.source_pdf and Path(self.document.source_pdf).is_file():
             try:
@@ -642,6 +650,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 pass
         if not rendered:
             self.canvas.create_rectangle(self.page_x, self.page_y, self.page_x + dw, self.page_y + dh, fill="white", outline="#9AA5B1")
+        self._draw_rulers(width, height)
         for index, item in enumerate(self.document.objects):
             if self.current_page in pages_for_object(item, self.document.page_count):
                 self._draw_object(index, item)
@@ -667,6 +676,26 @@ class DocumentEditorWindow(tk.Toplevel):
         self.page_label.configure(text=f"Page {self.current_page + 1} / {self.document.page_count}")
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
         self._show_properties()
+
+    def _draw_rulers(self, width: float, height: float) -> None:
+        """Draw page rulers in millimetres around the current sheet."""
+        points_per_mm = 72 / 25.4
+        page_right = self.page_x + width * self.zoom
+        page_bottom = self.page_y + height * self.zoom
+        self.canvas.create_rectangle(self.page_x, self.page_y - 24, page_right, self.page_y, fill="#EEF2F6", outline="#A8B2BD", tags=("ruler",))
+        self.canvas.create_rectangle(self.page_x - 32, self.page_y, self.page_x, page_bottom, fill="#EEF2F6", outline="#A8B2BD", tags=("ruler",))
+        for millimetre in range(0, int(width / points_per_mm) + 1, 10):
+            px = self.page_x + millimetre * points_per_mm * self.zoom
+            major = millimetre % 50 == 0
+            self.canvas.create_line(px, self.page_y - (14 if major else 8), px, self.page_y, fill="#52677C", tags=("ruler",))
+            if major:
+                self.canvas.create_text(px + 2, self.page_y - 16, text=str(millimetre), anchor="sw", font=("Sans", 7), fill="#385571", tags=("ruler",))
+        for millimetre in range(0, int(height / points_per_mm) + 1, 10):
+            py = self.page_y + millimetre * points_per_mm * self.zoom
+            major = millimetre % 50 == 0
+            self.canvas.create_line(self.page_x - (14 if major else 8), py, self.page_x, py, fill="#52677C", tags=("ruler",))
+            if major:
+                self.canvas.create_text(self.page_x - 16, py + 2, text=str(millimetre), anchor="ne", font=("Sans", 7), fill="#385571", tags=("ruler",))
 
     def _draw_object(self, index: int, item: PageObject) -> None:
         x, y = self.page_x + item.x * self.zoom, self.page_y + item.y * self.zoom
@@ -741,7 +770,8 @@ class DocumentEditorWindow(tk.Toplevel):
             else:
                 self.canvas.create_rectangle(x, y, x + w, y + h, **options)
         elif item.kind == "line":
-            self.canvas.create_line(x, y, x + w, y + h, fill=item.color, width=max(1, item.font_size / 6), tags=tags)
+            dash = (8, 3, 2, 3) if item.shape == "axis" else (5, 3) if item.border_style == "dashed" else (1, 3) if item.border_style == "dotted" else None
+            self.canvas.create_line(x, y, x + w, y + h, fill=item.border_color, width=max(1, item.border_width * self.zoom), dash=dash, tags=tags)
         elif item.kind == "chart":
             self._draw_chart_preview(item, x, y, w, h, tags)
         else:
@@ -749,7 +779,16 @@ class DocumentEditorWindow(tk.Toplevel):
             flowed_text = flowed_text_for_object(item, self.document.objects)
             displayed_text = resolve_dynamic_text(flowed_text, self.current_page, self.document.page_count, source_name)
             emphasized = selected or bool(self._pending_text_link_id and item.kind == "text")
-            self.canvas.create_rectangle(x, y, x + w, y + h, fill="#FFFFFF", stipple="gray12", outline=outline, width=4 if emphasized else 1, tags=tags)
+            self.canvas.create_rectangle(
+                x,
+                y,
+                x + w,
+                y + h,
+                fill="" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
+                outline=outline,
+                width=4 if emphasized else 1,
+                tags=tags,
+            )
             picture = self._text_preview(item, displayed_text, max(1, round(w)), max(1, round(h)))
             self._overlay_images.append(picture)
             self.canvas.create_image(x, y, image=picture, anchor="nw", tags=tags)
@@ -790,7 +829,8 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
         """Render and clip a text frame exactly inside its visible rectangle."""
-        image = Image.new("RGB", (width, height), item.fill)
+        transparent = item.fill.lower() in {"", "none", "transparent"}
+        image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) if transparent else Image.new("RGB", (width, height), item.fill)
         draw = ImageDraw.Draw(image)
         size = max(7, round(item.font_size * self.zoom))
         suffix = "-BoldOblique" if item.bold and item.italic else "-Bold" if item.bold else "-Oblique" if item.italic else ""
@@ -864,7 +904,23 @@ class DocumentEditorWindow(tk.Toplevel):
             self._add_object(PageObject("table", self.current_page, 70, 80, 360, max(80, rows * 32), text=content, font_size=10))
 
     def _add_line(self) -> None:
-        self._add_object(PageObject("line", self.current_page, 70, 120, 260, 0, font_size=8))
+        self._add_object(PageObject("line", self.current_page, 70, 120, 260, 0, border_color="#193B66", border_width=1.5))
+
+    def _add_axis(self) -> None:
+        self._add_object(
+            PageObject(
+                "line",
+                self.current_page,
+                70,
+                220,
+                360,
+                0,
+                shape="axis",
+                border_color="#6A7480",
+                border_width=1,
+                border_style="dashed",
+            )
+        )
 
     def _add_shape(self, shape: str) -> None:
         width, height = (180, 75) if shape == "arrow" else (150, 100)
@@ -1059,6 +1115,24 @@ class DocumentEditorWindow(tk.Toplevel):
             item.width = max(20, old_width + (self.canvas.canvasx(event.x) - sx) / self.zoom)
             item.height = max(20, old_height + (self.canvas.canvasy(event.y) - sy) / self.zoom)
             self._render()
+            width_mm, height_mm = item.width * 25.4 / 72, item.height * 25.4 / 72
+            self.canvas.create_text(
+                self.page_x + (item.x + item.width) * self.zoom + 8,
+                self.page_y + (item.y + item.height) * self.zoom + 8,
+                text=f"{width_mm:.1f} × {height_mm:.1f} mm",
+                anchor="nw",
+                fill="white",
+                font=("Sans", 9, "bold"),
+                tags=("dimension-guide",),
+            )
+            self.canvas.create_rectangle(
+                self.canvas.bbox("dimension-guide"),
+                fill="#193B66",
+                outline="",
+                tags=("dimension-guide-bg",),
+            )
+            self.canvas.tag_raise("dimension-guide")
+            self.status.configure(text=f"Dimensions : {width_mm:.1f} × {height_mm:.1f} mm")
             return
         if self.selected is None or self._drag_origin is None:
             return
@@ -1371,6 +1445,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._mutate(lambda item: setattr(item, "align", value))
 
     def _set_object_color(self, attribute: str, value: str) -> None:
+        if attribute == "fill" and value.lower() == "transparent":
+            self._mutate(lambda item: setattr(item, "fill", "transparent"))
+            return
         normalized = value if value.startswith("#") else f"#{value}"
         try:
             self.winfo_rgb(normalized)
@@ -1637,6 +1714,46 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.flip_vertical = not item.flip_vertical
         self._render()
 
+    def _mirror_copy_about_axis(self) -> None:
+        indices = sorted(self.selected_indices)
+        axis_indices = [
+            index
+            for index in indices
+            if self.document.objects[index].kind == "line"
+            and self.document.objects[index].shape == "axis"
+        ]
+        profile_indices = [index for index in indices if index not in axis_indices]
+        if len(axis_indices) != 1 or not profile_indices:
+            messagebox.showinfo(
+                "Symétrie de révolution",
+                "Avec Ctrl, sélectionnez un trait d’axe et les éléments du profil, puis relancez « Miroir + copie ».",
+                parent=self,
+            )
+            return
+        self._checkpoint()
+        axis = self.document.objects[axis_indices[0]]
+        horizontal = abs(axis.width) >= abs(axis.height)
+        coordinate = axis.y + axis.height / 2 if horizontal else axis.x + axis.width / 2
+        copies: list[int] = []
+        for index in profile_indices:
+            clone = copy.deepcopy(self.document.objects[index])
+            clone.object_id = uuid.uuid4().hex
+            clone.flow_next_id = ""
+            clone.source_id = ""
+            clone.group = ""
+            if horizontal:
+                clone.y = 2 * coordinate - clone.y - clone.height
+                clone.flip_vertical = not clone.flip_vertical
+            else:
+                clone.x = 2 * coordinate - clone.x - clone.width
+                clone.flip_horizontal = not clone.flip_horizontal
+            self.document.objects.append(clone)
+            copies.append(len(self.document.objects) - 1)
+        self.selected_indices = set(copies)
+        self.selected = copies[-1]
+        self.status.configure(text=f"Symétrie créée : {len(copies)} élément(s) copiés autour du trait d’axe.")
+        self._render()
+
     def _apply_border_style(self) -> None:
         styles = {"Continu": "solid", "Pointillé": "dotted", "Tirets": "dashed"}
         self._mutate(lambda item: setattr(item, "border_style", styles[self.border_style_var.get()]))
@@ -1680,7 +1797,10 @@ class DocumentEditorWindow(tk.Toplevel):
         selection = f" — {len(self.selected_indices)} objets" if len(self.selected_indices) > 1 else ""
         self.kind_label.configure(text=names.get(item.kind, item.kind) + selection)
         for key, var in self.property_vars.items():
-            var.set(f"{getattr(item, key):.1f}")
+            value = getattr(item, key)
+            if key in {"x", "y", "width", "height"}:
+                value = value * 25.4 / 72
+            var.set(f"{value:.1f}")
         self.font_size_var.set(f"{item.font_size:g}")
         self.font_family_var.set(item.font_family)
         self.border_width_var.set(f"{item.border_width:g}")
@@ -1705,6 +1825,8 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         def apply(item: PageObject) -> None:
             for key, value in values.items():
+                if key in {"x", "y", "width", "height"}:
+                    value = value * 72 / 25.4
                 setattr(item, key, max(0 if key in {"x", "y"} else 6, value))
         self._mutate(apply)
 

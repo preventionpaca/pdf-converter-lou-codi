@@ -129,7 +129,14 @@ def _draw_object(
     if item.kind == "mask":
         page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
     elif item.kind == "line":
-        page.draw_line(rectangle.top_left, rectangle.bottom_right, color=_rgb(item.color), width=max(0.5, item.font_size / 6), overlay=True)
+        page.draw_line(
+            rectangle.top_left,
+            rectangle.bottom_right,
+            color=_rgb(item.border_color),
+            width=max(0.5, item.border_width),
+            dashes="[8 3 2 3]" if item.shape == "axis" else "[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
+            overlay=True,
+        )
     elif item.kind == "shape":
         _draw_shape(page, rectangle, item)
     elif item.kind == "chart":
