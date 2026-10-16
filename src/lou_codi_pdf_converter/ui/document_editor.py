@@ -67,6 +67,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.ribbon_visible = tk.BooleanVar(value=True)
         self._pending_text_link_id = ""
         self._last_clicked_index: int | None = None
+        self._polyline_points: list[tuple[float, float]] = []
+        self._drawing_polyline = False
         icon = getattr(self._root(), "app_icon", None)
         if icon is not None:
             self.iconphoto(False, icon)
@@ -199,6 +201,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Trapèze", lambda: self._add_shape("trapezoid"), "Insérer un trapèze"),
             ("➜ Flèche", lambda: self._add_shape("arrow"), "Insérer une flèche"),
             ("／ Trait", self._add_line, "Tracer un trait"),
+            ("⌁ Polyligne", self._start_polyline, "Tracer un profil point par point"),
             ("┄ Axe", self._add_axis, "Insérer un trait d’axe"),
             ("↻ 90°", self._rotate_selected, "Faire pivoter de 90 degrés"),
             ("⇆ Miroir H", lambda: self._mirror_selected("horizontal"), "Symétrie horizontale"),
@@ -229,6 +232,15 @@ class DocumentEditorWindow(tk.Toplevel):
         border_width.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_width())
         border_width.bind("<Return>", lambda _event: self._apply_border_width())
         self._color_menu_button(diagrams, "Bordure▾", "border_color", "Couleur de la bordure")
+        ttk.Label(diagrams, text="Pas (mm)", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self.nudge_var = tk.StringVar(value="1")
+        ttk.Combobox(
+            diagrams,
+            textvariable=self.nudge_var,
+            values=("10", "1", "0.1", "0.01"),
+            state="readonly",
+            width=5,
+        ).pack(side="left", padx=2)
 
         self.body = ttk.Panedwindow(self, orient="horizontal")
         self.body.pack(fill="both", expand=True, padx=12, pady=(2, 0))
@@ -260,7 +272,10 @@ class DocumentEditorWindow(tk.Toplevel):
             ttk.Label(panel, text=label, style="Body.TLabel").pack(anchor="w")
             var = tk.StringVar()
             self.property_vars[key] = var
-            ttk.Entry(panel, textvariable=var).pack(fill="x", pady=(0, 6))
+            entry = ttk.Entry(panel, textvariable=var)
+            entry.pack(fill="x", pady=(0, 6))
+            entry.bind("<Return>", lambda _event: self._apply_properties())
+            entry.bind("<Tab>", lambda _event: self._apply_properties(silent=True), add="+")
         ttk.Button(panel, text="Appliquer les coordonnées", style="Primary.TButton", command=self._apply_properties).pack(fill="x", pady=4)
         ttk.Button(panel, text="Modifier le contenu", command=self._edit_selected).pack(fill="x", pady=4)
         ttk.Label(panel, text="Appliquer sur", style="Body.TLabel").pack(anchor="w", pady=(10, 0))
@@ -347,7 +362,12 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Control-p>", lambda _event: self._print())
         self.bind("<Delete>", lambda _event: self._delete_selected())
         self.bind("<F4>", lambda _event: self._toggle_properties_panel())
-        self.bind("<Escape>", lambda _event: self._cancel_text_link())
+        self.bind("<Escape>", self._cancel_current_action)
+        self.bind("<Return>", self._finish_polyline)
+        self.bind("<Left>", lambda event: self._nudge_selected(event, -1, 0))
+        self.bind("<Right>", lambda event: self._nudge_selected(event, 1, 0))
+        self.bind("<Up>", lambda event: self._nudge_selected(event, 0, -1))
+        self.bind("<Down>", lambda event: self._nudge_selected(event, 0, 1))
 
     def _buttons(
         self,
@@ -772,6 +792,15 @@ class DocumentEditorWindow(tk.Toplevel):
         elif item.kind == "line":
             dash = (8, 3, 2, 3) if item.shape == "axis" else (5, 3) if item.border_style == "dashed" else (1, 3) if item.border_style == "dotted" else None
             self.canvas.create_line(x, y, x + w, y + h, fill=item.border_color, width=max(1, item.border_width * self.zoom), dash=dash, tags=tags)
+        elif item.kind == "polyline":
+            dash = (5, 3) if item.border_style == "dashed" else (1, 3) if item.border_style == "dotted" else None
+            coordinates = [
+                coordinate
+                for point in item.points
+                for coordinate in (self.page_x + (item.x + point[0]) * self.zoom, self.page_y + (item.y + point[1]) * self.zoom)
+            ]
+            if len(coordinates) >= 4:
+                self.canvas.create_line(*coordinates, fill=item.border_color, width=max(1, item.border_width * self.zoom), dash=dash, tags=tags)
         elif item.kind == "chart":
             self._draw_chart_preview(item, x, y, w, h, tags)
         else:
@@ -922,6 +951,52 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         )
 
+    def _start_polyline(self) -> None:
+        self._drawing_polyline = True
+        self._polyline_points.clear()
+        self.canvas.configure(cursor="crosshair")
+        self.status.configure(text="Polyligne : cliquez chaque sommet sur la feuille, puis Entrée pour terminer. Échap annule.")
+
+    def _finish_polyline(self, _event: object = None) -> str | None:
+        if not self._drawing_polyline:
+            return None
+        if len(self._polyline_points) >= 2:
+            minimum_x = min(point[0] for point in self._polyline_points)
+            minimum_y = min(point[1] for point in self._polyline_points)
+            maximum_x = max(point[0] for point in self._polyline_points)
+            maximum_y = max(point[1] for point in self._polyline_points)
+            relative = [[x - minimum_x, y - minimum_y] for x, y in self._polyline_points]
+            self._add_object(
+                PageObject(
+                    "polyline",
+                    self.current_page,
+                    minimum_x,
+                    minimum_y,
+                    max(1, maximum_x - minimum_x),
+                    max(1, maximum_y - minimum_y),
+                    points=relative,
+                    border_color="#193B66",
+                    border_width=1.5,
+                )
+            )
+            self.status.configure(text=f"Polyligne créée avec {len(relative)} sommets.")
+        self._drawing_polyline = False
+        self._polyline_points.clear()
+        self.canvas.configure(cursor="")
+        self.canvas.delete("polyline-preview")
+        return "break"
+
+    def _cancel_current_action(self, _event: object = None) -> str:
+        if self._drawing_polyline:
+            self._drawing_polyline = False
+            self._polyline_points.clear()
+            self.canvas.delete("polyline-preview")
+            self.canvas.configure(cursor="")
+            self.status.configure(text="Tracé de la polyligne annulé.")
+        else:
+            self._cancel_text_link()
+        return "break"
+
     def _add_shape(self, shape: str) -> None:
         width, height = (180, 75) if shape == "arrow" else (150, 100)
         self._add_object(
@@ -1041,6 +1116,26 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._commit_inline_editor(render=False)
+        self.canvas.focus_set()
+        if self._drawing_polyline:
+            page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+            page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+            width, height = self._page_size()
+            if 0 <= page_x <= width and 0 <= page_y <= height:
+                self._polyline_points.append((page_x, page_y))
+                self.canvas.delete("polyline-preview")
+                coordinates = [
+                    coordinate
+                    for point_x, point_y in self._polyline_points
+                    for coordinate in (self.page_x + point_x * self.zoom, self.page_y + point_y * self.zoom)
+                ]
+                if len(coordinates) >= 4:
+                    self.canvas.create_line(*coordinates, fill="#193B66", width=2, tags=("polyline-preview",))
+                for point_x, point_y in self._polyline_points:
+                    px, py = self.page_x + point_x * self.zoom, self.page_y + point_y * self.zoom
+                    self.canvas.create_oval(px - 3, py - 3, px + 3, py + 3, fill="#E87524", outline="white", tags=("polyline-preview",))
+                self.status.configure(text=f"Polyligne : {len(self._polyline_points)} sommet(s). Entrée termine, Échap annule.")
+            return
         current = self.canvas.find_withtag("current")
         if current:
             for tag in self.canvas.gettags(current[0]):
@@ -1112,8 +1207,14 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is not None and self._resize_origin is not None:
             sx, sy, old_width, old_height = self._resize_origin
             item = self.document.objects[self.selected]
-            item.width = max(20, old_width + (self.canvas.canvasx(event.x) - sx) / self.zoom)
-            item.height = max(20, old_height + (self.canvas.canvasy(event.y) - sy) / self.zoom)
+            new_width = max(20, old_width + (self.canvas.canvasx(event.x) - sx) / self.zoom)
+            new_height = max(20, old_height + (self.canvas.canvasy(event.y) - sy) / self.zoom)
+            if item.kind == "polyline" and item.width and item.height:
+                item.points = [
+                    [point[0] * new_width / item.width, point[1] * new_height / item.height]
+                    for point in item.points
+                ]
+            item.width, item.height = new_width, new_height
             self._render()
             width_mm, height_mm = item.width * 25.4 / 72, item.height * 25.4 / 72
             self.canvas.create_text(
@@ -1149,6 +1250,8 @@ class DocumentEditorWindow(tk.Toplevel):
             item.x, item.y = new_x, new_y
             self.canvas.move(f"object:{index}", move_x, move_y)
             self.canvas.move(f"resize:{index}", move_x, move_y)
+        if self.selected is not None:
+            self._update_geometry_fields(self.document.objects[self.selected])
 
     def _release(self, _event: tk.Event[tk.Misc]) -> None:
         changed = False
@@ -1691,6 +1794,9 @@ class DocumentEditorWindow(tk.Toplevel):
         for index in self.selected_indices:
             item = self.document.objects[index]
             center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
+            old_width, old_height = item.width, item.height
+            if item.kind == "polyline":
+                item.points = [[old_height - point[1], point[0]] for point in item.points]
             item.width, item.height = item.height, item.width
             item.x, item.y = center_x - item.width / 2, center_y - item.height / 2
             item.rotation = (item.rotation + 90) % 360
@@ -1709,9 +1815,13 @@ class DocumentEditorWindow(tk.Toplevel):
             if direction == "horizontal":
                 item.x = left + right - item.x - item.width
                 item.flip_horizontal = not item.flip_horizontal
+                if item.kind == "polyline":
+                    item.points = [[item.width - point[0], point[1]] for point in item.points]
             else:
                 item.y = top + bottom - item.y - item.height
                 item.flip_vertical = not item.flip_vertical
+                if item.kind == "polyline":
+                    item.points = [[point[0], item.height - point[1]] for point in item.points]
         self._render()
 
     def _mirror_copy_about_axis(self) -> None:
@@ -1744,9 +1854,13 @@ class DocumentEditorWindow(tk.Toplevel):
             if horizontal:
                 clone.y = 2 * coordinate - clone.y - clone.height
                 clone.flip_vertical = not clone.flip_vertical
+                if clone.kind == "polyline":
+                    clone.points = [[point[0], clone.height - point[1]] for point in clone.points]
             else:
                 clone.x = 2 * coordinate - clone.x - clone.width
                 clone.flip_horizontal = not clone.flip_horizontal
+                if clone.kind == "polyline":
+                    clone.points = [[clone.width - point[0], point[1]] for point in clone.points]
             self.document.objects.append(clone)
             copies.append(len(self.document.objects) - 1)
         self.selected_indices = set(copies)
@@ -1793,14 +1907,10 @@ class DocumentEditorWindow(tk.Toplevel):
             self.pages_var.set("")
             return
         item = self.document.objects[self.selected]
-        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait", "chart": "Graphique", "shape": "Forme"}
+        names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait", "polyline": "Polyligne", "chart": "Graphique", "shape": "Forme"}
         selection = f" — {len(self.selected_indices)} objets" if len(self.selected_indices) > 1 else ""
         self.kind_label.configure(text=names.get(item.kind, item.kind) + selection)
-        for key, var in self.property_vars.items():
-            value = getattr(item, key)
-            if key in {"x", "y", "width", "height"}:
-                value = value * 25.4 / 72
-            var.set(f"{value:.1f}")
+        self._update_geometry_fields(item)
         self.font_size_var.set(f"{item.font_size:g}")
         self.font_family_var.set(item.font_family)
         self.border_width_var.set(f"{item.border_width:g}")
@@ -1815,20 +1925,57 @@ class DocumentEditorWindow(tk.Toplevel):
         pages = "all" if scope == "Toutes les pages" else self.pages_var.get().strip() if scope == "Pages choisies" else ""
         self._mutate(lambda item: setattr(item, "pages", pages))
 
-    def _apply_properties(self) -> None:
+    def _update_geometry_fields(self, item: PageObject) -> None:
+        for key, var in self.property_vars.items():
+            value = getattr(item, key)
+            if key in {"x", "y", "width", "height"}:
+                value = value * 25.4 / 72
+            digits = 2 if key in {"x", "y", "width", "height"} else 1
+            var.set(f"{value:.{digits}f}")
+
+    def _apply_properties(self, *, silent: bool = False) -> None:
         if self.selected is None:
             return
         try:
             values = {key: float(var.get().replace(",", ".")) for key, var in self.property_vars.items()}
         except ValueError:
-            messagebox.showerror("Valeur incorrecte", "Utilisez uniquement des nombres.", parent=self)
+            if not silent:
+                messagebox.showerror("Valeur incorrecte", "Utilisez uniquement des nombres.", parent=self)
             return
         def apply(item: PageObject) -> None:
+            old_width, old_height = item.width, item.height
             for key, value in values.items():
                 if key in {"x", "y", "width", "height"}:
                     value = value * 72 / 25.4
                 setattr(item, key, max(0 if key in {"x", "y"} else 6, value))
+            if item.kind == "polyline" and old_width and old_height:
+                item.points = [
+                    [point[0] * item.width / old_width, point[1] * item.height / old_height]
+                    for point in item.points
+                ]
         self._mutate(apply)
+
+    def _nudge_selected(self, event: tk.Event[tk.Misc], horizontal: int, vertical: int) -> str | None:
+        if event.widget.winfo_class() in {"Entry", "TEntry", "Text", "TCombobox"}:
+            return None
+        if not self.selected_indices:
+            return None
+        try:
+            millimetres = float(self.nudge_var.get().replace(",", "."))
+        except ValueError:
+            millimetres = 1.0
+        if event.state & 0x0001:
+            millimetres *= 10
+        delta = millimetres * 72 / 25.4
+        self._checkpoint()
+        page_width, page_height = self._page_size()
+        for index in self.selected_indices:
+            item = self.document.objects[index]
+            item.x = max(0, min(page_width - item.width, item.x + horizontal * delta))
+            item.y = max(0, min(page_height - item.height, item.y + vertical * delta))
+        self._render()
+        self.status.configure(text=f"Déplacement précis : {millimetres:g} mm.")
+        return "break"
 
     def _change_page(self, change: int) -> None:
         self._commit_inline_editor(render=False)

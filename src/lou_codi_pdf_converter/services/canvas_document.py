@@ -48,6 +48,7 @@ class PageObject:
     rotation: int = 0
     flip_horizontal: bool = False
     flip_vertical: bool = False
+    points: list[list[float]] = field(default_factory=list)
 
 
 @dataclass
@@ -137,6 +138,16 @@ def _draw_object(
             dashes="[8 3 2 3]" if item.shape == "axis" else "[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
             overlay=True,
         )
+    elif item.kind == "polyline" and len(item.points) >= 2:
+        points = [(item.x + point[0], item.y + point[1]) for point in item.points]
+        shape = page.new_shape()
+        shape.draw_polyline(points)
+        shape.finish(
+            color=_rgb(item.border_color),
+            width=max(0.5, item.border_width),
+            dashes="[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
+        )
+        shape.commit(overlay=True)
     elif item.kind == "shape":
         _draw_shape(page, rectangle, item)
     elif item.kind == "chart":

@@ -103,6 +103,7 @@ def test_technical_shapes_are_saved_and_exported(tmp_path: Path) -> None:
             PageObject("shape", 0, 40, 40, 120, 70, shape="rectangle", fill="#DCEBFA"),
             PageObject("shape", 0, 190, 40, 100, 70, shape="ellipse", border_style="dashed"),
             PageObject("shape", 0, 320, 40, 140, 70, shape="arrow", fill="#F9E8C8"),
+            PageObject("polyline", 0, 40, 150, 180, 80, points=[[0, 70], [40, 10], [120, 10], [180, 70]], border_width=1.5),
         ]
     )
 
@@ -110,5 +111,6 @@ def test_technical_shapes_are_saved_and_exported(tmp_path: Path) -> None:
     restored = CanvasDocument.load(project)
     export_canvas_pdf(restored, target)
 
-    assert [item.shape for item in restored.objects] == ["rectangle", "ellipse", "arrow"]
+    assert [item.shape for item in restored.objects[:3]] == ["rectangle", "ellipse", "arrow"]
+    assert restored.objects[3].points[2] == [120, 10]
     assert len(PdfReader(target).pages) == 1
