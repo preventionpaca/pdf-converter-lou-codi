@@ -66,6 +66,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.properties_visible = tk.BooleanVar(value=True)
         self.ribbon_visible = tk.BooleanVar(value=True)
         self._pending_text_link_id = ""
+        self._last_clicked_index: int | None = None
         icon = getattr(self._root(), "app_icon", None)
         if icon is not None:
             self.iconphoto(False, icon)
@@ -689,11 +690,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 lines.append("")
                 continue
             current = ""
-            for word in paragraph.split(" "):
-                candidate = word if not current else f"{current} {word}"
+            for character in paragraph:
+                candidate = current + character
                 if current and draw.textlength(candidate, font=font) > maximum:
                     lines.append(current)
-                    current = word
+                    current = character.lstrip() if character.isspace() else character
                 else:
                     current = candidate
             lines.append(current)
@@ -865,6 +866,8 @@ class DocumentEditorWindow(tk.Toplevel):
                     self._drag_origin = None
                     return
         clicked = self._object_at_event(event)
+        if clicked is not None:
+            self._last_clicked_index = clicked
         if self._pending_text_link_id:
             source = next(
                 (item for item in self.document.objects if item.object_id == self._pending_text_link_id),
@@ -954,6 +957,10 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _edit_selected(self, _event: object = None) -> None:
+        if self.selected is None and self._last_clicked_index is not None:
+            if 0 <= self._last_clicked_index < len(self.document.objects):
+                self.selected = self._last_clicked_index
+                self.selected_indices = {self.selected}
         if self.selected is None:
             return
         item = self.document.objects[self.selected]
