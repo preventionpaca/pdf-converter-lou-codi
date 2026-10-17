@@ -14,6 +14,7 @@ from itertools import pairwise
 from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 import pymupdf
 from PIL import Image, ImageDraw, ImageFont, ImageGrab, ImageOps, ImageTk
@@ -5254,7 +5255,10 @@ class DocumentEditorWindow(tk.Toplevel):
         for line in lines:
             if line.startswith("file://"):
                 parsed = urlparse(line)
-                candidate = Path(unquote(parsed.path))
+                uri_path = url2pathname(unquote(parsed.path))
+                if parsed.netloc:
+                    uri_path = f"//{parsed.netloc}{uri_path}"
+                candidate = Path(uri_path)
             else:
                 candidate = Path(line)
             if candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"} and candidate.is_file():
