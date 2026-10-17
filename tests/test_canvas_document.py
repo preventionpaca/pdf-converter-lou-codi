@@ -670,6 +670,32 @@ def test_close_contour_closes_one_selected_polyline_without_tolerance_dialog() -
     assert "Polyligne fermée" in editor.status.text
 
 
+def test_horizontal_mirror_moves_hatches_with_their_polyline() -> None:
+    group = "hachures-symetrie"
+    source = PageObject(
+        "polyline", 0, 10, 20, 100, 60,
+        points=[[0, 0], [100, 0], [100, 60], [0, 60], [0, 0]],
+        group=group,
+    )
+    hatch = PageObject(
+        "line", 0, 30, 30, 40, 20,
+        group=group, source_id=source.object_id, shape="hatch",
+    )
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[source, hatch])
+    editor.selected_indices = {0}
+    editor.selected = 0
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    editor._mirror_selected("horizontal")
+
+    assert math.isclose(hatch.x, 90.0, abs_tol=1e-6)
+    assert math.isclose(hatch.y, 30.0, abs_tol=1e-6)
+    assert math.isclose(hatch.width, -40.0, abs_tol=1e-6)
+    assert math.isclose(hatch.height, 20.0, abs_tol=1e-6)
+
+
 def test_external_office_text_separators_become_line_breaks() -> None:
     assert normalize_external_text("un\vdeux\ftrois\u2028quatre\x00") == (
         "un\ndeux\ntrois\nquatre"

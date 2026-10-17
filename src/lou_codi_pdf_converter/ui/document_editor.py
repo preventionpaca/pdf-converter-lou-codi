@@ -7309,6 +7309,13 @@ class DocumentEditorWindow(tk.Toplevel):
         bottom = max(item.y + item.height for item in objects)
         for item in objects:
             if direction == "horizontal":
+                if item.kind == "line":
+                    start_x = left + right - item.x
+                    end_x = left + right - (item.x + item.width)
+                    item.x = start_x
+                    item.width = end_x - start_x
+                    item.flip_horizontal = not item.flip_horizontal
+                    continue
                 item.x = left + right - item.x - item.width
                 item.flip_horizontal = not item.flip_horizontal
                 if item.kind == "polyline":
@@ -7321,6 +7328,13 @@ class DocumentEditorWindow(tk.Toplevel):
                     except OSError:
                         pass
             else:
+                if item.kind == "line":
+                    start_y = top + bottom - item.y
+                    end_y = top + bottom - (item.y + item.height)
+                    item.y = start_y
+                    item.height = end_y - start_y
+                    item.flip_vertical = not item.flip_vertical
+                    continue
                 item.y = top + bottom - item.y - item.height
                 item.flip_vertical = not item.flip_vertical
                 if item.kind == "polyline":
