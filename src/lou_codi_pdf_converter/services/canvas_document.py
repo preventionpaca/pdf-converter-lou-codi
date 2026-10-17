@@ -73,6 +73,7 @@ class CanvasDocument:
     page_width: float = A4_WIDTH
     page_height: float = A4_HEIGHT
     measurement_scale: float = 1.0
+    is_template: bool = False
 
     def save(self, path: Path) -> None:
         path.write_text(
@@ -84,6 +85,7 @@ class CanvasDocument:
                     "page_width": self.page_width,
                     "page_height": self.page_height,
                     "measurement_scale": self.measurement_scale,
+                    "is_template": self.is_template,
                     "objects": [asdict(item) for item in self.objects],
                 },
                 ensure_ascii=False,
@@ -103,6 +105,7 @@ class CanvasDocument:
             page_width=float(data.get("page_width", A4_WIDTH)),
             page_height=float(data.get("page_height", A4_HEIGHT)),
             measurement_scale=max(1e-9, float(data.get("measurement_scale", 1.0))),
+            is_template=bool(data.get("is_template", False)),
             objects=[PageObject(**item) for item in data.get("objects", [])],
         )
 

@@ -22,6 +22,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     edge_coincidence_translation,
     expanded_group_indices,
     merge_mirrored_outlines,
+    normalize_external_text,
     objects_bounds,
     revolution_axis_target,
     revolution_stations,
@@ -53,6 +54,41 @@ def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
 
     assert restored.objects[1].text == "Bonjour Lou Còdi"
     assert len(PdfReader(target).pages) == 1
+
+
+def test_template_flag_round_trip(tmp_path: Path) -> None:
+    target = tmp_path / "courrier.cod"
+    CanvasDocument(is_template=True).save(target)
+
+    assert CanvasDocument.load(target).is_template is True
+
+
+def test_save_as_template_keeps_current_document_independent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    current = tmp_path / "travail.cod"
+    target = tmp_path / "modele_courrier.cod"
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(
+        objects=[PageObject("text", 0, 10, 10, 100, 30, text="Courrier")]
+    )
+    editor.project_path = current
+    editor.status = _StatusRecorder()
+    editor._commit_inline_editor = lambda **_kwargs: None
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.settings_path",
+        lambda: tmp_path / "configuration.json",
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.choose_save_path",
+        lambda *_args, **_kwargs: target,
+    )
+
+    assert editor._save_as_template() is True
+
+    assert CanvasDocument.load(target).is_template is True
+    assert editor.project_path == current
+    assert editor.document.is_template is False
 
 
 def test_save_as_creates_an_independent_project_without_overwriting_current(
@@ -554,3 +590,20 @@ def test_remove_legacy_line_only_hatch_group() -> None:
 
     assert editor.document.objects == [unrelated]
     assert "8 hachure(s) supprimée(s)" in editor.status.text
+
+
+def test_external_office_text_separators_become_line_breaks() -> None:
+    assert normalize_external_text("un\vdeux\ftrois\u2028quatre\x00") == (
+        "un\ndeux\ntrois\nquatre"
+    )
+
+
+def test_clipboard_image_file_uri_is_recognized(tmp_path: Path) -> None:
+    image = tmp_path / "une image.png"
+    image.write_bytes(b"not-needed-for-path-detection")
+
+    result = DocumentEditorWindow._clipboard_file_from_text(
+        f"copy\n{image.as_uri()}\n"
+    )
+
+    assert result == image

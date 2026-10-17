@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import math
 import shutil
 import subprocess
@@ -12,9 +13,10 @@ import webbrowser
 from itertools import pairwise
 from pathlib import Path
 from tkinter import messagebox, ttk
+from urllib.parse import unquote, urlparse
 
 import pymupdf
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageGrab, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
 from ..paths import module_output_directory
@@ -68,6 +70,15 @@ from .windowing import center_window, make_modal, maximize_window
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
+
+
+def normalize_external_text(value: str) -> str:
+    """Turn office/PDF clipboard separators into ordinary editable text."""
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    value = value.replace("\v", "\n").replace("\f", "\n")
+    value = value.replace("\u2028", "\n").replace("\u2029", "\n")
+    value = value.replace("\u00a0", " ")
+    return "".join(character for character in value if character in "\n\t" or ord(character) >= 32)
 
 
 def objects_bounds(objects: list[PageObject]) -> tuple[float, float, float, float]:
@@ -430,6 +441,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._drawing_rectangle = False
         self._rectangle_points: list[tuple[float, float]] = []
         self._rectangle_square = False
+        self._drawing_text = False
+        self._text_draw_start: tuple[float, float] | None = None
         self._modifier_keys: set[str] = set()
         self._context_menu_visible = False
         self._pending_corner_treatment: tuple[int, str, float] | None = None
@@ -453,10 +466,18 @@ class DocumentEditorWindow(tk.Toplevel):
         self._apply_toolbar_size()
         if project_path is not None:
             loaded = CanvasDocument.load(project_path)
+            opened_from_template = loaded.is_template
+            loaded.is_template = False
             self.document = loaded
             self._saved_document = copy.deepcopy(loaded)
-            self.project_path = project_path
-            self.status.configure(text=f"Projet ouvert : {project_path.name}")
+            self.project_path = None if opened_from_template else project_path
+            self.status.configure(
+                text=(
+                    f"Nouveau document créé depuis le modèle {project_path.name}. Enregistrer demandera un nouveau nom."
+                    if opened_from_template
+                    else f"Projet ouvert : {project_path.name}"
+                )
+            )
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self._toggle_properties_panel()
         translate_widget_tree(self)
@@ -525,9 +546,9 @@ class DocumentEditorWindow(tk.Toplevel):
             ("I", lambda: self._toggle("italic"), "Italique"),
             ("U̲", lambda: self._toggle("underline"), "Souligné"),
             ("S̶", lambda: self._toggle("strikethrough"), "Barré"),
-            ("≡←", lambda: self._align("left"), "Aligner à gauche"),
-            ("≡↔", lambda: self._align("center"), "Centrer"),
-            ("→≡", lambda: self._align("right"), "Aligner à droite"),
+            ("≡  ←", lambda: self._align("left"), "Aligner à gauche"),
+            ("← ≡ →", lambda: self._align("center"), "Centrer"),
+            ("→  ≡", lambda: self._align("right"), "Aligner à droite"),
             ("≡", lambda: self._align("justify"), "Justifier"),
             ("A−", lambda: self._change_font(-1), "Réduire la taille du texte"),
             ("A+", lambda: self._change_font(1), "Agrandir la taille du texte"),
@@ -658,8 +679,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._buttons(layout, (
             ("▯", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
             ("▭", lambda: self._set_orientation("landscape"), "Page en orientation paysage"),
-            ("⌃", lambda: self._add_preset("header"), "Ajouter un en-tête répété"),
-            ("⌄", lambda: self._add_preset("footer"), "Ajouter un pied de page répété"),
+            ("▔ H", lambda: self._add_preset("header"), "Ajouter un en-tête répété"),
+            ("▁ P", lambda: self._add_preset("footer"), "Ajouter un pied de page répété"),
             ("║", lambda: self._add_preset("left_margin"), "Ajouter une marge de notes"),
             ("🔗", self._link_text_frames, "Faire continuer le texte dans le cadre suivant"),
             ("⛓", self._unlink_text_frame, "Supprimer le chaînage du cadre"),
@@ -1034,9 +1055,11 @@ class DocumentEditorWindow(tk.Toplevel):
         for label, command, accelerator in (
             ("Nouveau document", self._new, "Ctrl+N"),
             ("Ouvrir un projet…", self._load, "Ctrl+O"),
+            ("Nouveau depuis un modèle…", self._load_template, ""),
             ("Importer un PDF…", self._import_pdf, ""),
             ("Enregistrer", self._save, "Ctrl+S"),
             ("Enregistrer sous…", self._save_as, "Ctrl+Maj+S"),
+            ("Enregistrer comme modèle…", self._save_as_template, ""),
         ):
             file_menu.add_command(label=label, command=command, accelerator=accelerator)
         file_menu.add_separator()
@@ -1168,10 +1191,11 @@ class DocumentEditorWindow(tk.Toplevel):
     def _apply_toolbar_size(self) -> None:
         size = self.toolbar_size_var.get()
         set_toolbar_size(size)
-        font_size, padding = (14, 8) if size == "large" else (11, 5)
+        # Even the compact variant must remain legible on a high-density screen.
+        font_size, padding = (16, 9) if size == "large" else (13, 7)
         ttk.Style(self).configure("EditorTool.TButton", padding=(padding, padding), font=("Sans", font_size))
         for button in self._tool_buttons:
-            if isinstance(button, tk.Button):
+            if isinstance(button, (tk.Button, tk.Menubutton)):
                 button.configure(font=("Sans", font_size), padx=padding + 2, pady=padding)
 
     def _color_menu_button(self, parent: tk.Misc, label: str, attribute: str, tooltip: str) -> None:
@@ -1397,27 +1421,131 @@ class DocumentEditorWindow(tk.Toplevel):
             self.selected = clicked
             self.selected_indices = {clicked}
             self._render()
-        selected_kind = (
-            self.document.objects[self.selected].kind
-            if self.selected is not None and self.selected < len(self.document.objects)
-            else ""
-        )
-        text_state = "normal" if selected_kind == "text" else "disabled"
-        link_state = (
-            "normal"
-            if self.selected is not None and bool(self.document.objects[self.selected].hyperlink)
-            else "disabled"
-        )
-        self.context_menu.entryconfigure("Chaîner vers une autre zone de texte…", state=text_state)
-        self.context_menu.entryconfigure("Délier la zone de texte", state=text_state)
-        self.context_menu.entryconfigure("↗ Ouvrir le lien hypertexte", state=link_state)
-        self.context_menu.entryconfigure("✕ Supprimer le lien hypertexte", state=link_state)
+        elif clicked is None:
+            self.selected = None
+            self.selected_indices.clear()
+            self._render()
+        self._populate_context_menu()
         try:
             self._context_menu_visible = True
             self.context_menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.context_menu.grab_release()
         self.after(120, self._watch_context_menu_focus)
+
+    def _populate_context_menu(self) -> None:
+        """Build a short menu tailored to the current selection."""
+        menu = self.context_menu
+        menu.delete(0, "end")
+        indices = sorted(self.selected_indices)
+        if not indices and self.selected is not None:
+            indices = [self.selected]
+        objects = [self.document.objects[index] for index in indices]
+
+        if not objects:
+            menu.add_command(label="Coller depuis le presse-papiers", command=self._paste_from_system_clipboard)
+            if self._object_clipboard:
+                menu.add_command(label="Coller une copie Lou Còdi", command=self._paste_objects)
+            menu.add_separator()
+            menu.add_command(label="Insérer une zone de texte", command=self._add_text)
+            menu.add_command(label="Insérer une image…", command=self._add_image)
+            menu.add_command(label="Afficher / masquer les propriétés", command=self._toggle_properties_panel)
+            return
+
+        kinds = {item.kind for item in objects}
+        one = objects[0] if len(objects) == 1 else None
+        if one is not None and one.kind in {"text", "table"}:
+            menu.add_command(label="Modifier le contenu", command=self._edit_selected)
+        menu.add_command(label="Copier", command=self._copy_objects)
+        menu.add_command(label="Dupliquer", command=self._duplicate_objects)
+
+        if one is not None and one.kind == "text":
+            menu.add_separator()
+            menu.add_command(label="Ouvrir ChatGPT", command=self._open_chatgpt_for_selected)
+            menu.add_command(label="Coller le résultat de ChatGPT", command=self._paste_chatgpt_result)
+            menu.add_command(label="Hyperlien sur un mot ou une sélection…", command=self._set_selected_hyperlink)
+            if one.hyperlink or one.text_links:
+                menu.add_command(label="Ouvrir le lien hypertexte", command=self._open_selected_hyperlink)
+                menu.add_command(label="Supprimer le lien hypertexte", command=self._remove_selected_hyperlink)
+            menu.add_command(label="Chaîner vers une autre zone de texte…", command=self._link_text_frames)
+            if one.flow_next_id:
+                menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
+
+        if one is not None and one.kind == "table":
+            structure = tk.Menu(menu, tearoff=False)
+            for label, action in (
+                ("Insérer une ligne au-dessus", "insert_row_before"),
+                ("Insérer une ligne en dessous", "insert_row_after"),
+                ("Supprimer la ligne active", "delete_row"),
+                ("Insérer une colonne à gauche", "insert_column_before"),
+                ("Insérer une colonne à droite", "insert_column_after"),
+                ("Supprimer la colonne active", "delete_column"),
+            ):
+                structure.add_command(label=label, command=lambda value=action: self._change_table_structure(value))
+            menu.add_cascade(label="Lignes et colonnes", menu=structure)
+
+        technical_kinds = {"shape", "polyline", "line", "dimension", "origin"}
+        if kinds & technical_kinds:
+            has_hatches = any(item.shape == "hatch" for item in objects)
+            groups = {item.group for item in objects if item.group}
+            if not has_hatches and groups:
+                has_hatches = any(
+                    item.group in groups
+                    and (item.shape == "hatch" or (item.kind == "line" and not item.shape))
+                    for item in self.document.objects
+                )
+            hatch = tk.Menu(menu, tearoff=False)
+            if has_hatches:
+                hatch.add_command(label="Enlever toutes les hachures", command=self._remove_selected_hatches)
+            if any(self._closed_outline(item) for item in objects):
+                for label, preset in (
+                    ("Hachures simples", "simple"),
+                    ("Hachures croisées", "cross"),
+                    ("Aluminium", "aluminium"),
+                    ("Personnalisées…", "custom"),
+                ):
+                    hatch.add_command(label=label, command=lambda value=preset: self._hatch_selected(value))
+            if hatch.index("end") is not None:
+                menu.add_cascade(label="Hachures", menu=hatch)
+
+        if len(objects) > 1:
+            menu.add_command(label="Assembler la sélection", command=self._group_selected)
+        if any(item.group for item in objects):
+            menu.add_command(label="Dissocier l’assemblage", command=self._ungroup_selected)
+
+        transformable = kinds - {"table"}
+        if transformable:
+            rotation = tk.Menu(menu, tearoff=False)
+            for degrees in (15, 30, 45, 90, 180):
+                rotation.add_command(label=f"Tourner de {degrees}°", command=lambda value=degrees: self._rotate_selected_degrees(value))
+            rotation.add_separator()
+            rotation.add_command(label="Angle libre…", command=self._rotate_free)
+            rotation.add_command(label="Tourner avec copie…", command=self._rotate_with_copy)
+            menu.add_cascade(label="Rotation", menu=rotation)
+            symmetry = tk.Menu(menu, tearoff=False)
+            symmetry.add_command(label="Horizontale", command=lambda: self._mirror_selected("horizontal"))
+            symmetry.add_command(label="Verticale", command=lambda: self._mirror_selected("vertical"))
+            menu.add_cascade(label="Symétrie", menu=symmetry)
+
+        appearance = tk.Menu(menu, tearoff=False)
+        appearance.add_command(label="Fond transparent", command=lambda: self._set_object_color("fill", "transparent"))
+        appearance.add_command(label="Couleur du fond…", command=lambda: self._choose_color("fill"))
+        appearance.add_command(label="Sans bordure", command=lambda: self._set_border_width_value(0.0))
+        appearance.add_command(label="Couleur de bordure…", command=lambda: self._choose_color("border_color"))
+        menu.add_cascade(label="Apparence", menu=appearance)
+        level = tk.Menu(menu, tearoff=False)
+        level.add_command(label="Monter d’un niveau", command=lambda: self._change_selected_level(1))
+        level.add_command(label="Descendre d’un niveau", command=lambda: self._change_selected_level(-1))
+        level.add_command(label="Placer au niveau 0", command=lambda: self._set_selected_level(0))
+        menu.add_cascade(label="Niveau (plan)", menu=level)
+        if one is not None and one.kind != "text":
+            menu.add_command(label="Lien hypertexte sur l’objet…", command=self._set_selected_hyperlink)
+            if one.hyperlink:
+                menu.add_command(label="Ouvrir le lien hypertexte", command=self._open_selected_hyperlink)
+                menu.add_command(label="Supprimer le lien hypertexte", command=self._remove_selected_hyperlink)
+        menu.add_separator()
+        menu.add_command(label="Propriétés", command=self._toggle_properties_panel)
+        menu.add_command(label="Supprimer", command=self._delete_selected)
 
     def _schedule_context_menu_focus_check(self, _event: tk.Event[tk.Misc]) -> None:
         if self._context_menu_visible:
@@ -2162,21 +2290,13 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _add_text(self) -> None:
-        width, height = self._page_size()
-        occupied = [
-            item
-            for item in self.document.objects
-            if item.kind == "text" and self.current_page in pages_for_object(item, self.document.page_count)
-        ]
-        x, y = 70.0, 80.0
-        for step in range(1, 25):
-            if not any(abs(item.x - x) < 12 and abs(item.y - y) < 12 for item in occupied):
-                break
-            offset = step * 22
-            x = min(max(20.0, width - 300.0), 70.0 + offset)
-            y = min(max(20.0, height - 100.0), 80.0 + offset)
-        self._add_object(PageObject("text", self.current_page, x, y, 280, 80))
-        self.after_idle(lambda: self._start_inline_text_editor(self.document.objects[self.selected]) if self.selected is not None else None)
+        self._cancel_current_action()
+        self._drawing_text = True
+        self._text_draw_start = None
+        self.canvas.configure(cursor="crosshair")
+        self.status.configure(
+            text="Zone de texte : cliquez à son emplacement puis tirez jusqu’à la taille souhaitée. Échap annule."
+        )
 
     def _open_chatgpt_for_selected(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
@@ -2775,6 +2895,13 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _cancel_current_action(self, _event: object = None) -> str:
         self._dismiss_context_menu()
+        if self._drawing_text:
+            self._drawing_text = False
+            self._text_draw_start = None
+            self.canvas.delete("text-frame-preview")
+            self.canvas.configure(cursor="")
+            self.status.configure(text="Création de la zone de texte annulée.")
+            return "break"
         if self._measurement_mode:
             self._measurement_mode = ""
             self._measurement_points.clear()
@@ -3300,6 +3427,14 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._commit_inline_editor(render=False)
         self.canvas.focus_set()
+        if self._drawing_text:
+            page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+            page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+            width, height = self._page_size()
+            if 0 <= page_x <= width and 0 <= page_y <= height:
+                self._text_draw_start = (page_x, page_y)
+                self.canvas.delete("text-frame-preview")
+            return
         if self._measurement_mode:
             page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
             page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
@@ -3556,6 +3691,28 @@ class DocumentEditorWindow(tk.Toplevel):
         return "break"
 
     def _drag(self, event: tk.Event[tk.Misc]) -> None:
+        if self._drawing_text and self._text_draw_start is not None:
+            start_x, start_y = self._text_draw_start
+            page_width, page_height = self._page_size()
+            end_x = max(0.0, min(page_width, (self.canvas.canvasx(event.x) - self.page_x) / self.zoom))
+            end_y = max(0.0, min(page_height, (self.canvas.canvasy(event.y) - self.page_y) / self.zoom))
+            self.canvas.delete("text-frame-preview")
+            self.canvas.create_rectangle(
+                self.page_x + start_x * self.zoom,
+                self.page_y + start_y * self.zoom,
+                self.page_x + end_x * self.zoom,
+                self.page_y + end_y * self.zoom,
+                outline="#1769AA",
+                width=2,
+                dash=(5, 3),
+                fill="#DCEBFA",
+                stipple="gray25",
+                tags=("text-frame-preview",),
+            )
+            width_mm = abs(end_x - start_x) * 25.4 / 72
+            height_mm = abs(end_y - start_y) * 25.4 / 72
+            self.status.configure(text=f"Zone de texte : {width_mm:.1f} × {height_mm:.1f} mm.")
+            return
         if self._vertex_drag_origin is not None:
             object_index, point_index, _original_points = self._vertex_drag_origin
             item = self.document.objects[object_index]
@@ -3706,6 +3863,30 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_geometry_fields(self.document.objects[self.selected])
 
     def _release(self, event: tk.Event[tk.Misc]) -> None:
+        if self._drawing_text and self._text_draw_start is not None:
+            start_x, start_y = self._text_draw_start
+            page_width, page_height = self._page_size()
+            end_x = max(0.0, min(page_width, (self.canvas.canvasx(event.x) - self.page_x) / self.zoom))
+            end_y = max(0.0, min(page_height, (self.canvas.canvasy(event.y) - self.page_y) / self.zoom))
+            left, top = min(start_x, end_x), min(start_y, end_y)
+            width, height = abs(end_x - start_x), abs(end_y - start_y)
+            if width < 8 or height < 8:
+                left = min(left, max(0.0, page_width - 40.0))
+                top = min(top, max(0.0, page_height - 30.0))
+                width = min(280.0, page_width - left)
+                height = min(80.0, page_height - top)
+            self._drawing_text = False
+            self._text_draw_start = None
+            self.canvas.delete("text-frame-preview")
+            self.canvas.configure(cursor="")
+            self._add_object(PageObject("text", self.current_page, left, top, max(40, width), max(30, height)))
+            self.status.configure(text="Zone de texte créée. Saisissez son contenu.")
+            self.after_idle(
+                lambda: self._start_inline_text_editor(self.document.objects[self.selected])
+                if self.selected is not None
+                else None
+            )
+            return
         if self._vertex_drag_origin is not None:
             object_index, _point_index, original_points = self._vertex_drag_origin
             self._vertex_drag_origin = None
@@ -3855,6 +4036,7 @@ class DocumentEditorWindow(tk.Toplevel):
             exportselection=False,
         )
         widget.insert("1.0", item.text)
+        widget.bind("<Control-v>", self._paste_clean_text_widget)
         self._editing_widget = widget
         self._editing_object_id = item.object_id
         self._editing_original_text = item.text
@@ -4521,6 +4703,7 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         widget.pack(fill="both", expand=True, padx=14, pady=(0, 8))
         widget.insert("1.0", item.text)
+        widget.bind("<Control-v>", self._paste_clean_text_widget)
         actions = tk.Frame(dialog, bg=BACKGROUND)
         actions.pack(fill="x", padx=14, pady=(0, 10))
         distribution = tk.Label(actions, bg=BACKGROUND, fg="#385571", font=("Sans", 9))
@@ -4582,6 +4765,22 @@ class DocumentEditorWindow(tk.Toplevel):
         dialog.protocol("WM_DELETE_WINDOW", self._commit_inline_editor)
         dialog.lift()
         widget.focus_set()
+
+    def _paste_clean_text_widget(self, event: tk.Event[tk.Text]) -> str | None:
+        """Paste office/PDF text without visible control-character squares."""
+        try:
+            value = normalize_external_text(self.clipboard_get())
+        except tk.TclError:
+            return None
+        if not value or value == "LOUCODI_OBJECTS":
+            return "break"
+        widget = event.widget
+        try:
+            widget.delete("sel.first", "sel.last")
+        except tk.TclError:
+            pass
+        widget.insert("insert", value)
+        return "break"
 
     def _redraw_text_chain(self, root: PageObject) -> None:
         chain_ids = {root.object_id}
@@ -4851,6 +5050,8 @@ class DocumentEditorWindow(tk.Toplevel):
             self.status.configure(text="Sélectionnez un ou plusieurs objets à copier.")
             return
         self._object_clipboard = [copy.deepcopy(self.document.objects[index]) for index in indices]
+        self.clipboard_clear()
+        self.clipboard_append("LOUCODI_OBJECTS")
         self.status.configure(
             text=f"{len(self._object_clipboard)} objet(s) copié(s). Changez de page puis utilisez Coller."
         )
@@ -4864,8 +5065,127 @@ class DocumentEditorWindow(tk.Toplevel):
     def _paste_shortcut(self, _event: object = None) -> str | None:
         if isinstance(self.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
             return None
-        self._paste_objects()
+        self._paste_from_system_clipboard()
         return "break"
+
+    def _clipboard_image(self) -> Image.Image | None:
+        try:
+            content = ImageGrab.grabclipboard()
+        except (OSError, NotImplementedError):
+            content = None
+        if isinstance(content, Image.Image):
+            return content.copy()
+        if isinstance(content, list):
+            for raw_path in content:
+                path = Path(raw_path)
+                if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"} and path.is_file():
+                    with Image.open(path) as source:
+                        return source.copy()
+        for mime_type in ("image/png", "image/jpeg"):
+            try:
+                raw = self.tk.call("selection", "get", "-selection", "CLIPBOARD", "-type", mime_type)
+                if isinstance(raw, bytes):
+                    with Image.open(io.BytesIO(raw)) as source:
+                        return source.copy()
+            except (tk.TclError, OSError, ValueError):
+                continue
+        commands = []
+        if shutil.which("wl-paste"):
+            commands.append(["wl-paste", "--no-newline", "--type", "image/png"])
+        if shutil.which("xclip"):
+            commands.append(["xclip", "-selection", "clipboard", "-t", "image/png", "-o"])
+        for command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    check=False,
+                    timeout=3,
+                )
+                if result.returncode == 0 and result.stdout:
+                    with Image.open(io.BytesIO(result.stdout)) as source:
+                        return source.copy()
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                continue
+        return None
+
+    def _store_clipboard_image(self, image: Image.Image) -> Path:
+        directory = module_output_directory("Document Studio") / "Images collées"
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"image_collee_{uuid.uuid4().hex[:10]}.png"
+        image.convert("RGBA").save(target, "PNG")
+        return target
+
+    @staticmethod
+    def _clipboard_file_from_text(value: str) -> Path | None:
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        if lines and lines[0].lower() in {"copy", "cut"}:
+            lines = lines[1:]
+        for line in lines:
+            if line.startswith("file://"):
+                parsed = urlparse(line)
+                candidate = Path(unquote(parsed.path))
+            else:
+                candidate = Path(line)
+            if candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"} and candidate.is_file():
+                return candidate
+        return None
+
+    def _clipboard_image_file(self, text_value: str = "") -> Path | None:
+        candidate = self._clipboard_file_from_text(text_value) if text_value else None
+        if candidate is not None:
+            return candidate
+        for target_type in ("x-special/gnome-copied-files", "text/uri-list"):
+            try:
+                raw = self.tk.call(
+                    "selection", "get", "-selection", "CLIPBOARD", "-type", target_type
+                )
+            except tk.TclError:
+                continue
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            candidate = self._clipboard_file_from_text(str(raw))
+            if candidate is not None:
+                return candidate
+        return None
+
+    def _paste_from_system_clipboard(self) -> None:
+        try:
+            text_value = self.clipboard_get()
+        except tk.TclError:
+            text_value = ""
+        if text_value == "LOUCODI_OBJECTS" and self._object_clipboard:
+            self._paste_objects()
+            return
+        image = self._clipboard_image()
+        image_path = self._clipboard_image_file(text_value)
+        if image is not None or image_path is not None:
+            if image is not None:
+                image_path = self._store_clipboard_image(image)
+                width, height = image.size
+            else:
+                assert image_path is not None
+                with Image.open(image_path) as source:
+                    width, height = source.size
+            display_width = min(320.0, max(80.0, float(width)))
+            display_height = min(240.0, max(60.0, display_width * height / max(1, width)))
+            self._add_object(PageObject("image", self.current_page, 70, 80, display_width, display_height, image_path=str(image_path)))
+            self.status.configure(text="Image collée depuis le presse-papiers.")
+            return
+        value = normalize_external_text(text_value).strip("\n")
+        if not value:
+            self.status.configure(text="Le presse-papiers ne contient ni texte ni image exploitable.")
+            return
+        if self.selected is not None and self.document.objects[self.selected].kind == "text":
+            self._checkpoint()
+            target = self.document.objects[self.selected]
+            separator = "\n" if target.text and not target.text.endswith("\n") else ""
+            target.text += separator + value
+            self._render()
+            self.status.configure(text="Texte collé à la suite de la zone sélectionnée.")
+            return
+        self._add_object(PageObject("text", self.current_page, 70, 80, 320, 100, text=value))
+        self.status.configure(text="Texte collé dans une nouvelle zone.")
 
     def _paste_objects(self) -> None:
         if not self._object_clipboard:
@@ -7524,10 +7844,63 @@ class DocumentEditorWindow(tk.Toplevel):
         return True
 
     def _write_project(self, path: Path) -> None:
+        self.document.is_template = False
         self.document.save(path)
         self.project_path = path
         self._saved_document = copy.deepcopy(self.document)
         self.status.configure(text=f"Projet enregistré : {path.name}")
+
+    def _save_as_template(self) -> bool:
+        self._commit_inline_editor(render=False)
+        directory = settings_path().parent / "modeles"
+        directory.mkdir(parents=True, exist_ok=True)
+        initial_name = f"modele_{self.project_path.stem}" if self.project_path else "nouveau_modele"
+        selected = choose_save_path(self, directory, initial_name, ".cod")
+        if not selected:
+            return False
+        template = copy.deepcopy(self.document)
+        template.is_template = True
+        template.save(Path(selected))
+        self.status.configure(
+            text=f"Modèle enregistré : {Path(selected).name}. Le document courant reste indépendant."
+        )
+        return True
+
+    def _use_loaded_document(self, loaded: CanvasDocument, path: Path) -> None:
+        opened_from_template = loaded.is_template
+        loaded.is_template = False
+        self.document = loaded
+        self.project_path = None if opened_from_template else path
+        self._saved_document = copy.deepcopy(loaded)
+        self.current_page, self.selected = 0, None
+        self.selected_indices.clear()
+        self.status.configure(
+            text=(
+                f"Nouveau document créé depuis le modèle {path.name}. Enregistrer demandera un nouveau nom."
+                if opened_from_template
+                else f"Projet ouvert : {path.name}"
+            )
+        )
+        self._render()
+
+    def _load_template(self) -> None:
+        directory = settings_path().parent / "modeles"
+        directory.mkdir(parents=True, exist_ok=True)
+        files = choose_documents(
+            self,
+            {".cod", ".loucodi-document"},
+            initial_directory=directory,
+        )
+        if not files:
+            return
+        try:
+            loaded = CanvasDocument.load(files[0])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            messagebox.showerror("Modèle illisible", str(exc), parent=self)
+            return
+        loaded.is_template = True
+        self._checkpoint()
+        self._use_loaded_document(loaded, files[0])
 
     def _load(self) -> None:
         files = choose_documents(
@@ -7543,12 +7916,7 @@ class DocumentEditorWindow(tk.Toplevel):
             messagebox.showerror("Document illisible", str(exc), parent=self)
             return
         self._checkpoint()
-        self.document, self.project_path = loaded, files[0]
-        self._saved_document = copy.deepcopy(loaded)
-        self.current_page, self.selected = 0, None
-        self.selected_indices.clear()
-        self.status.configure(text=f"Projet ouvert : {files[0].name}")
-        self._render()
+        self._use_loaded_document(loaded, files[0])
 
     def _choose_export(self, extension: str, label: str) -> Path | None:
         stem = self.project_path.stem if self.project_path else "nouveau_document"
