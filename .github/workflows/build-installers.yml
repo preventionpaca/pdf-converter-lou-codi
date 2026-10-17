@@ -30,6 +30,8 @@ jobs:
           LOU_CODI_BUNDLE_SPEECH: "1"
       - if: runner.os == 'Linux'
         run: bash packaging/linux/make-bundle.sh
+      - if: runner.os == 'Linux'
+        run: bash packaging/linux/make-deb.sh
       - if: runner.os == 'Windows'
         shell: pwsh
         run: >-
@@ -39,6 +41,14 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: packaging/windows/make-bundle.ps1
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Version = python -c "import sys; sys.path.insert(0, r'${{ github.workspace }}\src'); from lou_codi_pdf_converter import __version__; print(__version__)"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$Version" "/DProjectDir=${{ github.workspace }}" packaging/windows/lou-codi-workshop.iss
       - uses: actions/upload-artifact@v4
         with:
           name: lou-codi-workshop-${{ matrix.artifact }}
