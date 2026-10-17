@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from ..i18n import tr, translate_widget_tree
-from ..paths import collision_free_target, downloads_directory
+from ..paths import collision_free_target, module_output_directory
 from ..services.pdf_inspection import PdfPasswordRequired, inspect_pdf
 from ..services.pdf_to_office import convert_pdf_to_docx, convert_pdf_to_xlsx
 from ..system import open_path
@@ -22,6 +23,19 @@ BACKGROUND = "#F0F4F9"
 MUTED = "#597089"
 
 
+def _docx_progress_fraction(stage: str, current: int | None, total: int | None) -> float:
+    ratio = (current / total) if current is not None and total else 0.0
+    if stage == "Ouverture du PDF":
+        return 0.02
+    if stage == "Analyse de la mise en page":
+        return 0.08
+    if stage == "Lecture des pages":
+        return 0.10 + 0.65 * ratio
+    if stage == "Création du document Word":
+        return 0.75 + 0.25 * ratio
+    return 0.01
+
+
 @dataclass(frozen=True)
 class ConversionResult:
     source: Path
@@ -31,8 +45,8 @@ class ConversionResult:
 
 class PdfToOfficeWindow(tk.Toplevel):
     def __init__(self, parent: tk.Misc) -> None:
-        super().__init__(parent, class_="LouCodiPdfConverter")
-        self.title("PDF vers Office — PDF Converter Lou Còdi")
+        super().__init__(parent, class_="Loucodiworkshop")
+        self.title("PDF vers Office — Lou Còdi Workshop")
         self.geometry("960x680")
         self.minsize(760, 540)
         self.configure(bg=BACKGROUND)
@@ -42,8 +56,10 @@ class PdfToOfficeWindow(tk.Toplevel):
         self.output_by_source: dict[Path, Path] = {}
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.running = False
+        self.conversion_started_at: float | None = None
+        self.last_progress_at: float | None = None
         self.mode = tk.StringVar(value="docx")
-        self.destination = tk.StringVar(value=str(downloads_directory()))
+        self.destination = tk.StringVar(value=str(module_output_directory("PDF vers Office")))
         self.password = tk.StringVar()
         self._build()
         translate_widget_tree(self)
@@ -159,12 +175,14 @@ class PdfToOfficeWindow(tk.Toplevel):
             messagebox.showerror("Dossier introuvable", "Choisissez un dossier de destination existant.", parent=self)
             return
         self.running = True
+        self.conversion_started_at = time.monotonic()
+        self.last_progress_at = self.conversion_started_at
         self.generated.clear()
         self.output_by_source.clear()
         self.open_button.configure(state="disabled")
         self.convert_button.configure(state="disabled")
-        self.progress.configure(mode="indeterminate", value=0)
-        self.progress.start(12)
+        self.progress.stop()
+        self.progress.configure(mode="determinate", value=0)
         threading.Thread(
             target=self._worker,
             args=(list(self.files), destination, self.mode.get(), self.password.get() or None),
@@ -182,7 +200,14 @@ class PdfToOfficeWindow(tk.Toplevel):
                 if inspection.scanned_likely:
                     raise ValueError("PDF scanné probable : OCR local non encore disponible.")
                 if mode == "docx":
-                    convert_pdf_to_docx(source, target, password)
+                    def report_progress(stage: str, current: int | None, total: int | None) -> None:
+                        if current is not None and total:
+                            detail = f"{stage} — page {current}/{total}"
+                        else:
+                            detail = stage
+                        self.events.put(("progress", (position, len(files), detail, current, total)))
+
+                    convert_pdf_to_docx(source, target, password, report_progress)
                 else:
                     convert_pdf_to_xlsx(source, target, password)
                 results.append(ConversionResult(source, target, None))
@@ -209,15 +234,35 @@ class PdfToOfficeWindow(tk.Toplevel):
                 elif kind == "converted":
                     source, target = value  # type: ignore[misc]
                     self.output_by_source[source] = target
+                elif kind == "progress":
+                    file_position, file_count, detail, current, total = value  # type: ignore[misc]
+                    self.last_progress_at = time.monotonic()
+                    file_fraction = _docx_progress_fraction(detail.split(" — ", 1)[0], current, total)
+                    overall = ((file_position - 1) + file_fraction) / file_count * 100
+                    self.progress.configure(value=max(1, min(99, overall)))
+                    self.status.configure(
+                        text=tr(f"Conversion {file_position}/{file_count} : {detail}")
+                    )
                 elif kind == "finished":
                     self._finish(value)  # type: ignore[arg-type]
         except queue.Empty:
             pass
+        if self.running and self.last_progress_at is not None:
+            stalled_for = time.monotonic() - self.last_progress_at
+            if stalled_for >= 30:
+                elapsed = int(time.monotonic() - (self.conversion_started_at or time.monotonic()))
+                self.status.configure(
+                    text=tr(
+                        f"Conversion toujours en cours ({elapsed} s) — ce PDF est complexe ou pose un problème."
+                    )
+                )
         if self.winfo_exists():
             self.after(100, self._poll)
 
     def _finish(self, results: list[ConversionResult]) -> None:
         self.running = False
+        self.conversion_started_at = None
+        self.last_progress_at = None
         self.progress.stop()
         self.progress.configure(mode="determinate", value=100)
         self.convert_button.configure(state="normal")

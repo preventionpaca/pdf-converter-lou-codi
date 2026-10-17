@@ -1,16 +1,41 @@
+import copy
+from itertools import pairwise
 from pathlib import Path
 
 from pypdf import PdfReader
 
 from lou_codi_pdf_converter.services.canvas_document import (
-    CanvasDocument,
     FLOW_BREAK_TOKEN,
+    CanvasDocument,
     PageObject,
     export_canvas_pdf,
     flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
+    text_frame_line_capacity,
+    wrapped_text_lines,
 )
+from lou_codi_pdf_converter.services.geometry import Segment
+from lou_codi_pdf_converter.ui.document_editor import (
+    DocumentEditorWindow,
+    driving_dimension_translation,
+    edge_coincidence_translation,
+    expanded_group_indices,
+    merge_mirrored_outlines,
+    objects_bounds,
+    revolution_axis_target,
+    revolution_stations,
+    transform_object_assembly,
+    union_axis_aligned_rectangles,
+)
+
+
+class _StatusRecorder:
+    def __init__(self) -> None:
+        self.text = ""
+
+    def configure(self, *, text: str) -> None:
+        self.text = text
 
 
 def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
@@ -30,6 +55,301 @@ def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
     assert len(PdfReader(target).pages) == 1
 
 
+def test_save_as_creates_an_independent_project_without_overwriting_current(
+    tmp_path: Path, monkeypatch
+) -> None:
+    original = tmp_path / "essai.loucodi-document"
+    original_document = CanvasDocument(objects=[PageObject("text", 0, 10, 10, 100, 30, text="Original")])
+    original_document.save(original)
+
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[PageObject("text", 0, 10, 10, 100, 30, text="Copie modifiée")])
+    editor.project_path = original
+    editor.status = _StatusRecorder()
+    editor._commit_inline_editor = lambda **_kwargs: None
+    editor._project_directory = lambda: tmp_path
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.choose_save_path",
+        lambda *_args, **_kwargs: tmp_path / "essai-conserve.loucodi-document",
+    )
+
+    editor._save_as()
+
+    copied = tmp_path / "essai-conserve.loucodi-document"
+    assert editor.project_path == copied
+    assert CanvasDocument.load(original).objects[0].text == "Original"
+    assert CanvasDocument.load(copied).objects[0].text == "Copie modifiée"
+    assert editor.status.text == "Projet enregistré : essai-conserve.loucodi-document"
+
+
+def test_unsaved_change_detection_compares_with_last_saved_document() -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument()
+    editor._saved_document = copy.deepcopy(editor.document)
+    editor._editing_widget = None
+
+    assert editor._has_unsaved_changes() is False
+
+    editor.document.objects.append(PageObject("text", 0, 10, 10, 100, 30, text="Nouveau"))
+
+    assert editor._has_unsaved_changes() is True
+
+
+def test_measurement_scale_survives_project_roundtrip(tmp_path: Path) -> None:
+    target = tmp_path / "plan.loucodi-document"
+    document = CanvasDocument(measurement_scale=25.0)
+
+    document.save(target)
+
+    assert CanvasDocument.load(target).measurement_scale == 25.0
+
+
+def test_object_level_survives_project_roundtrip(tmp_path: Path) -> None:
+    target = tmp_path / "plans.loucodi-document"
+    document = CanvasDocument(
+        objects=[PageObject("shape", 0, 10, 10, 20, 20, level=1000)]
+    )
+
+    document.save(target)
+
+    assert CanvasDocument.load(target).objects[0].level == 1000
+
+
+def test_table_cells_keep_multiline_text_links_and_images(tmp_path: Path) -> None:
+    target = tmp_path / "tableau.loucodi-document"
+    document = CanvasDocument(
+        objects=[
+            PageObject(
+                "table", 0, 10, 10, 200, 100,
+                table_cells=[[{
+                    "text": "Première ligne\nDeuxième ligne",
+                    "hyperlink": "https://example.com",
+                    "image_path": "/tmp/exemple.png",
+                }]],
+            )
+        ]
+    )
+
+    document.save(target)
+
+    cell = CanvasDocument.load(target).objects[0].table_cells[0][0]
+    assert cell["text"] == "Première ligne\nDeuxième ligne"
+    assert cell["hyperlink"] == "https://example.com"
+    assert cell["image_path"] == "/tmp/exemple.png"
+
+
+def test_table_border_settings_survive_project_roundtrip(tmp_path: Path) -> None:
+    target = tmp_path / "bordures.loucodi-document"
+    table = PageObject(
+        "table", 0, 10, 10, 200, 100,
+        table_outer_border_width=3.0,
+        table_inner_border_width=0.5,
+        table_row_border_widths={"1": 2.5},
+        table_border_ranges=[{"top": 0.0, "left": 0.0, "bottom": 1.0, "right": 2.0, "width": 3.0}],
+    )
+
+    CanvasDocument(objects=[table]).save(target)
+    restored = CanvasDocument.load(target).objects[0]
+
+    assert restored.table_outer_border_width == 3.0
+    assert restored.table_inner_border_width == 0.5
+    assert restored.table_row_border_widths == {"1": 2.5}
+    assert restored.table_border_ranges == [
+        {"top": 0.0, "left": 0.0, "bottom": 1.0, "right": 2.0, "width": 3.0}
+    ]
+
+
+def test_merged_table_cells_and_alignment_survive_roundtrip_and_pdf_export(tmp_path: Path) -> None:
+    project = tmp_path / "cellules-fusionnees.loucodi-document"
+    target = tmp_path / "cellules-fusionnees.pdf"
+    table = PageObject(
+        "table", 0, 20, 20, 240, 120,
+        table_cells=[
+            [
+                {"text": "Titre", "horizontal_align": "center", "vertical_align": "middle"},
+                {"text": ""},
+            ],
+            [{"text": "A"}, {"text": "B"}],
+        ],
+        table_merges=[[0, 0, 1, 2]],
+    )
+
+    CanvasDocument(objects=[table]).save(project)
+    restored_document = CanvasDocument.load(project)
+    restored = restored_document.objects[0]
+    export_canvas_pdf(restored_document, target)
+
+    assert restored.table_merges == [[0, 0, 1, 2]]
+    assert restored.table_cells[0][0]["horizontal_align"] == "center"
+    assert restored.table_cells[0][0]["vertical_align"] == "middle"
+    assert target.is_file()
+
+
+def test_pdf_export_contains_a_standard_clickable_uri_link(tmp_path: Path) -> None:
+    target = tmp_path / "lien.pdf"
+    document = CanvasDocument(
+        objects=[
+            PageObject(
+                "text", 0, 20, 20, 180, 40,
+                text="Site Lou Còdi", hyperlink="https://example.com",
+            )
+        ]
+    )
+
+    export_canvas_pdf(document, target)
+
+    annotation = PdfReader(target).pages[0]["/Annots"][0].get_object()
+    assert annotation["/Subtype"] == "/Link"
+    assert annotation["/A"]["/S"] == "/URI"
+    assert annotation["/A"]["/URI"] == "https://example.com"
+
+
+def test_pdf_export_links_only_the_selected_text_passage(tmp_path: Path) -> None:
+    target = tmp_path / "liens-dans-texte.pdf"
+    text = "Visiter Google puis Wikipédia"
+    document = CanvasDocument(
+        objects=[
+            PageObject(
+                "text", 0, 20, 20, 260, 50, text=text,
+                text_links=[
+                    {"start": 8, "end": 14, "hyperlink": "https://google.com"},
+                    {"start": 20, "end": 29, "hyperlink": "https://wikipedia.org"},
+                ],
+            )
+        ]
+    )
+
+    export_canvas_pdf(document, target)
+
+    annotations = [annotation.get_object() for annotation in PdfReader(target).pages[0]["/Annots"]]
+    assert {annotation["/A"]["/URI"] for annotation in annotations} == {
+        "https://google.com", "https://wikipedia.org"
+    }
+
+
+def test_object_assembly_uses_a_bounding_rectangle_and_moves_as_one() -> None:
+    first = PageObject("line", 0, 40, 20, -20, 40)
+    second = PageObject("shape", 0, 80, 50, 30, 20, shape="rectangle")
+
+    assert objects_bounds([first, second]) == (20, 20, 90, 50)
+
+    transform_object_assembly([first, second], 100, 200, 180, 100)
+
+    assert objects_bounds([first, second]) == (100, 200, 180, 100)
+    assert first.width == -40
+    assert second.x == 220
+
+
+def test_selecting_one_member_expands_symmetry_to_the_whole_assembly() -> None:
+    group = "assembly-1"
+    objects = [
+        PageObject("shape", 0, 0, 0, 20, 20, group=group),
+        PageObject("shape", 0, 30, 0, 20, 20, group=group),
+        PageObject("line", 0, 60, 0, 0, 100, shape="axis"),
+    ]
+
+    assert expanded_group_indices(objects, {0, 2}) == {0, 1, 2}
+
+
+def test_guided_edge_coincidence_only_requires_a_perpendicular_move() -> None:
+    fixed = Segment(10, 50, 110, 50)
+    moving = Segment(60, 20, 90, 20)
+
+    assert edge_coincidence_translation(fixed, moving) == (0, 30)
+
+
+def test_driving_dimension_keeps_the_moving_object_on_its_current_side() -> None:
+    fixed = Segment(10, 50, 110, 50)
+    moving = Segment(60, 20, 90, 20)
+
+    dx, dy, start, end = driving_dimension_translation(
+        fixed, moving, (75, 5), 20
+    )
+
+    assert (dx, dy) == (0, 10)
+    assert start == (75, 50)
+    assert end == (75, 30)
+
+
+def test_two_touching_rectangles_become_one_shoulder_profile() -> None:
+    contour = union_axis_aligned_rectangles(
+        [(0, 20, 100, 100), (30, 0, 70, 20)]
+    )
+
+    assert contour[0] == contour[-1]
+    assert set(contour[:-1]) == {
+        (30, 0),
+        (70, 0),
+        (70, 20),
+        (100, 20),
+        (100, 100),
+        (0, 100),
+        (0, 20),
+        (30, 20),
+    }
+
+
+def test_revolution_stations_use_the_largest_radius_at_each_abscissa() -> None:
+    outline = [(0, 50), (0, 10), (40, 20), (40, 50), (0, 50)]
+
+    assert revolution_stations(outline, 50) == [
+        (0, 0),
+        (0, 40),
+        (40, 30),
+        (40, 0),
+    ]
+
+
+def test_revolution_axis_guard_uses_symmetry_for_full_profile_and_edge_for_half() -> None:
+    full = [[(0, 10), (40, 10), (40, 90), (0, 90), (0, 10)]]
+    half = [[(0, 10), (40, 20), (40, 50), (0, 50), (0, 10)]]
+
+    assert revolution_axis_target(full, full_profile=True, current_axis_y=35) == (
+        50,
+        "plan de symétrie",
+    )
+    assert revolution_axis_target(half, full_profile=False, current_axis_y=47) == (
+        50,
+        "bord de fermeture",
+    )
+
+
+def test_mirrored_profiles_merge_without_the_internal_axis_line() -> None:
+    upper = [(0, 50), (0, 10), (40, 20), (40, 50), (0, 50)]
+    lower = [(0, 50), (40, 50), (40, 80), (0, 90), (0, 50)]
+
+    contour = merge_mirrored_outlines([upper, lower], 50)
+
+    assert contour[0] == contour[-1]
+    assert all(
+        not (start[1] == end[1] == 50)
+        for start, end in pairwise(contour)
+    )
+
+
+def test_mirrored_profile_merge_is_stable_with_reversed_points_and_rounding() -> None:
+    upper = [(0, 50), (0, 10), (20, 10), (40, 30), (40, 50), (0, 50)]
+    lower = list(
+        reversed([(0, 50.0000001), (0, 90), (20, 90), (40, 70), (40, 50.0000001), (0, 50.0000001)])
+    )
+
+    contour = merge_mirrored_outlines([lower, upper], 50)
+
+    assert (20, 10) in contour
+    assert (20, 90) in contour
+    assert contour[0] == contour[-1]
+
+
+def test_mirrored_profile_merge_reconciles_duplicate_edges_and_axial_limits() -> None:
+    upper = [(0, 50), (0, 10), (40, 20), (40, 50), (0, 50), (40, 50), (0, 50)]
+    lower = [(0.02, 50), (40.03, 50), (40.03, 80), (0.02, 90), (0.02, 50)]
+
+    contour = merge_mirrored_outlines([upper, lower], 50)
+
+    assert contour[0] == contour[-1]
+    assert contour[0][1] == 50
+
+
 def test_page_scope_supports_all_and_ranges() -> None:
     item = PageObject("text", 0, 0, 0, 100, 30, text="Entête", pages="all")
     assert pages_for_object(item, 4) == [0, 1, 2, 3]
@@ -44,7 +364,7 @@ def test_dynamic_page_fields_are_resolved() -> None:
 
 def test_text_can_flow_between_linked_frames() -> None:
     first = PageObject("text", 0, 10, 10, 120, 24, text="Un texte assez long pour continuer dans la seconde zone", font_size=12)
-    second = PageObject("text", 1, 10, 10, 240, 24, font_size=12)
+    second = PageObject("text", 1, 10, 10, 300, 24, font_size=12)
     first.flow_next_id = second.object_id
 
     first_part = flowed_text_for_object(first, [first, second])
@@ -78,6 +398,34 @@ def test_text_flow_can_be_forced_to_next_frame() -> None:
     assert flowed_text_for_object(second, [first, second]) == "Second"
 
 
+def test_linked_text_never_assigns_hidden_lines_to_a_frame() -> None:
+    sentence = (
+        "je sais pas si tu m'entends bien j'attends Barbara mon épouse qui va rentrer "
+        "de la soutenance de thèse jeune femme médecine et moi je regarde la chaîne "
+        "l'équipe je regarde des caisses à savon je continue de dicter mon message"
+    )
+    text = f"{sentence} {sentence}"
+    first = PageObject("text", 0, 30, 30, 320, 90, text=text, font_size=12)
+    second = PageObject("text", 0, 30, 150, 320, 90, font_size=12)
+    first.flow_next_id = second.object_id
+
+    first_part = flowed_text_for_object(first, [first, second])
+    second_part = flowed_text_for_object(second, [first, second])
+
+    assert len(wrapped_text_lines(first_part, first)) <= text_frame_line_capacity(first)
+    assert len(wrapped_text_lines(second_part, second)) <= text_frame_line_capacity(second)
+    assert second_part
+
+
+def test_text_frame_wraps_between_words_with_an_inner_margin() -> None:
+    frame = PageObject("text", 0, 0, 0, 105, 80, font_size=12)
+
+    lines = wrapped_text_lines("bonjour magnifique monde entier", frame)
+
+    assert " ".join(lines) == "bonjour magnifique monde entier"
+    assert all(word in {"bonjour", "magnifique", "monde", "entier"} for line in lines for word in line.split())
+
+
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
     bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")
@@ -104,6 +452,9 @@ def test_technical_shapes_are_saved_and_exported(tmp_path: Path) -> None:
             PageObject("shape", 0, 190, 40, 100, 70, shape="ellipse", border_style="dashed"),
             PageObject("shape", 0, 320, 40, 140, 70, shape="arrow", fill="#F9E8C8"),
             PageObject("polyline", 0, 40, 150, 180, 80, points=[[0, 70], [40, 10], [120, 10], [180, 70]], border_width=1.5),
+            PageObject("dimension", 0, 40, 260, 0, 45, text="15.88", border_width=1),
+            PageObject("origin", 0, 40, 305, 0, 0),
+            PageObject("line", 0, 40, 330, 180, 0, shape="axis", locked=True),
         ]
     )
 
@@ -113,4 +464,5 @@ def test_technical_shapes_are_saved_and_exported(tmp_path: Path) -> None:
 
     assert [item.shape for item in restored.objects[:3]] == ["rectangle", "ellipse", "arrow"]
     assert restored.objects[3].points[2] == [120, 10]
+    assert restored.objects[-1].locked is True
     assert len(PdfReader(target).pages) == 1

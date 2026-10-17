@@ -1,0 +1,9 @@
+Python Software Foundation — notice de redistribution
+=====================================================
+
+Python et sa bibliothèque standard sont distribués sous la Python Software Foundation License. Cette licence accorde notamment un droit mondial et sans redevance d’utiliser, reproduire, modifier et distribuer Python, sous réserve de conserver la licence et les mentions de copyright applicables.
+
+Texte complet officiel : https://docs.python.org/3/license.html
+
+Le texte complet fourni avec Python 3.12 est conservé dans `PYTHON-LICENSE.txt`.
+Lors de la construction de l’installateur, il devra être remplacé si une autre version de Python est embarquée.

@@ -9,6 +9,7 @@ from urllib.parse import quote
 from PIL import Image
 
 from .office_runtime import find_office_engine
+from .lightweight_office import LIGHTWEIGHT_SUFFIXES, convert_lightweight_office
 
 OFFICE_SUFFIXES = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
@@ -18,16 +19,33 @@ class LibreOfficeUnavailable(RuntimeError):
     pass
 
 
-def convert_document_to_pdf(source: Path, target: Path) -> None:
+def conversion_engine_for(source: Path) -> str:
+    suffix = source.suffix.lower()
+    if suffix in IMAGE_SUFFIXES:
+        return "image"
+    if find_office_engine():
+        return "libreoffice"
+    if suffix in LIGHTWEIGHT_SUFFIXES:
+        return "lightweight"
+    return "unavailable"
+
+
+def convert_document_to_pdf(source: Path, target: Path) -> str:
     suffix = source.suffix.lower()
     if suffix in IMAGE_SUFFIXES:
         _image_to_pdf(source, target)
-        return
+        return "image"
     if suffix not in OFFICE_SUFFIXES:
         raise ValueError(f"Format non pris en charge : {source.suffix}")
     executable = find_office_engine()
     if not executable:
-        raise LibreOfficeUnavailable("Le moteur bureautique intégré est absent de cette édition.")
+        if suffix in LIGHTWEIGHT_SUFFIXES:
+            convert_lightweight_office(source, target)
+            return "lightweight"
+        raise LibreOfficeUnavailable(
+            f"{source.suffix.upper()} nécessite LibreOffice. Sans LibreOffice, le moteur "
+            "léger accepte DOCX et XLSX."
+        )
 
     with tempfile.TemporaryDirectory(prefix="lou-codi-pdf-") as temporary:
         profile = Path(temporary) / "profile"
@@ -57,6 +75,7 @@ def convert_document_to_pdf(source: Path, target: Path) -> None:
             raise RuntimeError(f"LibreOffice : {detail}")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(produced), target)
+    return "libreoffice"
 
 
 def _image_to_pdf(source: Path, target: Path) -> None:

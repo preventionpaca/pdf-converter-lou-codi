@@ -1,0 +1,8 @@
+SQLite — notice de domaine public
+=================================
+
+SQLite est dans le domaine public. Toute personne peut copier, modifier, publier, utiliser, compiler, vendre ou distribuer le code SQLite original, sous forme source ou binaire, pour tout usage commercial ou non commercial.
+
+Notice officielle et texte faisant foi : https://www.sqlite.org/copyright.html
+
+SQLite n’exige ni redevance, ni abonnement, ni attribution obligatoire.

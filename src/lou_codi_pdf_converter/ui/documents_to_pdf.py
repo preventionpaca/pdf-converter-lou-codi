@@ -7,10 +7,12 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from ..i18n import tr, translate_widget_tree
-from ..paths import collision_free_target, downloads_directory
+from ..paths import collision_free_target, module_output_directory
 from ..services.documents_to_pdf import IMAGE_SUFFIXES, OFFICE_SUFFIXES, convert_document_to_pdf
+from ..services.office_runtime import find_office_engine
 from ..services.pdf_organizer import merge_pdfs
 from ..system import open_path
+from ..telemetry import track_event
 from .dialogs import show_success
 from .directory_picker import choose_directory
 from .pdf_picker import choose_documents
@@ -24,8 +26,8 @@ SUPPORTED_SUFFIXES = OFFICE_SUFFIXES | IMAGE_SUFFIXES
 
 class DocumentsToPdfWindow(tk.Toplevel):
     def __init__(self, parent: tk.Misc) -> None:
-        super().__init__(parent, class_="LouCodiPdfConverter")
-        self.title("Documents vers PDF — PDF Converter Lou Còdi")
+        super().__init__(parent, class_="Loucodiworkshop")
+        self.title("Documents vers PDF — Lou Còdi Workshop")
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
         maximize_window(self)
@@ -34,7 +36,7 @@ class DocumentsToPdfWindow(tk.Toplevel):
         self.output_by_source: dict[Path, Path] = {}
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.running = False
-        self.destination = tk.StringVar(value=str(downloads_directory()))
+        self.destination = tk.StringVar(value=str(module_output_directory("Documents vers PDF")))
         self.merge_results = tk.BooleanVar(value=False)
         self._build()
         translate_widget_tree(self)
@@ -64,6 +66,43 @@ class DocumentsToPdfWindow(tk.Toplevel):
 
         body = ttk.Frame(self, style="App.TFrame", padding=22)
         body.pack(fill="both", expand=True)
+        office_engine = find_office_engine()
+        engine_frame = tk.Frame(
+            body,
+            bg="#E7F5EA" if office_engine else "#FFF0C7",
+            highlightthickness=1,
+            highlightbackground="#4C9B61" if office_engine else "#E49B16",
+            padx=16,
+            pady=11,
+        )
+        engine_frame.pack(fill="x", pady=(0, 12))
+        if office_engine:
+            engine_title = "✓ LibreOffice détecté — conversion fidèle activée"
+            engine_detail = "Word, Excel, PowerPoint et OpenDocument seront convertis avec LibreOffice."
+            engine_color = "#246A35"
+        else:
+            engine_title = "⚠ MODE DE CONVERSION ALLÉGÉE"
+            engine_detail = (
+                "LibreOffice n’est pas installé : DOCX et XLSX simples seront convertis localement. "
+                "PPT/PPTX, anciens formats et mises en page complexes nécessitent LibreOffice."
+            )
+            engine_color = "#8A5200"
+        tk.Label(
+            engine_frame,
+            text=engine_title,
+            bg=engine_frame.cget("bg"),
+            fg=engine_color,
+            font=("Sans", 13, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            engine_frame,
+            text=engine_detail,
+            bg=engine_frame.cget("bg"),
+            fg=engine_color,
+            font=("Sans", 10),
+            justify="left",
+            wraplength=1050,
+        ).pack(anchor="w", pady=(3, 0))
         toolbar = ttk.Frame(body, style="Card.TFrame", padding=15)
         toolbar.pack(fill="x", pady=(0, 12))
         ttk.Label(toolbar, text="Fichiers à convertir", style="Title.TLabel").pack(side="left")
@@ -191,11 +230,30 @@ class DocumentsToPdfWindow(tk.Toplevel):
             self.events.put(("row", (source, "Conversion…")))
             target = collision_free_target(destination, source.stem, ".pdf")
             try:
-                convert_document_to_pdf(source, target)
+                engine = convert_document_to_pdf(source, target)
+                track_event(
+                    "documents_to_pdf",
+                    "convert",
+                    "success",
+                    format=source.suffix.lower().lstrip("."),
+                    engine=engine,
+                )
                 generated.append(target)
                 self.events.put(("converted", (source, target)))
-                self.events.put(("row", (source, f"Terminé → {target.name}")))
+                engine_label = {
+                    "libreoffice": "conversion fidèle LibreOffice",
+                    "lightweight": "conversion allégée Lou Còdi",
+                    "image": "conversion image",
+                }.get(engine, engine)
+                self.events.put(("row", (source, f"Terminé ({engine_label}) → {target.name}")))
             except Exception as exc:  # noqa: BLE001 - isoler chaque élément du lot
+                track_event(
+                    "documents_to_pdf",
+                    "convert",
+                    "failure",
+                    format=source.suffix.lower().lstrip("."),
+                    error=type(exc).__name__,
+                )
                 if target.exists():
                     target.unlink()
                 failures.append(f"{source.name} : {exc}")

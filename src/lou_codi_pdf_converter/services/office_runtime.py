@@ -15,17 +15,14 @@ def runtime_root() -> Path:
 
 
 def find_office_engine() -> Path | None:
-    """Locate the private office renderer bundled with Lou Còdi.
-
-    A system installation is accepted only as a development fallback. Published
-    installers put the renderer below ``office-runtime`` so users never have to
-    install or configure LibreOffice themselves.
-    """
+    """Locate an optional LibreOffice installation without requiring or bundling it."""
     override = os.environ.get("LOU_CODI_OFFICE_RUNTIME")
     candidates = []
     if override:
         candidates.append(Path(override))
 
+    # Compatibility with developer overrides and old test bundles only. Current public
+    # installers never ship this directory.
     root = runtime_root() / "office-runtime"
     candidates.extend(
         (

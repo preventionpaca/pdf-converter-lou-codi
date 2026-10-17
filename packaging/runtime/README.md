@@ -1,19 +1,8 @@
-# Moteur bureautique embarqué
+# Moteur bureautique facultatif
 
-Chaque construction de livraison doit déposer ici, sous le nom `office-runtime`,
-le moteur LibreOffice correspondant au système et à l’architecture ciblés. Ce dossier
-est intégré automatiquement par la recette PyInstaller.
+LibreOffice n’est plus intégré aux installateurs Lou Còdi. Les DOCX et XLSX usuels sont
+convertis par le moteur léger inclus dans l’application. Une installation système de
+LibreOffice, lorsqu’elle existe, est détectée automatiquement pour fournir une conversion
+plus fidèle et prendre en charge PowerPoint, OpenDocument et les anciens formats.
 
-Arborescences reconnues :
-
-- Windows : `office-runtime/program/soffice.exe` ou la distribution officielle
-  PortableApps sous `office-runtime/LibreOfficePortable/App/libreoffice/program/soffice.exe` ;
-- macOS : `office-runtime/LibreOffice.app/Contents/MacOS/soffice` ;
-- Linux : `office-runtime/program/soffice`.
-
-Les trois moteurs sont construits séparément : un binaire Windows ne doit jamais être
-placé dans le paquet macOS ou Linux. Conserver dans le paquet les fichiers `LICENSE`,
-`NOTICE` et les mentions tierces fournis avec la distribution utilisée.
-
-Le moteur n’est jamais téléchargé au lancement. L’application privilégie toujours
-cette copie privée et utilise l’installation système uniquement pendant le développement.
+Ne plus déposer de distribution LibreOffice dans ce répertoire lors d’une livraison.

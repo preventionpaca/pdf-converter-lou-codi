@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import tkinter as tk
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from . import __version__
 from .i18n import (
@@ -14,8 +15,13 @@ from .i18n import (
     set_language,
     translate_widget_tree,
 )
+from .services.local_database import initialize_database
+from .paths import initialize_workshop_directories
 from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen, register_launch
+from .telemetry import analytics_consent, set_analytics_consent, track_event
 from .ui.about_dialog import show_about
+from .ui.dialogs import install_branded_messageboxes
+from .ui.cutting_stock import CuttingStockWindow
 from .ui.decorate_pdf import DecoratePdfWindow
 from .ui.document_editor import DocumentEditorWindow
 from .ui.documents_to_pdf import DocumentsToPdfWindow
@@ -29,33 +35,88 @@ BLUE = "#2368AF"
 BACKGROUND = "#F0F4F9"
 SUPPORT_GOLD = "#F4B942"
 SUPPORT_DARK = "#713B00"
+LOCKED = "#8A6D1D"
+
+
+@dataclass(frozen=True)
+class WorkshopModule:
+    module_id: str
+    title: str
+    description: str
+    installed: bool = True
+    entitled: bool = True
+    coming_soon: bool = False
+
+    @property
+    def available(self) -> bool:
+        return self.installed and self.entitled and not self.coming_soon
 
 
 class Application(tk.Tk):
-    """Cross-platform shell. Feature panels are integrated incrementally."""
+    """Modular cross-platform launcher for the Lou Còdi tools."""
 
     MODULES = (
-        ("PDF vers Office", "Conversion PDF vers Word et extraction de tableaux Excel."),
-        ("Documents vers PDF", "Documents bureautiques et images, individuellement ou par lots."),
-        ("Organiser les PDF", "Fusion, extraction, réorganisation et rotation des pages."),
-        ("Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
-        ("Créer un document", "Rédiger sur une page A4, insérer des tableaux et exporter en DOCX ou PDF."),
-        (
-            "Soutenir Lou Còdi",
-            "Lou Còdi est un petit club de programmation qui imagine des outils de terrain accessibles, efficaces et rapides à prendre en main. Votre soutien aide à faire vivre le projet, développer de nouvelles idées et maintenir ces logiciels utiles à tous.",
+        WorkshopModule(
+            "pdf_studio",
+            "PDF Studio",
+            "Convertir, organiser et enrichir vos documents PDF.",
         ),
+        WorkshopModule(
+            "document_studio",
+            "Document Studio",
+            "Créer et mettre en page des documents, dessins et schémas.",
+        ),
+        WorkshopModule(
+            "cutting_optimization",
+            "Optimisation de découpe",
+            "Disposer les pièces, calculer les coupes et réduire les chutes.",
+        ),
+        WorkshopModule(
+            "practical_calculators",
+            "Calculateurs pratiques",
+            "Regrouper les petits calculs utiles à l’atelier.",
+            coming_soon=True,
+        ),
+        WorkshopModule(
+            "home_automation",
+            "Domotique et automatismes",
+            "Préparer des installations, commandes et automatismes simples.",
+            coming_soon=True,
+        ),
+        WorkshopModule(
+            "workshop_memo",
+            "Mémo d’atelier",
+            "Lexique, conversions, formules et références techniques.",
+            coming_soon=True,
+        ),
+        WorkshopModule(
+            "gcode_workshop",
+            "G-code Workshop",
+            "Préparer les trajectoires d’outil et les programmes d’usinage.",
+            coming_soon=True,
+        ),
+    )
+
+    PDF_MODULES = (
+        WorkshopModule("pdf_to_office", "PDF vers Office", "Conversion vers Word et extraction de tableaux Excel."),
+        WorkshopModule("documents_to_pdf", "Documents vers PDF", "Documents bureautiques et images, seuls ou par lots."),
+        WorkshopModule("organize_pdf", "Organiser les PDF", "Fusion, extraction, réorganisation et rotation des pages."),
+        WorkshopModule("decorate_pdf", "Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
     )
 
     def __init__(self) -> None:
         set_language(load_language(), save=False)
         install_messagebox_translations()
-        super().__init__(className="LouCodiPdfConverter")
-        self.title(f"PDF Converter – Lou Còdi | v{__version__}")
-        self.geometry("1100x720")
-        self.minsize(850, 600)
+        super().__init__(className="Loucodiworkshop")
+        self.title(f"Lou Còdi Workshop | v{__version__}")
+        self.geometry("1265x830")
+        self.minsize(1050, 700)
         self.configure(bg=BACKGROUND)
-        center_window(self, 1100, 720)
+        self.local_database = initialize_database()
+        self.workshop_directory = initialize_workshop_directories()
+        center_window(self, 1265, 830)
         self._configure_styles()
+        install_branded_messageboxes()
         self._build()
         self.launch_state = register_launch()
         self.after(350, self._show_launch_information)
@@ -83,10 +144,11 @@ class Application(tk.Tk):
         )
         titles = tk.Frame(header, bg=NAVY)
         titles.pack(side="left", pady=20)
-        tk.Label(titles, text="PDF Converter", bg=NAVY, fg="white", font=("Sans", 21, "bold")).pack(anchor="w")
-        tk.Label(titles, text="LOU CÒDI  •  TRAITEMENT LOCAL", bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(anchor="w")
+        tk.Label(titles, text="Lou Còdi Workshop", bg=NAVY, fg="white", font=("Sans", 21, "bold")).pack(anchor="w")
+        tk.Label(titles, text="DES OUTILS PRATIQUES, EN LOCAL, POUR CRÉER ET FABRIQUER", bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(anchor="w")
         tk.Button(header, text="Soutenir Lou Còdi ♥", command=lambda: webbrowser.open(SUPPORT_URL), bg="#28507D", fg="white", relief="flat", padx=16, pady=8).pack(side="right", padx=(8, 24))
         tk.Button(header, text="À propos", command=lambda: show_about(self), bg="#28507D", fg="white", relief="flat", padx=14, pady=8).pack(side="right", padx=4)
+        tk.Button(header, text="Confidentialité", command=self._analytics_dialog, bg="#28507D", fg="white", relief="flat", padx=12, pady=8).pack(side="right", padx=4)
         self.language_name = tk.StringVar(value=LANGUAGES[get_language()])
         language_selector = ttk.Combobox(
             header,
@@ -106,17 +168,22 @@ class Application(tk.Tk):
         ttk.Label(content, text="Que souhaitez-vous faire ?", background=BACKGROUND, foreground=NAVY, font=("Sans", 19, "bold")).pack(anchor="w", pady=(0, 16))
         grid = ttk.Frame(content, style="App.TFrame")
         grid.pack(fill="both", expand=True)
-        for index, (title, description) in enumerate(self.MODULES):
-            if title == "Soutenir Lou Còdi":
-                self._build_support_card(grid, index, title, description)
-                continue
+        visible_modules = [module for module in self.MODULES if module.installed]
+        for index, module in enumerate(visible_modules):
             card = ttk.Frame(grid, style="Card.TFrame", padding=16)
             card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=6, pady=6)
-            ttk.Label(card, text=f"{index + 1:02d}  {title}", style="Title.TLabel").pack(anchor="w")
-            ttk.Label(card, text=description, style="Body.TLabel", wraplength=260).pack(anchor="w", pady=(8, 12))
-            ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda name=title: self._open_module(name)).pack(anchor="w")
+            ttk.Label(card, text=f"{index + 1:02d}  {module.title}", style="Title.TLabel").pack(anchor="w")
+            ttk.Label(card, text=module.description, style="Body.TLabel", wraplength=335).pack(anchor="w", pady=(8, 12))
+            if module.coming_soon:
+                ttk.Label(card, text="Bientôt disponible", background="white", foreground=LOCKED, font=("Sans", 10, "bold")).pack(anchor="w")
+            elif not module.entitled:
+                ttk.Button(card, text="Découvrir le module", command=lambda item=module: self._show_locked_module(item)).pack(anchor="w")
+            else:
+                ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda item=module: self._open_module(item.module_id)).pack(anchor="w")
+        self._build_support_card(grid, len(visible_modules), "Soutenir Lou Còdi", "Les outils PDF restent gratuits. Votre soutien aide à maintenir le projet et à développer les prochains modules.")
         grid.columnconfigure((0, 1, 2), weight=1, uniform="modules")
-        grid.rowconfigure((0, 1), weight=1, uniform="modules")
+        for row in range((len(visible_modules) + 3) // 3):
+            grid.rowconfigure(row, weight=1, uniform="modules")
         tk.Label(self, text=f"Lou Còdi  •  v{__version__}  •  Aucun document transmis sur Internet", bg=BACKGROUND, fg="#597089", font=("Sans", 9)).pack(anchor="e", padx=24, pady=(0, 12))
         translate_widget_tree(self)
 
@@ -143,7 +210,7 @@ class Application(tk.Tk):
             fg="#714F25",
             font=("Sans", 10),
             justify="left",
-            wraplength=270,
+            wraplength=335,
         ).pack(anchor="w", pady=(8, 12))
         tk.Button(
             card,
@@ -173,47 +240,185 @@ class Application(tk.Tk):
         if self.launch_state.show_welcome:
             show_welcome(self)
             mark_welcome_seen()
-            return
-        if self.launch_state.show_support_reminder:
+        elif self.launch_state.show_support_reminder:
             disabled = show_support_reminder(self)
             mark_support_reminder_shown(
                 self.launch_state.launch_count,
                 disable_future_reminders=disabled,
             )
+        if analytics_consent() is None:
+            self._analytics_dialog(first_choice=True)
 
-    def _open_module(self, name: str) -> None:
-        if name == "PDF vers Office":
+    def _analytics_dialog(self, *, first_choice: bool = False) -> None:
+        current = analytics_consent()
+        message = (
+            "Aider à améliorer Lou Còdi Workshop en envoyant des statistiques anonymes ?\n\n"
+            "Sont envoyés : module utilisé, réussite ou erreur générale, version et système. "
+            "Le serveur pourra agréger le pays et la grande région.\n\n"
+            "Ne sont jamais envoyés : documents, textes, dictée, noms ou chemins de fichiers.\n\n"
+            "Vous pourrez modifier ce choix avec le bouton Confidentialité."
+        )
+        enabled = messagebox.askyesno(
+            "Statistiques anonymes",
+            message,
+            parent=self,
+            default="no" if first_choice else ("yes" if current else "no"),
+        )
+        set_analytics_consent(enabled)
+        if not first_choice:
+            messagebox.showinfo(
+                "Confidentialité",
+                "Statistiques anonymes activées." if enabled else "Statistiques anonymes désactivées et file locale supprimée.",
+                parent=self,
+            )
+
+    def _open_module(self, module_id: str) -> None:
+        if getattr(self, "_workspace_opening", False):
+            return
+        self._workspace_opening = True
+        try:
+            self._open_module_now(module_id)
+        finally:
+            self._workspace_opening = False
+
+    def _open_module_now(self, module_id: str) -> None:
+        track_event(module_id, "open")
+        if module_id == "pdf_studio":
+            self._open_pdf_studio()
+            return
+        if module_id == "pdf_to_office":
             window = PdfToOfficeWindow(self)
-            self.wait_window(window)
+            self._replace_workspace(self, window)
             return
-        if name == "Documents vers PDF":
+        if module_id == "documents_to_pdf":
             window = DocumentsToPdfWindow(self)
-            self.wait_window(window)
+            self._replace_workspace(self, window)
             return
-        if name == "Organiser les PDF":
+        if module_id == "organize_pdf":
             window = OrganizePdfWindow(self)
-            self.wait_window(window)
+            self._replace_workspace(self, window)
             return
-        if name == "Habillage PDF":
+        if module_id == "decorate_pdf":
             window = DecoratePdfWindow(self)
-            self.wait_window(window)
+            self._replace_workspace(self, window)
             return
-        if name == "Créer un document":
+        if module_id == "document_studio":
             window = DocumentEditorWindow(self)
-            self.wait_window(window)
+            self._replace_workspace(self, window, force_maximized=True)
             return
-        if name == "Soutenir Lou Còdi":
-            webbrowser.open(SUPPORT_URL)
+        if module_id == "cutting_optimization":
+            window = CuttingStockWindow(self)
+            self._replace_workspace(self, window, force_maximized=True)
             return
-        dialog = tk.Toplevel(self, class_="LouCodiPdfConverter")
-        dialog.title(f"{name} — PDF Converter Lou Còdi")
+        module = next((item for item in self.MODULES if item.module_id == module_id), None)
+        name = module.title if module else module_id
+        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
+        dialog.title(f"{name} — Lou Còdi Workshop")
         dialog.geometry("680x260")
         dialog.configure(bg=BACKGROUND)
         tk.Label(dialog, text=name, bg=BACKGROUND, fg=NAVY, font=("Sans", 18, "bold")).pack(pady=(35, 15))
         tk.Label(dialog, text="Le moteur local de ce module est prêt. L’interface détaillée sera intégrée au prochain lot.", bg=BACKGROUND, fg="#597089", wraplength=560, justify="center").pack()
         ttk.Button(dialog, text="Fermer", command=dialog.destroy).pack(pady=28)
         make_modal(dialog, self)
-        self.wait_window(dialog)
+        self._replace_workspace(self, dialog)
+
+    def _open_pdf_studio(self) -> None:
+        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
+        dialog.title("PDF Studio — Lou Còdi Workshop")
+        dialog.geometry("1050x610")
+        dialog.minsize(860, 520)
+        dialog.configure(bg=BACKGROUND)
+        header = tk.Frame(dialog, bg=NAVY, padx=24, pady=18)
+        header.pack(fill="x")
+        tk.Label(header, text="PDF Studio", bg=NAVY, fg="white", font=("Sans", 22, "bold")).pack(anchor="w")
+        tk.Label(header, text="CONVERTIR, ORGANISER ET ENRICHIR VOS PDF — EN LOCAL", bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(anchor="w")
+        body = ttk.Frame(dialog, style="App.TFrame", padding=24)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Que souhaitez-vous faire ?", background=BACKGROUND, foreground=NAVY, font=("Sans", 19, "bold")).pack(anchor="w", pady=(0, 16))
+        grid = ttk.Frame(body, style="App.TFrame")
+        grid.pack(fill="both", expand=True)
+        for index, module in enumerate(self.PDF_MODULES):
+            card = ttk.Frame(grid, style="Card.TFrame", padding=18)
+            card.grid(row=index // 2, column=index % 2, sticky="nsew", padx=7, pady=7)
+            ttk.Label(card, text=f"{index + 1:02d}  {module.title}", style="Title.TLabel").pack(anchor="w")
+            ttk.Label(card, text=module.description, style="Body.TLabel", wraplength=390).pack(anchor="w", pady=(9, 14))
+            ttk.Button(card, text="Ouvrir le module", style="Primary.TButton", command=lambda item=module, parent=dialog: self._open_child_module(parent, item.module_id)).pack(anchor="w")
+        grid.columnconfigure((0, 1), weight=1, uniform="pdf-modules")
+        grid.rowconfigure((0, 1), weight=1, uniform="pdf-modules")
+        ttk.Button(body, text="Fermer", command=dialog.destroy).pack(anchor="e", pady=(12, 0))
+        make_modal(dialog, self)
+        self._replace_workspace(self, dialog)
+
+    def _open_child_module(self, parent: tk.Toplevel, module_id: str) -> None:
+        if getattr(parent, "_child_workspace_open", False):
+            return
+        parent._child_workspace_open = True  # type: ignore[attr-defined]
+        factories = {
+            "pdf_to_office": PdfToOfficeWindow,
+            "documents_to_pdf": DocumentsToPdfWindow,
+            "organize_pdf": OrganizePdfWindow,
+            "decorate_pdf": DecoratePdfWindow,
+        }
+        try:
+            factory = factories[module_id]
+            window = factory(parent)
+            parent.wait_window(window)
+        finally:
+            parent._child_workspace_open = False  # type: ignore[attr-defined]
+
+    def _replace_workspace(
+        self,
+        previous: tk.Tk | tk.Toplevel,
+        window: tk.Toplevel,
+        *,
+        force_maximized: bool = False,
+    ) -> None:
+        """Show one workspace at a time and restore the previous one on close."""
+        previous.update_idletasks()
+        previous_geometry = previous.geometry()
+        previous_state = previous.state()
+        # A transient window is hidden automatically when its parent is withdrawn on
+        # Linux. Promote the module to a normal workspace before hiding the previous
+        # one, while retaining its WM group and shared Loucodiworkshop class/icon.
+        try:
+            window.tk.call("wm", "transient", window._w, "")
+            window.wm_group(self)
+        except tk.TclError:
+            pass
+        try:
+            window.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            window.iconphoto(False, self.app_icon)
+        except tk.TclError:
+            pass
+        if force_maximized or previous_state == "zoomed":
+            maximize_window(window)
+        else:
+            window.geometry(previous_geometry)
+        window.deiconify()
+        window.update_idletasks()
+        previous.withdraw()
+        window.lift()
+        window.focus_force()
+        previous.wait_window(window)
+        if previous.winfo_exists():
+            previous.deiconify()
+            if previous_state == "zoomed":
+                maximize_window(previous)
+            else:
+                previous.geometry(previous_geometry)
+            previous.lift()
+            previous.focus_force()
+
+    def _show_locked_module(self, module: WorkshopModule) -> None:
+        messagebox.showinfo(
+            "Module optionnel",
+            f"{module.title} est disponible comme module optionnel.\n\n"
+            "Une future gestion des licences permettra de l’activer ici.",
+            parent=self,
+        )
 
 
 def main() -> None:

@@ -12,6 +12,34 @@ en cours d'intégration.
 
 ## Développement
 
+### Données locales et dictée hors ligne
+
+Au premier démarrage, l’application crée automatiquement une base SQLite
+`loucodi.db` dans le dossier de données de l’utilisateur. Aucun serveur de base
+de données n’est requis. Le chemin respecte les conventions de Windows, macOS
+et Linux.
+
+La dictée locale intégrée aux zones de texte détecte Vosk, l’accès microphone et
+le modèle français `vosk-model-small-fr-0.22`. Le pack peut être installé dans
+l’environnement de construction avec `pip install -e '.[speech]'`. Le modèle
+reste un téléchargement séparé afin de ne pas alourdir l’application de base.
+Tant que le moteur, le microphone et le modèle ne sont pas tous présents, le
+bouton de dictée indique précisément ce qui manque. L’enregistrement et la
+transcription restent entièrement locaux.
+
+Une fenêtre de relecture permet de corriger la transcription avant de l’insérer
+dans la zone de texte. La reformulation automatique locale reste expérimentale :
+elle n’est pas exposée dans l’interface tant que sa fidélité au message original
+n’est pas suffisamment fiable.
+
+Le module **Stock et découpe** conserve localement le stock de plaques dans
+SQLite. Il accepte des formats et quantités différents, l’état des chutes, une
+liste de pièces saisie dans un tableau ou importée depuis les rectangles d’un
+projet Lou Còdi, puis calcule un premier plan de placement en tenant compte de
+l’épaisseur de lame (3 mm par défaut). L’optimisation actuelle concerne les
+pièces rectangulaires et reste une heuristique : le plan doit être contrôlé avant
+la découpe réelle.
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
@@ -19,10 +47,16 @@ python3 -m venv .venv
 .venv/bin/lou-codi-pdf-converter
 ```
 
-Les installateurs de livraison embarquent leur propre moteur bureautique local pour
-convertir les documents Office. L’utilisateur n’a rien à installer séparément et aucun
-document n’est envoyé sur Internet. Une installation LibreOffice du système peut être
-utilisée comme solution de repli uniquement dans l’environnement de développement.
+Les installateurs de livraison embarquent le moteur bureautique allégé de Lou Còdi pour
+les DOCX et XLSX usuels. Aucun document n’est envoyé sur Internet. Si LibreOffice est
+déjà installé sur l’ordinateur, il est détecté automatiquement pour les conversions
+fidèles, PowerPoint, OpenDocument, les anciens formats et les mises en page complexes.
+LibreOffice reste un logiciel indépendant et n’est pas inclus dans les paquets Lou Còdi.
+
+L’installation complète ajoute le modèle français de dictée locale, le raccourci et les
+dossiers de travail. L’installation personnalisée permet de désactiver séparément ces
+éléments facultatifs ; le cœur de l’application et ses bibliothèques PDF sont toujours
+installés.
 
 Au premier lancement, l’application présente son fonctionnement gratuit. Un rappel de
 soutien volontaire est ensuite proposé toutes les vingt ouvertures ; il peut être

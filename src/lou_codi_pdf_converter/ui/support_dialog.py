@@ -25,7 +25,7 @@ def _support_dialog(
     secondary_label: str,
     allow_disable: bool = False,
 ) -> bool:
-    dialog = tk.Toplevel(parent, class_="LouCodiPdfConverter")
+    dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title(title)
     dialog.resizable(False, False)
     dialog.configure(bg=BACKGROUND)
@@ -88,7 +88,7 @@ def show_welcome(parent: tk.Misc) -> None:
     _support_dialog(
         parent,
         title="Bienvenue",
-        heading="Bienvenue dans PDF Converter – Lou Còdi",
+        heading="Bienvenue dans Lou Còdi Workshop",
         message=(
             "Ce logiciel est mis gratuitement à votre disposition par Lou Còdi, club de "
             "programmation. Il est le fruit d’un travail bénévole et tous les traitements "
@@ -106,9 +106,9 @@ def show_support_reminder(parent: tk.Misc) -> bool:
     return _support_dialog(
         parent,
         title="Soutenir Lou Còdi",
-        heading="Merci d’utiliser PDF Converter – Lou Còdi",
+        heading="Merci d’utiliser Lou Còdi Workshop",
         message=(
-            "PDF Converter est mis gratuitement à votre disposition par Lou Còdi. "
+            "PDF Studio est mis gratuitement à votre disposition par Lou Còdi. "
             "Votre contribution volontaire aide le club à financer la création, la "
             "maintenance et la mise à disposition de nouveaux outils respectueux de "
             "votre vie privée.\n\nVous pouvez également continuer gratuitement."

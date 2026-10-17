@@ -1,11 +1,18 @@
 # Construction autonome
 
-La construction autonome embarque l’interpréteur Python, toutes les dépendances et le
-moteur bureautique local utilisé pour produire les PDF. Elle ne télécharge aucun
-composant lors du lancement et l’utilisateur n’a pas à installer LibreOffice.
+La construction autonome embarque l’interpréteur Python et les dépendances propres à
+Lou Còdi, mais **n’embarque pas LibreOffice**. Les DOCX et XLSX ordinaires utilisent le
+moteur de conversion allégé intégré. Lorsqu’une installation système de LibreOffice est
+détectée, elle est utilisée pour une conversion fidèle et pour les formats complexes,
+anciens ou PowerPoint.
 
-Avant la construction, préparer le moteur de la plateforme dans
-`packaging/runtime/office-runtime` selon `packaging/runtime/README.md`.
+L’absence de LibreOffice ne doit jamais empêcher l’installation ou le lancement de Lou
+Còdi. L’interface indique clairement le moteur disponible et ses limites.
+
+La publication Linux et Windows est construite avec Vosk, le modèle français et le
+moteur audio en définissant `LOU_CODI_BUNDLE_SPEECH=1`. Les scripts de mise en paquet
+placent ensuite le modèle dans le dossier facultatif `options/speech-models` :
+l’installation complète le copie, tandis que l’installation personnalisée peut l’omettre.
 
 Une construction doit être produite et testée séparément sur Linux, Windows et macOS :
 

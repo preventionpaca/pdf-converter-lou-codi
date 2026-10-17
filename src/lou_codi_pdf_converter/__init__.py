@@ -1,4 +1,3 @@
-"""PDF Converter – Lou Còdi."""
+"""Lou Còdi Workshop."""
 
-__version__ = "2.0.0a1"
-
+__version__ = "2.0.0a2"

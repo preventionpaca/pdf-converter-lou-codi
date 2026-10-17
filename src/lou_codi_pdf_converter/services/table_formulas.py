@@ -5,11 +5,25 @@ import re
 
 CELL_REFERENCE = re.compile(r"\b([A-Z]+)([1-9][0-9]*)\b")
 PERCENTAGE = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?)%")
-SUM_RANGE = re.compile(r"SUM\(([A-Z]+[1-9][0-9]*):([A-Z]+[1-9][0-9]*)\)", re.IGNORECASE)
+FUNCTION_RANGE = re.compile(
+    r"(SUM|SOMME|AVERAGE|MOYENNE|MIN|MAX|COUNT|NB)\(([A-Z]+[1-9][0-9]*):([A-Z]+[1-9][0-9]*)\)",
+    re.IGNORECASE,
+)
 
 
 def evaluate_table(text: str) -> list[list[str]]:
     rows = [row.split("\t") for row in text.splitlines()]
+    return _evaluate_rows(rows)
+
+
+def evaluate_table_cells(cells: list[list[dict[str, str]]]) -> list[list[str]]:
+    """Evaluate the textual/formula content of structured document-table cells."""
+    return _evaluate_rows(
+        [[cell.get("text", "") for cell in row] for row in cells]
+    )
+
+
+def _evaluate_rows(rows: list[list[str]]) -> list[list[str]]:
     if not rows:
         return [[""]]
     width = max((len(row) for row in rows), default=1)
@@ -31,7 +45,7 @@ def evaluate_table(text: str) -> list[list[str]]:
             cache[key] = result
             return result
         expression = raw[1:].upper().replace(",", ".")
-        expression = _expand_sums(expression, lambda r, c: value(r, c, trail | {key}))
+        expression = _expand_functions(expression, lambda r, c: value(r, c, trail | {key}))
 
         def replace_cell(match: re.Match[str]) -> str:
             row_index, column_index = _cell_coordinates(match.group(0))
@@ -50,19 +64,30 @@ def evaluate_table(text: str) -> list[list[str]]:
     return [[_format(value(row, column, set())) for column in range(width)] for row in range(len(rows))]
 
 
-def _expand_sums(expression: str, resolver: object) -> str:
+def _expand_functions(expression: str, resolver: object) -> str:
     def replace(match: re.Match[str]) -> str:
-        start_row, start_column = _cell_coordinates(match.group(1))
-        end_row, end_column = _cell_coordinates(match.group(2))
-        total = 0.0
+        function = match.group(1).upper()
+        start_row, start_column = _cell_coordinates(match.group(2))
+        end_row, end_column = _cell_coordinates(match.group(3))
+        values: list[float] = []
         for row in range(min(start_row, end_row), max(start_row, end_row) + 1):
             for column in range(min(start_column, end_column), max(start_column, end_column) + 1):
                 resolved = resolver(row, column)  # type: ignore[operator]
                 if isinstance(resolved, float):
-                    total += resolved
-        return str(total)
+                    values.append(resolved)
+        if function in {"COUNT", "NB"}:
+            return str(float(len(values)))
+        if not values:
+            return "0"
+        if function in {"AVERAGE", "MOYENNE"}:
+            return str(sum(values) / len(values))
+        if function == "MIN":
+            return str(min(values))
+        if function == "MAX":
+            return str(max(values))
+        return str(sum(values))
 
-    return SUM_RANGE.sub(replace, expression)
+    return FUNCTION_RANGE.sub(replace, expression)
 
 
 def _cell_coordinates(reference: str) -> tuple[int, int]:

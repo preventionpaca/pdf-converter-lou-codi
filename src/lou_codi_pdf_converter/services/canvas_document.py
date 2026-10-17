@@ -11,12 +11,14 @@ from functools import lru_cache
 from pathlib import Path
 
 import pymupdf
+from PIL import ImageFont
 
-from .table_formulas import evaluate_table
+from .table_formulas import evaluate_table, evaluate_table_cells
 
 A4_WIDTH = 595.28
 A4_HEIGHT = 841.89
 FLOW_BREAK_TOKEN = "{{CADRE_SUIVANT}}"
+TEXT_FRAME_HORIZONTAL_PADDING = 8.0
 
 
 @dataclass
@@ -48,6 +50,16 @@ class PageObject:
     rotation: int = 0
     flip_horizontal: bool = False
     flip_vertical: bool = False
+    locked: bool = False
+    level: int = 0
+    hyperlink: str = ""
+    text_links: list[dict[str, object]] = field(default_factory=list)
+    table_cells: list[list[dict[str, str]]] = field(default_factory=list)
+    table_outer_border_width: float = 1.5
+    table_inner_border_width: float = 0.6
+    table_row_border_widths: dict[str, float] = field(default_factory=dict)
+    table_merges: list[list[int]] = field(default_factory=list)
+    table_border_ranges: list[dict[str, float]] = field(default_factory=list)
     points: list[list[float]] = field(default_factory=list)
 
 
@@ -58,6 +70,7 @@ class CanvasDocument:
     objects: list[PageObject] = field(default_factory=list)
     page_width: float = A4_WIDTH
     page_height: float = A4_HEIGHT
+    measurement_scale: float = 1.0
 
     def save(self, path: Path) -> None:
         path.write_text(
@@ -68,6 +81,7 @@ class CanvasDocument:
                     "page_count": self.page_count,
                     "page_width": self.page_width,
                     "page_height": self.page_height,
+                    "measurement_scale": self.measurement_scale,
                     "objects": [asdict(item) for item in self.objects],
                 },
                 ensure_ascii=False,
@@ -86,6 +100,7 @@ class CanvasDocument:
             page_count=max(1, int(data.get("page_count", 1))),
             page_width=float(data.get("page_width", A4_WIDTH)),
             page_height=float(data.get("page_height", A4_HEIGHT)),
+            measurement_scale=max(1e-9, float(data.get("measurement_scale", 1.0))),
             objects=[PageObject(**item) for item in data.get("objects", [])],
         )
 
@@ -102,7 +117,9 @@ def export_canvas_pdf(document: CanvasDocument, target: Path) -> None:
     if pdf.page_count == 0:
         pdf.new_page(width=A4_WIDTH, height=A4_HEIGHT)
 
-    for item in document.objects:
+    for _index, item in sorted(
+        enumerate(document.objects), key=lambda indexed: (indexed[1].level, indexed[0])
+    ):
         for page_number in pages_for_object(item, pdf.page_count):
             page = pdf[page_number]
             _draw_object(
@@ -129,6 +146,29 @@ def _draw_object(
     rectangle = pymupdf.Rect(item.x, item.y, item.x + item.width, item.y + item.height)
     if item.kind == "mask":
         page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
+    elif item.kind == "origin":
+        color = (0.78, 0.12, 0.12)
+        page.draw_line(
+            pymupdf.Point(item.x - 12, item.y),
+            pymupdf.Point(item.x + 12, item.y),
+            color=color,
+            width=1.5,
+            overlay=True,
+        )
+        page.draw_line(
+            pymupdf.Point(item.x, item.y + 12),
+            pymupdf.Point(item.x, item.y - 12),
+            color=color,
+            width=1.5,
+            overlay=True,
+        )
+        page.insert_text(
+            pymupdf.Point(item.x + 5, item.y - 5),
+            "X0 / Z0",
+            fontsize=7,
+            color=color,
+            overlay=True,
+        )
     elif item.kind == "line":
         page.draw_line(
             rectangle.top_left,
@@ -138,14 +178,68 @@ def _draw_object(
             dashes="[8 3 2 3]" if item.shape == "axis" else "[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
             overlay=True,
         )
+    elif item.kind == "dimension":
+        start = pymupdf.Point(item.x, item.y)
+        end = pymupdf.Point(item.x + item.width, item.y + item.height)
+        anchors = item.points if len(item.points) == 2 else [[start.x, start.y], [end.x, end.y]]
+        for anchor, endpoint in zip(anchors, (start, end), strict=True):
+            page.draw_line(
+                pymupdf.Point(float(anchor[0]), float(anchor[1])),
+                endpoint,
+                color=_rgb(item.border_color),
+                width=max(0.5, item.border_width),
+                overlay=True,
+            )
+        page.draw_line(
+            start,
+            end,
+            color=_rgb(item.border_color),
+            width=max(0.5, item.border_width),
+            overlay=True,
+        )
+        length = math.hypot(item.width, item.height)
+        if length > 1e-8:
+            normal_x = -item.height / length * 5
+            normal_y = item.width / length * 5
+            for point in (start, end):
+                page.draw_line(
+                    pymupdf.Point(point.x - normal_x, point.y - normal_y),
+                    pymupdf.Point(point.x + normal_x, point.y + normal_y),
+                    color=_rgb(item.border_color),
+                    width=max(0.5, item.border_width),
+                    overlay=True,
+                )
+        compact = length < 55
+        label_position = pymupdf.Point(
+            item.x + item.width + (item.width / length * 8 if compact and length else 0)
+            if compact
+            else item.x + item.width / 2 + 3,
+            item.y + item.height + (item.height / length * 8 if compact and length else 0)
+            if compact
+            else item.y + item.height / 2 - 3,
+        )
+        page.insert_text(
+            label_position,
+            f"{item.text} mm",
+            fontsize=8,
+            color=_rgb(item.border_color),
+            overlay=True,
+        )
     elif item.kind == "polyline" and len(item.points) >= 2:
         points = [(item.x + point[0], item.y + point[1]) for point in item.points]
+        closed = len(points) >= 3 and math.dist(points[0], points[-1]) <= 1e-6
         shape = page.new_shape()
         shape.draw_polyline(points)
         shape.finish(
             color=_rgb(item.border_color),
+            fill=(
+                None
+                if not closed or item.fill.lower() in {"", "none", "transparent"}
+                else _rgb(item.fill)
+            ),
             width=max(0.5, item.border_width),
             dashes="[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
+            closePath=closed,
         )
         shape.commit(overlay=True)
     elif item.kind == "shape":
@@ -187,6 +281,35 @@ def _draw_object(
                 align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
                 overlay=True,
             )
+            for link in item.text_links:
+                start = max(0, int(link.get("start", 0)))
+                end = min(len(rendered_text), int(link.get("end", 0)))
+                uri = str(link.get("hyperlink", "")).strip()
+                linked_text = rendered_text[start:end].strip()
+                if not linked_text or not uri:
+                    continue
+                for linked_rectangle in page.search_for(linked_text, clip=rectangle):
+                    page.draw_line(
+                        linked_rectangle.bottom_left,
+                        linked_rectangle.bottom_right,
+                        color=(0.09, 0.41, 0.69), width=0.8, overlay=True,
+                    )
+                    page.insert_link(
+                        {"kind": pymupdf.LINK_URI, "from": linked_rectangle, "uri": uri}
+                    )
+    if item.hyperlink.strip():
+        page.draw_line(
+            pymupdf.Point(min(rectangle.x0, rectangle.x1), max(rectangle.y0, rectangle.y1) - 1),
+            pymupdf.Point(max(rectangle.x0, rectangle.x1), max(rectangle.y0, rectangle.y1) - 1),
+            color=(0.09, 0.41, 0.69), width=1.0, overlay=True,
+        )
+        link_rectangle = pymupdf.Rect(
+            min(rectangle.x0, rectangle.x1), min(rectangle.y0, rectangle.y1),
+            max(rectangle.x0, rectangle.x1), max(rectangle.y0, rectangle.y1),
+        )
+        page.insert_link(
+            {"kind": pymupdf.LINK_URI, "from": link_rectangle, "uri": item.hyperlink.strip()}
+        )
 
 
 def _draw_shape(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject) -> None:
@@ -328,32 +451,145 @@ def _flow_segments(text: str, frames: list[PageObject]) -> list[str]:
 
 
 def _text_fits(text: str, frame: PageObject) -> bool:
-    font_name = {"Serif": "tiro", "Monospace": "cour"}.get(frame.font_family, "helv")
-    font = pymupdf.Font(font_name)
-    available_width = max(4.0, frame.width - 12)
-    line_height = max(7.0, frame.font_size * 1.35)
-    maximum_lines = max(1, int((frame.height - 8) / line_height))
-    lines = 0
+    return len(wrapped_text_lines(text, frame)) <= text_frame_line_capacity(frame)
+
+
+def text_frame_line_height(frame: PageObject) -> float:
+    """Return the text leading used consistently by flow and canvas preview."""
+    return max(7.0, frame.font_size * 1.35)
+
+
+def text_frame_line_capacity(frame: PageObject) -> int:
+    """Return how many complete lines are visible inside a text frame."""
+    return max(1, int((abs(frame.height) - 8) / text_frame_line_height(frame)))
+
+
+def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
+    """Wrap text in page units so flow and on-screen rendering cannot diverge."""
+    available_width = max(4.0, abs(frame.width) - 2 * TEXT_FRAME_HORIZONTAL_PADDING)
+    lines: list[str] = []
     for paragraph in text.split("\n"):
         if not paragraph:
-            lines += 1
+            lines.append("")
             continue
-        current = ""
-        for character in paragraph:
-            candidate = current + character
-            if current and font.text_length(candidate, fontsize=frame.font_size) > available_width:
-                lines += 1
-                current = character.lstrip() if character.isspace() else character
-            else:
-                current = candidate
-        lines += 1
-        if lines > maximum_lines:
-            return False
-    return lines <= maximum_lines
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current_words: list[str] = []
+        current_width = 0.0
+        space_width = _text_flow_character_width(
+            frame.font_family, frame.font_size, frame.bold, frame.italic, " "
+        )
+        for word in words:
+            word_width = _text_flow_text_width(
+                frame.font_family, frame.font_size, frame.bold, frame.italic, word
+            )
+            candidate_width = current_width + (space_width if current_words else 0) + word_width
+            if current_words and candidate_width > available_width:
+                lines.append(" ".join(current_words))
+                current_words = []
+                current_width = 0.0
+            if word_width <= available_width:
+                current_words.append(word)
+                current_width = word_width if len(current_words) == 1 else candidate_width
+                continue
+            if current_words:
+                lines.append(" ".join(current_words))
+                current_words = []
+                current_width = 0.0
+            fragment = ""
+            fragment_width = 0.0
+            for character in word:
+                character_width = _text_flow_character_width(
+                    frame.font_family,
+                    frame.font_size,
+                    frame.bold,
+                    frame.italic,
+                    character,
+                )
+                if fragment and fragment_width + character_width > available_width:
+                    lines.append(fragment)
+                    fragment = character
+                    fragment_width = character_width
+                else:
+                    fragment += character
+                    fragment_width += character_width
+            if fragment:
+                current_words = [fragment]
+                current_width = fragment_width
+        if current_words:
+            lines.append(" ".join(current_words))
+    return lines
+
+
+@lru_cache(maxsize=48)
+def _text_flow_font(
+    font_family: str, font_size: float, bold: bool, italic: bool
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load the exact font used by the canvas preview for reliable wrapping."""
+    suffix = (
+        "-BoldOblique"
+        if bold and italic
+        else "-Bold"
+        if bold
+        else "-Oblique"
+        if italic
+        else ""
+    )
+    family = (
+        "DejaVuSansMono"
+        if font_family == "Monospace"
+        else "DejaVuSerif"
+        if font_family == "Serif"
+        else "DejaVuSans"
+    )
+    try:
+        return ImageFont.truetype(f"{family}{suffix}.ttf", max(7, round(font_size)))
+    except OSError:
+        return ImageFont.load_default()
+
+
+@lru_cache(maxsize=4096)
+def _text_flow_character_width(
+    font_family: str,
+    font_size: float,
+    bold: bool,
+    italic: bool,
+    character: str,
+) -> float:
+    return _text_flow_font(font_family, font_size, bold, italic).getlength(character)
+
+
+def _text_flow_text_width(
+    font_family: str, font_size: float, bold: bool, italic: bool, text: str
+) -> float:
+    return sum(
+        _text_flow_character_width(
+            font_family, font_size, bold, italic, character
+        )
+        for character in text
+    )
+
+
+def _table_merge_for_cell(item: PageObject, row: int, column: int) -> list[int] | None:
+    for merge in item.table_merges:
+        if len(merge) == 4:
+            top, left, row_span, column_span = merge
+            if top <= row < top + row_span and left <= column < left + column_span:
+                return merge
+    return None
+
+
+def _table_grid_hidden(
+    item: PageObject, row_a: int, column_a: int, row_b: int, column_b: int
+) -> bool:
+    merge = _table_merge_for_cell(item, row_a, column_a)
+    return merge is not None and merge == _table_merge_for_cell(item, row_b, column_b)
 
 
 def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, text: str) -> None:
-    rows = evaluate_table(text)
+    rows = evaluate_table_cells(item.table_cells) if item.table_cells else evaluate_table(text)
     if not rows:
         return
     columns = max(len(row) for row in rows)
@@ -361,19 +597,108 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
     column_width = rectangle.width / columns
     for row_index, row in enumerate(rows):
         for column_index in range(columns):
+            merge = _table_merge_for_cell(item, row_index, column_index)
+            if merge and (row_index, column_index) != (merge[0], merge[1]):
+                continue
+            row_span, column_span = (merge[2], merge[3]) if merge else (1, 1)
             cell = pymupdf.Rect(
                 rectangle.x0 + column_index * column_width,
                 rectangle.y0 + row_index * row_height,
-                rectangle.x0 + (column_index + 1) * column_width,
-                rectangle.y0 + (row_index + 1) * row_height,
+                rectangle.x0 + (column_index + column_span) * column_width,
+                rectangle.y0 + (row_index + row_span) * row_height,
             )
-            page.draw_rect(cell, color=(0.35, 0.35, 0.35), width=0.6, overlay=True)
             value = row[column_index] if column_index < len(row) else ""
-            page.insert_textbox(cell + (3, 2, -3, -2), value, fontsize=item.font_size, overlay=True)
+            metadata = (
+                item.table_cells[row_index][column_index]
+                if item.table_cells and row_index < len(item.table_cells)
+                and column_index < len(item.table_cells[row_index])
+                else {}
+            )
+            image_path = metadata.get("image_path", "")
+            horizontal_align = metadata.get("horizontal_align", "left")
+            vertical_align = metadata.get("vertical_align", "top")
+            text_cell = cell + (3, 2, -3, -2)
+            if image_path and Path(image_path).is_file():
+                image_bottom = cell.y0 + cell.height * (0.62 if value else 0.92)
+                page.insert_image(
+                    pymupdf.Rect(cell.x0 + 3, cell.y0 + 3, cell.x1 - 3, image_bottom),
+                    filename=image_path,
+                    keep_proportion=True,
+                    overlay=True,
+                )
+                text_cell = pymupdf.Rect(cell.x0 + 3, image_bottom + 1, cell.x1 - 3, cell.y1 - 2)
+            line_count = max(1, value.count("\n") + 1)
+            estimated_height = line_count * item.font_size * 1.2
+            if vertical_align == "middle":
+                text_cell.y0 += max(0, (text_cell.height - estimated_height) / 2)
+            elif vertical_align == "bottom":
+                text_cell.y0 += max(0, text_cell.height - estimated_height)
+            page.insert_textbox(
+                text_cell, value, fontsize=item.font_size,
+                align={"left": 0, "center": 1, "right": 2}.get(horizontal_align, 0),
+                overlay=True,
+            )
+            hyperlink = metadata.get("hyperlink", "").strip()
+            if hyperlink:
+                page.draw_line(
+                    pymupdf.Point(cell.x0 + 2, cell.y1 - 2),
+                    pymupdf.Point(cell.x1 - 2, cell.y1 - 2),
+                    color=(0.09, 0.41, 0.69), width=0.8, overlay=True,
+                )
+                page.insert_link({"kind": pymupdf.LINK_URI, "from": cell, "uri": hyperlink})
+    border_color = _rgb(item.border_color)
+    if item.table_inner_border_width > 0:
+        for column in range(1, columns):
+            x = rectangle.x0 + column * column_width
+            for row in range(len(rows)):
+                if not _table_grid_hidden(item, row, column - 1, row, column):
+                    page.draw_line(
+                        pymupdf.Point(x, rectangle.y0 + row * row_height),
+                        pymupdf.Point(x, rectangle.y0 + (row + 1) * row_height),
+                        color=border_color, width=item.table_inner_border_width, overlay=True,
+                    )
+        for row in range(1, len(rows)):
+            y = rectangle.y0 + row * row_height
+            width = item.table_row_border_widths.get(str(row - 1), item.table_inner_border_width)
+            for column in range(columns):
+                if not _table_grid_hidden(item, row - 1, column, row, column):
+                    page.draw_line(
+                        pymupdf.Point(rectangle.x0 + column * column_width, y),
+                        pymupdf.Point(rectangle.x0 + (column + 1) * column_width, y),
+                        color=border_color, width=width, overlay=True,
+                    )
+    for row_text, width in item.table_row_border_widths.items():
+        row = int(row_text)
+        if 0 <= row < len(rows):
+            for y in (rectangle.y0 + row * row_height, rectangle.y0 + (row + 1) * row_height):
+                page.draw_line(
+                    pymupdf.Point(rectangle.x0, y), pymupdf.Point(rectangle.x1, y),
+                    color=border_color, width=width, overlay=True,
+                )
+    for border_range in item.table_border_ranges:
+        left = int(border_range.get("left", 0))
+        top = int(border_range.get("top", 0))
+        right = int(border_range.get("right", left))
+        bottom = int(border_range.get("bottom", top))
+        page.draw_rect(
+            pymupdf.Rect(
+                rectangle.x0 + left * column_width,
+                rectangle.y0 + top * row_height,
+                rectangle.x0 + (right + 1) * column_width,
+                rectangle.y0 + (bottom + 1) * row_height,
+            ),
+            color=border_color,
+            width=float(border_range.get("width", 1.5)),
+            overlay=True,
+        )
+    if item.table_outer_border_width > 0:
+        page.draw_rect(
+            rectangle, color=border_color, width=item.table_outer_border_width, overlay=True
+        )
 
 
 def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject, chart_type: str) -> None:
-    rows = evaluate_table(source.text)
+    rows = evaluate_table_cells(source.table_cells) if source.table_cells else evaluate_table(source.text)
     labels: list[str] = []
     values: list[float] = []
     for index, row in enumerate(rows):

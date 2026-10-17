@@ -10,7 +10,7 @@ import pymupdf
 from pypdf import PdfReader
 
 from ..i18n import tr, translate_widget_tree
-from ..paths import collision_free_target, downloads_directory
+from ..paths import collision_free_target, module_output_directory
 from ..services.pdf_organizer import PagePlan, assemble_pdf, suggested_organized_stem
 from ..system import open_path
 from .dialogs import show_success
@@ -38,8 +38,8 @@ class PageItem:
 
 class OrganizePdfWindow(tk.Toplevel):
     def __init__(self, parent: tk.Misc) -> None:
-        super().__init__(parent, class_="LouCodiPdfConverter")
-        self.title("Organiser les PDF — PDF Converter Lou Còdi")
+        super().__init__(parent, class_="Loucodiworkshop")
+        self.title("Organiser les PDF — Lou Còdi Workshop")
         self.minsize(900, 650)
         self.configure(bg=BACKGROUND)
         maximize_window(self)
@@ -50,7 +50,7 @@ class OrganizePdfWindow(tk.Toplevel):
         self.drag_item: str | None = None
         self.drag_snapshot: list[PageItem] | None = None
         self.last_output: Path | None = None
-        self.destination = tk.StringVar(value=str(downloads_directory()))
+        self.destination = tk.StringVar(value=str(module_output_directory("Organiser les PDF")))
         self._build()
         translate_widget_tree(self)
         make_modal(self, parent)

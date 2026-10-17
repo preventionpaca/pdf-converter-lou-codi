@@ -1,0 +1,14 @@
+Vosk — composant prévu, non encore intégré
+==========================================
+
+Le moteur Vosk est publié sous Apache License 2.0. Il n’est pas encore livré avec la version courante de Lou Còdi PDF Converter.
+
+Modèle prévu : vosk-model-small-fr-0.22 — Apache License 2.0.
+
+Il ne faut pas lui substituer sans audit un autre modèle : les modèles Vosk n’ont pas tous la même licence. Certains sont notamment sous AGPL ou sous une licence interdisant l’usage commercial.
+
+Licence du moteur : https://github.com/alphacep/vosk-api/blob/master/COPYING
+Liste des modèles : https://alphacephei.com/vosk/models
+
+Le texte complet Apache License 2.0 est conservé dans `APACHE-2.0.txt`.
+Au moment de l’intégration, tout fichier NOTICE livré par le moteur ou le modèle devra également être ajouté à l’installateur.

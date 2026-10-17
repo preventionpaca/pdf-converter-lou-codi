@@ -1,10 +1,10 @@
 [Desktop Entry]
-Name=PDF Converter – Lou Còdi
-Comment=Convertir et organiser des documents PDF localement
+Name=Lou Còdi Workshop
+Comment=Des outils pratiques, en local, pour créer et fabriquer
 Exec=/home/rudy/Projets/pdf-converter-lou-codi/.venv/bin/lou-codi-pdf-converter
-Icon=lou-codi-pdf-converter
+Icon=lou-codi-workshop
 Terminal=false
 Type=Application
-Categories=Office;
-Keywords=PDF;DOCX;Excel;Word;conversion;
-StartupWMClass=Loucodipdfconverter
+Categories=Office;Graphics;Utility;
+Keywords=PDF;DOCX;dessin;découpe;atelier;conversion;
+StartupWMClass=Loucodiworkshop

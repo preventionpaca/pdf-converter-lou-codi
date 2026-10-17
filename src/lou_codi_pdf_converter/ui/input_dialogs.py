@@ -11,7 +11,7 @@ BACKGROUND = "#F0F4F9"
 
 
 def ask_text(parent: tk.Misc, title: str, prompt: str, initial: str = "") -> str | None:
-    dialog = tk.Toplevel(parent, class_="LouCodiPdfConverter")
+    dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title(title)
     dialog.configure(bg=BACKGROUND)
     result: list[str] = []
@@ -44,6 +44,83 @@ def ask_text(parent: tk.Misc, title: str, prompt: str, initial: str = "") -> str
     return result[0] if result else None
 
 
+def ask_number(
+    parent: tk.Misc,
+    title: str,
+    prompt: str,
+    initial: float | None = None,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float | None:
+    """Branded numeric input accepting both decimal comma and decimal point."""
+    value = ask_text(parent, title, prompt, "" if initial is None else f"{initial:g}")
+    if value is None:
+        return None
+    try:
+        number = float(value.replace(",", "."))
+    except ValueError:
+        from tkinter import messagebox
+
+        messagebox.showerror("Valeur incorrecte", "Saisissez une valeur numérique.", parent=parent)
+        return None
+    if minimum is not None and number < minimum:
+        from tkinter import messagebox
+
+        messagebox.showerror("Valeur incorrecte", f"La valeur minimale est {minimum:g}.", parent=parent)
+        return None
+    if maximum is not None and number > maximum:
+        from tkinter import messagebox
+
+        messagebox.showerror("Valeur incorrecte", f"La valeur maximale est {maximum:g}.", parent=parent)
+        return None
+    return number
+
+
+def choose_color(parent: tk.Misc, title: str, initial: str) -> str | None:
+    dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
+    dialog.title(title)
+    dialog.configure(bg=BACKGROUND)
+    result: list[str] = []
+    value = tk.StringVar(value=initial)
+    tk.Label(dialog, text=title, bg=NAVY, fg="white", font=("Sans", 16, "bold"), padx=22, pady=14).pack(fill="x")
+    body = ttk.Frame(dialog, style="Card.TFrame", padding=20)
+    body.pack(fill="both", expand=True, padx=16, pady=16)
+    palette = (
+        "#000000", "#FFFFFF", "#72879C", "#193B66", "#2368AF", "#26A5D9",
+        "#C83232", "#E87524", "#F4B942", "#258A55", "#7B4DB5", "#8B5A2B",
+    )
+
+    def select(color: str) -> None:
+        value.set(color)
+
+    grid = ttk.Frame(body, style="Card.TFrame")
+    grid.pack(fill="x")
+    for index, color in enumerate(palette):
+        tk.Button(grid, bg=color, activebackground=color, width=5, height=2, command=lambda chosen=color: select(chosen)).grid(row=index // 6, column=index % 6, padx=4, pady=4)
+    ttk.Label(body, text="Code hexadécimal", style="Body.TLabel").pack(anchor="w", pady=(12, 3))
+    ttk.Entry(body, textvariable=value).pack(fill="x")
+
+    def accept() -> None:
+        color = value.get().strip()
+        if len(color) == 7 and color.startswith("#"):
+            try:
+                int(color[1:], 16)
+            except ValueError:
+                return
+            result.append(color.upper())
+            dialog.destroy()
+
+    actions = ttk.Frame(dialog, padding=(16, 0, 16, 16))
+    actions.pack(fill="x")
+    ttk.Button(actions, text="Annuler", command=dialog.destroy).pack(side="right")
+    ttk.Button(actions, text="Choisir", style="Primary.TButton", command=accept).pack(side="right", padx=8)
+    center_window(dialog, 500, 390)
+    make_modal(dialog, parent)
+    dialog.wait_window()
+    return result[0] if result else None
+
+
 def ask_table_size(parent: tk.Misc) -> tuple[int, int] | None:
     value = ask_text(parent, "Insérer un tableau", "Dimensions du tableau (lignes × colonnes) :", "3 × 3")
     if not value:
@@ -63,7 +140,7 @@ def edit_table(parent: tk.Misc, text: str) -> str | None:
         rows = [[""]]
     column_count = max(len(row) for row in rows)
     rows = [row + [""] * (column_count - len(row)) for row in rows]
-    dialog = tk.Toplevel(parent, class_="LouCodiPdfConverter")
+    dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title("Modifier le tableau")
     dialog.configure(bg=BACKGROUND)
     result: list[str] = []
@@ -164,7 +241,7 @@ def pick_symbol(parent: tk.Misc) -> str | None:
         "€", "£", "$", "%", "©", "®", "™", "§", "°", "±",
         "☎", "✉", "⌂", "⚠", "ℹ", "♥", "♦", "♣", "♠",
     )
-    dialog = tk.Toplevel(parent, class_="LouCodiPdfConverter")
+    dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title("Caractères spéciaux")
     dialog.configure(bg=BACKGROUND)
     result: list[str] = []

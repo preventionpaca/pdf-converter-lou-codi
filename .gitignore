@@ -7,6 +7,9 @@ __pycache__/
 coverage.xml
 build/
 dist/
+packaging/runtime/office-runtime/
+packaging/runtime/speech-models/
+packaging/runtime/audio-runtime/
 *.egg-info/
 *.pdf
 *.docx
@@ -15,4 +18,3 @@ dist/
 *.odt
 *.ods
 *.odp
-

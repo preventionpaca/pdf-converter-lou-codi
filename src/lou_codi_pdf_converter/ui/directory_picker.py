@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 from ..i18n import translate_widget_tree
 from ..paths import downloads_directory
 from .windowing import make_modal, maximize_window
+from .input_dialogs import ask_text
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -15,7 +16,7 @@ BACKGROUND = "#F0F4F9"
 
 class DirectoryPicker(tk.Toplevel):
     def __init__(self, parent: tk.Misc, initial_directory: Path) -> None:
-        super().__init__(parent, class_="LouCodiPdfConverter")
+        super().__init__(parent, class_="Loucodiworkshop")
         self.title("Choisir le dossier de destination")
         self.minsize(850, 600)
         self.configure(bg=BACKGROUND)
@@ -62,6 +63,11 @@ class DirectoryPicker(tk.Toplevel):
             text="↑ Dossier parent",
             command=lambda: self._show_directory(self.current_directory.parent),
         ).pack(side="left")
+        ttk.Button(
+            navigation,
+            text="＋ Nouveau dossier",
+            command=self._new_folder,
+        ).pack(side="left", padx=(8, 0))
         ttk.Label(navigation, textvariable=self.path_text).pack(side="left", padx=16)
 
         table_frame = ttk.Frame(self, padding=(20, 0, 20, 12))
@@ -125,8 +131,56 @@ class DirectoryPicker(tk.Toplevel):
         self.selected_directory = self.current_directory
         self.destroy()
 
+    def _new_folder(self) -> None:
+        name = ask_text(self, "Nouveau dossier", "Nom du nouveau dossier :", "Nouveau dossier")
+        if not name:
+            return
+        name = name.strip()
+        if not name or any(character in name for character in '/\\\0'):
+            messagebox.showerror("Nom incorrect", "Choisissez un nom de dossier simple.", parent=self)
+            return
+        target = self.current_directory / name
+        try:
+            target.mkdir()
+        except FileExistsError:
+            messagebox.showwarning("Dossier existant", "Un dossier porte déjà ce nom.", parent=self)
+            return
+        except OSError as exc:
+            messagebox.showerror("Création impossible", str(exc), parent=self)
+            return
+        self._show_directory(target)
+
 
 def choose_directory(parent: tk.Misc, initial_directory: Path) -> Path | None:
     picker = DirectoryPicker(parent, initial_directory)
     picker.wait_window()
     return picker.selected_directory
+
+
+def choose_save_path(
+    parent: tk.Misc,
+    initial_directory: Path,
+    initial_name: str,
+    suffix: str,
+) -> Path | None:
+    """Branded save workflow with navigation and first-class folder creation."""
+    directory = choose_directory(parent, initial_directory)
+    if directory is None:
+        return None
+    name = ask_text(parent, "Nom du fichier", "Nom du fichier :", initial_name)
+    if not name:
+        return None
+    safe_name = Path(name).name
+    if safe_name != name or safe_name in {".", ".."}:
+        messagebox.showerror("Nom incorrect", "Indiquez uniquement le nom du fichier.", parent=parent)
+        return None
+    target = directory / safe_name
+    if target.suffix.lower() != suffix.lower():
+        target = target.with_suffix(suffix)
+    if target.exists() and not messagebox.askyesno(
+        "Remplacer le fichier ?",
+        f"{target.name} existe déjà. Voulez-vous le remplacer ?",
+        parent=parent,
+    ):
+        return None
+    return target

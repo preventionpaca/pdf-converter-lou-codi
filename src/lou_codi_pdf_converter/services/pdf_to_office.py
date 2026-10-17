@@ -1,19 +1,66 @@
 from __future__ import annotations
 
-import os
+import logging
+import re
 from pathlib import Path
+from typing import Callable
 
 
-def convert_pdf_to_docx(source: Path, target: Path, password: str | None = None) -> None:
+ProgressCallback = Callable[[str, int | None, int | None], None]
+
+
+class _Pdf2DocxProgressHandler(logging.Handler):
+    """Translate pdf2docx log records into stable, user-facing progress events."""
+
+    _page_pattern = re.compile(r"\((\d+)/(\d+)\) Page (\d+)")
+
+    def __init__(self, callback: ProgressCallback) -> None:
+        super().__init__()
+        self.callback = callback
+        self.stage = "Préparation"
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if "[1/4]" in message:
+            self.stage = "Ouverture du PDF"
+            self.callback(self.stage, None, None)
+        elif "[2/4]" in message:
+            self.stage = "Analyse de la mise en page"
+            self.callback(self.stage, None, None)
+        elif "[3/4]" in message:
+            self.stage = "Lecture des pages"
+            self.callback(self.stage, None, None)
+        elif "[4/4]" in message:
+            self.stage = "Création du document Word"
+            self.callback(self.stage, None, None)
+
+        match = self._page_pattern.search(message)
+        if match:
+            current, total, _page_number = (int(value) for value in match.groups())
+            self.callback(self.stage, current, total)
+
+
+def convert_pdf_to_docx(
+    source: Path,
+    target: Path,
+    password: str | None = None,
+    progress: ProgressCallback | None = None,
+) -> None:
     from pdf2docx import Converter
 
     converter = Converter(str(source), password or None)
+    handler = _Pdf2DocxProgressHandler(progress) if progress else None
+    logger = logging.getLogger()
+    if handler:
+        logger.addHandler(handler)
     try:
-        # pdf2docx is CPU intensive. A bounded worker count substantially speeds up
-        # long documents without exhausting memory on machines with many cores.
-        cpu_count = max(1, min(4, (os.cpu_count() or 2) - 1))
-        converter.convert(str(target), multi_processing=True, cpu_count=cpu_count)
+        # Multiprocessing can deadlock when pdf2docx runs from the packaged desktop
+        # executable. Sequential conversion is predictable and still fast for the
+        # documents handled by this application.
+        converter.convert(str(target), multi_processing=False)
     finally:
+        if handler:
+            logger.removeHandler(handler)
         converter.close()
 
 

@@ -15,7 +15,15 @@ Les textes complets des licences doivent être inclus dans l’installateur fina
 | ReportLab | génération des calques et contenus PDF | BSD |
 | arabic-reshaper | affichage de l’arabe | MIT |
 | python-bidi | affichage bidirectionnel | LGPL-3.0-or-later |
-| LibreOffice | conversion locale des documents bureautiques | MPL-2.0 et licences tierces de sa distribution |
+| Vosk | dictée locale hors ligne facultative | Apache-2.0 |
+| sounddevice | accès local au microphone | MIT |
+
+SQLite, fourni par la bibliothèque standard Python, est placé dans le domaine public.
+Le modèle Vosk français est facultatif dans l’installateur, mais le moteur et sa notice
+sont présents dans la publication complète.
+
+LibreOffice n’est pas distribué dans les paquets Lou Còdi. Lorsqu’il est déjà installé
+sur l’ordinateur, Lou Còdi peut l’appeler comme logiciel externe indépendant.
 
 ## Sources officielles
 
@@ -36,6 +44,5 @@ Une livraison binaire doit être accompagnée d’un accès gratuit au code sour
 correspondant de PDF Converter – Lou Còdi. Elle doit également conserver les notices,
 les textes de licence et les moyens d’obtenir les sources des composants qui l’exigent.
 
-Pour LibreOffice, la construction doit reprendre sans modification les fichiers de
-licence et de mentions tierces fournis par la distribution embarquée. La version et
-l’adresse de son code source exact doivent être ajoutées aux informations de livraison.
+Si une future édition embarque LibreOffice, elle devra reprendre sans modification ses
+fichiers de licence et de mentions tierces, ainsi que l’adresse de son code source exact.

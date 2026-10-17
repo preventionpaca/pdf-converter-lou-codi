@@ -1,0 +1,39 @@
+name: Construire les paquets Lou Còdi Workshop
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux
+          - os: windows-latest
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[packaging,speech]"
+      - run: python packaging/standalone/fetch_speech_model.py
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - run: python -m pytest -q
+      - run: python -m PyInstaller -y --clean packaging/standalone/lou-codi-pdf-converter.spec
+        env:
+          LOU_CODI_BUNDLE_SPEECH: "1"
+      - if: runner.os == 'Linux'
+        run: bash packaging/linux/make-bundle.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: packaging/windows/make-bundle.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lou-codi-workshop-${{ matrix.artifact }}
+          path: dist/installers/*

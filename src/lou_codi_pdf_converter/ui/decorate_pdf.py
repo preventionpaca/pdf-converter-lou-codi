@@ -3,12 +3,12 @@ from __future__ import annotations
 import tempfile
 import tkinter as tk
 from pathlib import Path
-from tkinter import colorchooser, messagebox, ttk
+from tkinter import messagebox, ttk
 
 import pymupdf
 
 from ..i18n import tr, translate_widget_tree, untr
-from ..paths import collision_free_target, downloads_directory
+from ..paths import collision_free_target, module_output_directory
 from ..services.pdf_decoration import (
     DecorationSettings,
     MaskZone,
@@ -18,6 +18,7 @@ from ..services.pdf_decoration import (
 from ..system import open_path
 from .dialogs import show_success
 from .directory_picker import choose_directory
+from .input_dialogs import choose_color
 from .pdf_picker import choose_documents, choose_pdfs
 from .windowing import make_modal, maximize_window
 
@@ -28,8 +29,8 @@ MUTED = "#597089"
 
 class DecoratePdfWindow(tk.Toplevel):
     def __init__(self, parent: tk.Misc) -> None:
-        super().__init__(parent, class_="LouCodiPdfConverter")
-        self.title("Habillage PDF — PDF Converter Lou Còdi")
+        super().__init__(parent, class_="Loucodiworkshop")
+        self.title("Habillage PDF — Lou Còdi Workshop")
         self.minsize(950, 680)
         self.configure(bg=BACKGROUND)
         maximize_window(self)
@@ -38,7 +39,7 @@ class DecoratePdfWindow(tk.Toplevel):
         self.preview_image: tk.PhotoImage | None = None
         self.last_output: Path | None = None
         self.temp_directory = tempfile.TemporaryDirectory(prefix="lou-codi-preview-")
-        self.destination = tk.StringVar(value=str(downloads_directory()))
+        self.destination = tk.StringVar(value=str(module_output_directory("Habillage PDF")))
         self.pages = tk.StringVar(value=tr("Toutes"))
         self.watermark_text = tk.StringVar()
         self.watermark_image = tk.StringVar()
@@ -419,11 +420,7 @@ class DecoratePdfWindow(tk.Toplevel):
         return button
 
     def _choose_color(self, variable: tk.StringVar, key: str) -> None:
-        _rgb, selected = colorchooser.askcolor(
-            color=variable.get(),
-            title=tr("Choisir une couleur — Lou Còdi"),
-            parent=self,
-        )
+        selected = choose_color(self, tr("Choisir une couleur — Lou Còdi"), variable.get())
         if not selected:
             return
         self._remember_state()

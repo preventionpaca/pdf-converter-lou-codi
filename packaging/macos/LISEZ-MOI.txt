@@ -1,0 +1,7 @@
+Lou Còdi Workshop fonctionne sans LibreOffice.
+
+Sans LibreOffice, les DOCX et XLSX simples utilisent le moteur de conversion allégé.
+Si LibreOffice est déjà installé, Lou Còdi l’utilise comme moteur externe pour une
+conversion fidèle, PowerPoint, OpenDocument et les anciens formats.
+
+LibreOffice est un logiciel indépendant. Il n’est ni fourni ni installé par Lou Còdi.
