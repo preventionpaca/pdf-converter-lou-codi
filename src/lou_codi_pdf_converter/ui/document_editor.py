@@ -6011,6 +6011,20 @@ class DocumentEditorWindow(tk.Toplevel):
         )
 
     def _close_contour(self) -> None:
+        if len(self.selected_indices) == 1:
+            selected_index = next(iter(self.selected_indices))
+            selected = self.document.objects[selected_index]
+            if selected.kind == "polyline" and len(selected.points) >= 2:
+                if math.dist(selected.points[0], selected.points[-1]) <= 1e-6:
+                    self.status.configure(text="Cette polyligne est déjà fermée.")
+                    return
+                self._checkpoint()
+                selected.points.append(list(selected.points[0]))
+                self.status.configure(
+                    text="Polyligne fermée : un segment relie maintenant le dernier point au premier."
+                )
+                self._render()
+                return
         segments = self._selected_line_segments()
         if len(segments) < 2:
             messagebox.showinfo(

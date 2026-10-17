@@ -650,6 +650,26 @@ def test_rotating_hatched_polyline_rotates_hatches_about_the_same_pivot() -> Non
     assert math.isclose(hatch.height, 40.0, abs_tol=1e-6)
 
 
+def test_close_contour_closes_one_selected_polyline_without_tolerance_dialog() -> None:
+    polyline = PageObject(
+        "polyline", 0, 10, 20, 100, 60,
+        points=[[0, 0], [100, 0], [80, 60]],
+    )
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[polyline])
+    editor.selected_indices = {0}
+    editor.selected = 0
+    editor.status = _StatusRecorder()
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    editor._close_contour()
+
+    assert polyline.points == [[0, 0], [100, 0], [80, 60], [0, 0]]
+    assert DocumentEditorWindow._closed_outline(polyline)
+    assert "Polyligne fermée" in editor.status.text
+
+
 def test_external_office_text_separators_become_line_breaks() -> None:
     assert normalize_external_text("un\vdeux\ftrois\u2028quatre\x00") == (
         "un\ndeux\ntrois\nquatre"
