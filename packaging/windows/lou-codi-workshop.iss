@@ -46,12 +46,12 @@ Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\*"; DestDir: "{app}"; Flags: 
 Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\_internal\speech-models\*"; DestDir: "{app}\_internal\speech-models"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: speech
 
 [Dirs]
-Name: "{userprofile}\Downloads\LouCodi\PDF vers Office"; Components: workspace
-Name: "{userprofile}\Downloads\LouCodi\Documents vers PDF"; Components: workspace
-Name: "{userprofile}\Downloads\LouCodi\Organiser les PDF"; Components: workspace
-Name: "{userprofile}\Downloads\LouCodi\Habillage PDF"; Components: workspace
-Name: "{userprofile}\Downloads\LouCodi\Document Studio"; Components: workspace
-Name: "{userprofile}\Downloads\LouCodi\Optimisation de découpe"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\PDF vers Office"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\Documents vers PDF"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\Organiser les PDF"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\Habillage PDF"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\Document Studio"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\Optimisation de découpe"; Components: workspace
 
 [Icons]
 Name: "{group}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; AppUserModelID: "LouCodi.Workshop"
