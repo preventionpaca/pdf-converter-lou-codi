@@ -7074,8 +7074,12 @@ class DocumentEditorWindow(tk.Toplevel):
     def _rotate_selected_degrees(self, degrees: float) -> None:
         if not self.selected_indices:
             return
+        indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        objects = [self.document.objects[index] for index in indices]
+        left, top, width, height = objects_bounds(objects)
+        assembly_pivot = (left + width / 2, top + height / 2)
         self._checkpoint()
-        for index in self.selected_indices:
+        for index in indices:
             item = self.document.objects[index]
             if item.kind == "image":
                 try:
@@ -7084,20 +7088,48 @@ class DocumentEditorWindow(tk.Toplevel):
                     self._replace_image_pixels(item, rotated)
                 except OSError:
                     pass
-            if item.kind == "line":
-                self._rotate_line(item, degrees)
-                continue
-            if item.kind == "polyline":
-                self._rotate_polyline(item, degrees)
-                continue
-            center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
-            if abs(degrees) % 180 == 90:
-                item.width, item.height = item.height, item.width
-            item.x, item.y = center_x - item.width / 2, center_y - item.height / 2
-            item.rotation = round((item.rotation + degrees) % 360)
-            if item.kind == "image":
-                item.rotation = 0
+            pivot = assembly_pivot if item.group else (
+                item.x + item.width / 2,
+                item.y + item.height / 2,
+            )
+            self._rotate_item_about(item, degrees, pivot)
+        self.selected_indices = indices
+        self.selected = min(indices)
         self._render()
+
+    def _rotate_item_about(
+        self, item: PageObject, degrees: float, pivot: tuple[float, float]
+    ) -> None:
+        """Rotate one object about a shared pivot, preserving an assembled hatch group."""
+        if item.kind == "line":
+            start = self._rotate_point_about((item.x, item.y), pivot, degrees)
+            end = self._rotate_point_about(
+                (item.x + item.width, item.y + item.height), pivot, degrees
+            )
+            item.x, item.y = start
+            item.width, item.height = end[0] - start[0], end[1] - start[1]
+            item.rotation = round((item.rotation + degrees) % 360)
+            return
+        if item.kind == "polyline" and item.points:
+            absolute = [
+                self._rotate_point_about((item.x + x, item.y + y), pivot, degrees)
+                for x, y in item.points
+            ]
+            left = min(point[0] for point in absolute)
+            top = min(point[1] for point in absolute)
+            item.x, item.y = left, top
+            item.width = max(point[0] for point in absolute) - left
+            item.height = max(point[1] for point in absolute) - top
+            item.points = [[x - left, y - top] for x, y in absolute]
+            item.rotation = round((item.rotation + degrees) % 360)
+            return
+        center = self._rotate_point_about(
+            (item.x + item.width / 2, item.y + item.height / 2), pivot, degrees
+        )
+        if abs(degrees) % 180 == 90:
+            item.width, item.height = item.height, item.width
+        item.x, item.y = center[0] - item.width / 2, center[1] - item.height / 2
+        item.rotation = 0 if item.kind == "image" else round((item.rotation + degrees) % 360)
 
     def _rotate_free(self) -> None:
         degrees = ask_number(self, "Rotation libre", "Angle de rotation en degrés :", 0.0)

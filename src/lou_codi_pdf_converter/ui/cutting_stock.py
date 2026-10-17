@@ -8,6 +8,7 @@ from ..services.canvas_document import CanvasDocument
 from ..services.cutting_optimizer import Part, Sheet, optimize_cutting
 from ..services.local_database import (
     add_stock_sheet,
+    clear_stock_sheets,
     list_stock_sheets,
     set_stock_sheet_status,
 )
@@ -122,6 +123,7 @@ class CuttingStockWindow(tk.Toplevel):
         ttk.Button(actions, text="Disponible", command=lambda: self._set_stock_status("available")).pack(side="left")
         ttk.Button(actions, text="Utilisée", command=lambda: self._set_stock_status("used")).pack(side="left", padx=5)
         ttk.Button(actions, text="Chute inutilisable", command=lambda: self._set_stock_status("scrap")).pack(side="left")
+        ttk.Button(actions, text="Vider mon magasin", command=self._clear_stock).pack(side="left", padx=(12, 0))
         ttk.Label(actions, text="Les données restent uniquement sur cet ordinateur.").pack(side="right")
 
     def _build_parts(self, parent: ttk.Frame) -> None:
@@ -223,6 +225,23 @@ class CuttingStockWindow(tk.Toplevel):
             return
         for item in selected:
             set_stock_sheet_status(int(item), status)
+        self._refresh_stock()
+
+    def _clear_stock(self) -> None:
+        if not list_stock_sheets():
+            messagebox.showinfo("Vider mon magasin", "Le magasin est déjà vide.", parent=self)
+            return
+        confirmed = messagebox.askyesno(
+            "Vider mon magasin",
+            "Supprimer définitivement toutes les plaques et toutes les chutes du magasin local ?",
+            parent=self,
+        )
+        if not confirmed:
+            return
+        clear_stock_sheets()
+        self.last_plan = None
+        self.canvas.delete("all")
+        self.status.configure(text="Magasin vidé. Ajoutez une plaque pour préparer un nouveau plan.")
         self._refresh_stock()
 
     def _add_part(self) -> None:

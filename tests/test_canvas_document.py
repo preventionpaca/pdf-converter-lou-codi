@@ -1,4 +1,5 @@
 import copy
+import math
 import zipfile
 from itertools import pairwise
 from pathlib import Path
@@ -620,6 +621,33 @@ def test_remove_legacy_line_only_hatch_group() -> None:
 
     assert editor.document.objects == [unrelated]
     assert "8 hachure(s) supprimée(s)" in editor.status.text
+
+
+def test_rotating_hatched_polyline_rotates_hatches_about_the_same_pivot() -> None:
+    group = "hachures-tournees"
+    source = PageObject(
+        "polyline", 0, 10, 20, 100, 60,
+        points=[[0, 0], [100, 0], [100, 60], [0, 60], [0, 0]],
+        group=group,
+    )
+    hatch = PageObject(
+        "line", 0, 30, 30, 40, 20,
+        group=group, source_id=source.object_id, shape="hatch",
+    )
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[source, hatch])
+    editor.selected_indices = {0}
+    editor.selected = 0
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    editor._rotate_selected_degrees(90)
+
+    assert editor.selected_indices == {0, 1}
+    assert math.isclose(hatch.x, 80.0, abs_tol=1e-6)
+    assert math.isclose(hatch.y, 20.0, abs_tol=1e-6)
+    assert math.isclose(hatch.width, -20.0, abs_tol=1e-6)
+    assert math.isclose(hatch.height, 40.0, abs_tol=1e-6)
 
 
 def test_external_office_text_separators_become_line_breaks() -> None:

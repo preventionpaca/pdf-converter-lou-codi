@@ -24,6 +24,7 @@ from lou_codi_pdf_converter.services.geometry import (
 from lou_codi_pdf_converter.services.local_database import (
     SCHEMA_VERSION,
     add_stock_sheet,
+    clear_stock_sheets,
     initialize_database,
     list_stock_sheets,
     set_stock_sheet_status,
@@ -79,6 +80,16 @@ def test_stock_sheet_lifecycle_is_persisted_locally(tmp_path: Path) -> None:
     set_stock_sheet_status(sheet_id, "scrap", path=target)
     assert list_stock_sheets(path=target, available_only=True) == []
     assert list_stock_sheets(path=target)[0].status == "scrap"
+
+
+def test_stock_can_be_completely_cleared(tmp_path: Path) -> None:
+    target = tmp_path / "loucodi.db"
+    add_stock_sheet("MDF", "Bois", 2500, 1250, 18, 2, path=target)
+    add_stock_sheet("Aluminium", "Métal", 1000, 500, 2, 1, path=target)
+
+    clear_stock_sheets(path=target)
+
+    assert list_stock_sheets(path=target) == []
 
 
 def test_application_data_directory_is_platform_specific(tmp_path: Path) -> None:

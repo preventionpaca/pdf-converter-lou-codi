@@ -145,3 +145,12 @@ def set_stock_sheet_status(sheet_id: int, status: str, *, path: Path | None = No
             (status, sheet_id),
         )
         connection.commit()
+
+
+def clear_stock_sheets(*, path: Path | None = None) -> None:
+    """Remove every locally stored sheet and remnant from the cutting stock."""
+    target = initialize_database(path)
+    with closing(sqlite3.connect(target)) as connection:
+        connection.execute("DELETE FROM stock_remnant")
+        connection.execute("DELETE FROM sheet_stock")
+        connection.commit()
