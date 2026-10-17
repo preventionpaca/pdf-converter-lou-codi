@@ -5688,7 +5688,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 for index, item in enumerate(self.document.objects)
                 if item.group == group_id
             ]
-            if any(self._closed_outline(item) for _index, item in members if item.kind != "line"):
+            has_closed_source = any(
+                self._closed_outline(item)
+                for _index, item in members
+                if item.kind != "line"
+            )
+            legacy_line_only_hatch = (
+                len(members) >= 3
+                and all(item.kind == "line" for _index, item in members)
+                and all(not item.shape and not item.source_id for _index, item in members)
+            )
+            if has_closed_source or legacy_line_only_hatch:
                 legacy.update(
                     index
                     for index, item in members

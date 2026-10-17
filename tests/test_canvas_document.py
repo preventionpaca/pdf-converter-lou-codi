@@ -533,3 +533,24 @@ def test_remove_hatches_keeps_their_source_shape() -> None:
     assert editor.document.objects == [source]
     assert source.group == ""
     assert "4 hachure(s) supprimée(s)" in editor.status.text
+
+
+def test_remove_legacy_line_only_hatch_group() -> None:
+    group = "anciennes-hachures"
+    hatches = [
+        PageObject("line", 0, 20 + offset, 20, 30, 30, group=group)
+        for offset in range(8)
+    ]
+    unrelated = PageObject("line", 0, 200, 200, 50, 0)
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[*hatches, unrelated])
+    editor.selected_indices = set(range(8))
+    editor.selected = 0
+    editor.status = _StatusRecorder()
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    editor._remove_selected_hatches()
+
+    assert editor.document.objects == [unrelated]
+    assert "8 hachure(s) supprimée(s)" in editor.status.text
