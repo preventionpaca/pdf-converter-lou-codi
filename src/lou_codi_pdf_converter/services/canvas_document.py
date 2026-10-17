@@ -4,7 +4,9 @@ import json
 import math
 import os
 import sys
+import tempfile
 import uuid
+import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from functools import lru_cache
@@ -76,37 +78,113 @@ class CanvasDocument:
     is_template: bool = False
 
     def save(self, path: Path) -> None:
-        path.write_text(
-            json.dumps(
-                {
-                    "format": 2,
-                    "source_pdf": self.source_pdf,
+        """Save one self-contained .cod archive, including every external asset."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        archived_paths: dict[Path, str] = {}
+        try:
+            with zipfile.ZipFile(
+                temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
+            ) as archive:
+                def add_asset(raw_path: str, category: str) -> str:
+                    if not raw_path:
+                        return ""
+                    source = Path(raw_path).expanduser()
+                    if not source.is_file():
+                        return ""
+                    resolved = source.resolve()
+                    if resolved in archived_paths:
+                        return archived_paths[resolved]
+                    suffix = source.suffix.lower() or ".bin"
+                    member = f"assets/{category}/{uuid.uuid4().hex}{suffix}"
+                    archive.write(source, member)
+                    archived_paths[resolved] = member
+                    return member
+
+                objects: list[dict[str, object]] = []
+                for item in self.objects:
+                    data = asdict(item)
+                    data["image_path"] = add_asset(item.image_path, "images")
+                    cells = data.get("table_cells", [])
+                    if isinstance(cells, list):
+                        for row in cells:
+                            if not isinstance(row, list):
+                                continue
+                            for cell in row:
+                                if isinstance(cell, dict):
+                                    cell["image_path"] = add_asset(
+                                        str(cell.get("image_path", "")), "images"
+                                    )
+                    objects.append(data)
+                manifest = {
+                    "format": 3,
+                    "source_pdf": add_asset(self.source_pdf, "backgrounds"),
                     "page_count": self.page_count,
                     "page_width": self.page_width,
                     "page_height": self.page_height,
                     "measurement_scale": self.measurement_scale,
                     "is_template": self.is_template,
-                    "objects": [asdict(item) for item in self.objects],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+                    "objects": objects,
+                }
+                archive.writestr(
+                    "document.json",
+                    json.dumps(manifest, ensure_ascii=False, indent=2),
+                )
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @classmethod
     def load(cls, path: Path) -> CanvasDocument:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("format") != 2:
-            raise ValueError("Ce projet utilise un ancien format de document.")
+        if not zipfile.is_zipfile(path):
+            raise ValueError("Ce fichier n’est pas un document Lou Còdi autonome.")
+        asset_directory = Path(tempfile.mkdtemp(prefix="lou-codi-document-"))
+        with zipfile.ZipFile(path) as archive:
+            try:
+                data = json.loads(archive.read("document.json").decode("utf-8"))
+            except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("Le document Lou Còdi est incomplet ou endommagé.") from exc
+            if data.get("format") != 3:
+                raise ValueError("Ce document utilise un format Lou Còdi non pris en charge.")
+
+            extracted: dict[str, str] = {}
+
+            def materialize(member: object) -> str:
+                name = str(member or "")
+                if not name:
+                    return ""
+                if name in extracted:
+                    return extracted[name]
+                if not name.startswith("assets/") or name not in archive.namelist():
+                    raise ValueError("Une ressource incorporée au document est manquante.")
+                target = asset_directory / f"{uuid.uuid4().hex}{Path(name).suffix}"
+                target.write_bytes(archive.read(name))
+                extracted[name] = str(target)
+                return str(target)
+
+            object_values = data.get("objects", [])
+            if not isinstance(object_values, list):
+                raise ValueError("La liste des objets du document est incorrecte.")
+            for item in object_values:
+                if not isinstance(item, dict):
+                    raise ValueError("Un objet du document est incorrect.")
+                item["image_path"] = materialize(item.get("image_path", ""))
+                for row in item.get("table_cells", []):
+                    for cell in row:
+                        if isinstance(cell, dict):
+                            cell["image_path"] = materialize(cell.get("image_path", ""))
         return cls(
-            source_pdf=str(data.get("source_pdf", "")),
+            source_pdf=materialize(data.get("source_pdf", "")),
             page_count=max(1, int(data.get("page_count", 1))),
             page_width=float(data.get("page_width", A4_WIDTH)),
             page_height=float(data.get("page_height", A4_HEIGHT)),
             measurement_scale=max(1e-9, float(data.get("measurement_scale", 1.0))),
             is_template=bool(data.get("is_template", False)),
-            objects=[PageObject(**item) for item in data.get("objects", [])],
+            objects=[PageObject(**item) for item in object_values],
         )
 
 

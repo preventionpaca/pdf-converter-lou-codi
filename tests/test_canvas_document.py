@@ -1,8 +1,10 @@
 import copy
+import zipfile
 from itertools import pairwise
 from pathlib import Path
 
 from pypdf import PdfReader
+from PIL import Image
 
 from lou_codi_pdf_converter.services.canvas_document import (
     FLOW_BREAK_TOKEN,
@@ -54,6 +56,31 @@ def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
 
     assert restored.objects[1].text == "Bonjour Lou Còdi"
     assert len(PdfReader(target).pages) == 1
+    assert zipfile.is_zipfile(project)
+
+
+def test_cod_embeds_images_and_survives_removal_of_the_source(tmp_path: Path) -> None:
+    image_path = tmp_path / "illustration.png"
+    Image.new("RGB", (40, 30), "red").save(image_path)
+    project = tmp_path / "autonome.cod"
+    document = CanvasDocument(
+        objects=[
+            PageObject(
+                "image", 0, 20, 20, 120, 90, image_path=str(image_path)
+            )
+        ]
+    )
+
+    document.save(project)
+    image_path.unlink()
+    restored = CanvasDocument.load(project)
+
+    restored_image = Path(restored.objects[0].image_path)
+    assert restored_image.is_file()
+    assert Image.open(restored_image).size == (40, 30)
+    with zipfile.ZipFile(project) as archive:
+        assert "document.json" in archive.namelist()
+        assert any(name.startswith("assets/images/") for name in archive.namelist())
 
 
 def test_template_flag_round_trip(tmp_path: Path) -> None:
@@ -153,6 +180,8 @@ def test_object_level_survives_project_roundtrip(tmp_path: Path) -> None:
 
 def test_table_cells_keep_multiline_text_links_and_images(tmp_path: Path) -> None:
     target = tmp_path / "tableau.loucodi-document"
+    source_image = tmp_path / "exemple.png"
+    Image.new("RGB", (12, 10), "blue").save(source_image)
     document = CanvasDocument(
         objects=[
             PageObject(
@@ -160,7 +189,7 @@ def test_table_cells_keep_multiline_text_links_and_images(tmp_path: Path) -> Non
                 table_cells=[[{
                     "text": "Première ligne\nDeuxième ligne",
                     "hyperlink": "https://example.com",
-                    "image_path": "/tmp/exemple.png",
+                    "image_path": str(source_image),
                 }]],
             )
         ]
@@ -171,7 +200,7 @@ def test_table_cells_keep_multiline_text_links_and_images(tmp_path: Path) -> Non
     cell = CanvasDocument.load(target).objects[0].table_cells[0][0]
     assert cell["text"] == "Première ligne\nDeuxième ligne"
     assert cell["hyperlink"] == "https://example.com"
-    assert cell["image_path"] == "/tmp/exemple.png"
+    assert Path(cell["image_path"]).is_file()
 
 
 def test_table_border_settings_survive_project_roundtrip(tmp_path: Path) -> None:
