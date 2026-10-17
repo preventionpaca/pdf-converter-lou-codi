@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a2"
+  #define AppVersion "2.0.0a3"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."
@@ -24,7 +24,7 @@ PrivilegesRequired=lowest
 WizardStyle=modern
 SetupLogging=yes
 UninstallDisplayIcon={app}\lou-codi-pdf-converter.exe
-VersionInfoVersion=2.0.0.2
+VersionInfoVersion=2.0.0.3
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
@@ -35,15 +35,13 @@ Name: "custom"; Description: "Installation personnalisée"; Flags: iscustom
 
 [Components]
 Name: "core"; Description: "Lou Còdi Workshop (obligatoire)"; Types: full custom; Flags: fixed
-Name: "speech"; Description: "Dictée française locale hors ligne (environ 70 Mo)"; Types: full
 Name: "workspace"; Description: "Dossiers de travail LouCodi dans Téléchargements"; Types: full
 
 [Tasks]
 Name: "desktopicon"; Description: "Créer une icône sur le Bureau"; GroupDescription: "Raccourcis :"; Flags: unchecked
 
 [Files]
-Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "_internal\speech-models\*"; Components: core
-Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\_internal\speech-models\*"; DestDir: "{app}\_internal\speech-models"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: speech
+Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: core
 
 [Dirs]
 Name: "{%USERPROFILE}\Downloads\LouCodi\PDF vers Office"; Components: workspace
@@ -56,6 +54,13 @@ Name: "{%USERPROFILE}\Downloads\LouCodi\Optimisation de découpe"; Components: w
 [Icons]
 Name: "{group}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; AppUserModelID: "LouCodi.Workshop"
 Name: "{autodesktop}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; Tasks: desktopicon; AppUserModelID: "LouCodi.Workshop"
+
+[Registry]
+Root: HKA; Subkey: "Software\Classes\.cod"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.loucodi-document"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\LouCodi.Document"; ValueType: string; ValueData: "Document Lou Còdi"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\LouCodi.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\lou-codi-pdf-converter.exe,0"
+Root: HKA; Subkey: "Software\Classes\LouCodi.Document\shell\open\command"; ValueType: string; ValueData: """{app}\lou-codi-pdf-converter.exe"" ""%1"""
 
 [Run]
 Filename: "{app}\lou-codi-pdf-converter.exe"; Description: "Lancer Lou Còdi Workshop"; Flags: nowait postinstall skipifsilent
@@ -71,7 +76,7 @@ procedure InitializeWizard;
 var
   Notice: String;
 begin
-  Notice := 'Tous les traitements et la dictée sont réalisés localement.' + #13#10 + #13#10;
+  Notice := 'Les traitements documentaires sont réalisés localement.' + #13#10 + #13#10;
   if LibreOfficePresent then
     Notice := Notice + 'LibreOffice a été détecté : les conversions Office fidèles seront disponibles.'
   else

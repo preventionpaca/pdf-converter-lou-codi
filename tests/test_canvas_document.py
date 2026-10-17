@@ -185,6 +185,44 @@ def test_merged_table_cells_and_alignment_survive_roundtrip_and_pdf_export(tmp_p
     assert target.is_file()
 
 
+def test_table_rows_and_columns_can_be_inserted_and_deleted() -> None:
+    table = PageObject(
+        "table",
+        0,
+        20,
+        20,
+        200,
+        100,
+        table_cells=[
+            [{"text": "A"}, {"text": "B"}],
+            [{"text": "C"}, {"text": "D"}],
+        ],
+    )
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[table])
+    editor.selected = 0
+    editor.selected_indices = {0}
+    editor._active_table_cell = (table.object_id, 0, 0)
+    editor._editing_widget = None
+    editor._commit_inline_editor = lambda **_kwargs: None
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+    editor.status = _StatusRecorder()
+
+    editor._change_table_structure("insert_row_after")
+    editor._change_table_structure("insert_column_after")
+
+    assert len(table.table_cells) == 3
+    assert all(len(row) == 3 for row in table.table_cells)
+    assert table.table_cells[0][0]["text"] == "A"
+
+    editor._change_table_structure("delete_row")
+    editor._change_table_structure("delete_column")
+
+    assert len(table.table_cells) == 2
+    assert all(len(row) == 2 for row in table.table_cells)
+
+
 def test_pdf_export_contains_a_standard_clickable_uri_link(tmp_path: Path) -> None:
     target = tmp_path / "lien.pdf"
     document = CanvasDocument(

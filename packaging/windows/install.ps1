@@ -2,7 +2,6 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
 
 $Source = Join-Path $PSScriptRoot "app"
-$SpeechSource = Join-Path $PSScriptRoot "options\speech-models"
 $Target = Join-Path $env:LOCALAPPDATA "LouCodi\Workshop"
 
 if (-not (Test-Path (Join-Path $Source "lou-codi-pdf-converter.exe"))) {
@@ -42,18 +41,9 @@ $mode = [System.Windows.Forms.MessageBox]::Show(
 )
 if ($mode -eq "Cancel") { exit 0 }
 
-$installSpeech = $true
 $installShortcut = $true
 $createWorkspace = $true
 if ($mode -eq "No") {
-  if (Test-Path $SpeechSource) {
-    $installSpeech = [System.Windows.Forms.MessageBox]::Show(
-      "Installer la dictée locale hors ligne ?`n`nEnviron 70 Mo supplémentaires. Aucun enregistrement n'est envoyé sur Internet. L'accès au microphone restera soumis aux autorisations de Windows.",
-      "Composant facultatif — Dictée locale", "YesNo", "Question"
-    ) -eq "Yes"
-  } else {
-    $installSpeech = $false
-  }
   $installShortcut = [System.Windows.Forms.MessageBox]::Show(
     "Créer un raccourci dans le menu Démarrer ?", "Option — Raccourci", "YesNo", "Question"
   ) -eq "Yes"
@@ -65,17 +55,6 @@ if ($mode -eq "No") {
 if (Test-Path $Target) { Remove-Item $Target -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 Copy-Item (Join-Path $Source "*") $Target -Recurse -Force
-
-if ($installSpeech -and (Test-Path $SpeechSource)) {
-  $speechTarget = Join-Path $Target "_internal\speech-models"
-  New-Item -ItemType Directory -Force -Path $speechTarget | Out-Null
-  Copy-Item (Join-Path $SpeechSource "*") $speechTarget -Recurse -Force
-} elseif ($installSpeech) {
-  [System.Windows.Forms.MessageBox]::Show(
-    "Le pack de dictée n'est pas présent dans cette archive. L'application fonctionnera normalement sans dictée.",
-    "Avertissement — Dictée locale", "OK", "Warning"
-  ) | Out-Null
-}
 
 if ($createWorkspace) {
   try {
@@ -104,17 +83,12 @@ if ($installShortcut) {
   Remove-Item $shortcutPath -Force
 }
 
-$speechStatus = if ($installSpeech -and (Test-Path $SpeechSource)) {
-  "Dictée locale : installée."
-} else {
-  "Dictée locale : non installée ; le bouton indiquera que le pack est absent."
-}
 $shortcutStatus = if ($installShortcut) {
   "Raccourci : créé dans le menu Démarrer."
 } else {
   "Raccourci : non créé. Exécutable : $Target\lou-codi-pdf-converter.exe"
 }
 [System.Windows.Forms.MessageBox]::Show(
-  "Installation terminée.`n`n$speechStatus`n$shortcutStatus`n`n$officeStatus",
+  "Installation terminée.`n`n$shortcutStatus`n`n$officeStatus",
   "Lou Còdi Workshop", "OK", "Information"
 ) | Out-Null

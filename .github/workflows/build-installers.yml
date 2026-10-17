@@ -20,14 +20,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e ".[dev,packaging,speech]"
-      - run: python packaging/standalone/fetch_speech_model.py
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - run: python -m pip install -e ".[dev,packaging]"
       - run: python -m pytest -q
       - run: python -m PyInstaller -y --clean packaging/standalone/lou-codi-pdf-converter.spec
         env:
-          LOU_CODI_BUNDLE_SPEECH: "1"
+          LOU_CODI_BUNDLE_SPEECH: "0"
       - if: runner.os == 'Linux'
         run: bash packaging/linux/make-bundle.sh
       - if: runner.os == 'Linux'

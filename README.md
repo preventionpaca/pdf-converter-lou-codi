@@ -12,25 +12,17 @@ en cours d'intégration.
 
 ## Développement
 
-### Données locales et dictée hors ligne
+### Données locales et assistant de rédaction
 
 Au premier démarrage, l’application crée automatiquement une base SQLite
 `loucodi.db` dans le dossier de données de l’utilisateur. Aucun serveur de base
 de données n’est requis. Le chemin respecte les conventions de Windows, macOS
 et Linux.
 
-La dictée locale intégrée aux zones de texte détecte Vosk, l’accès microphone et
-le modèle français `vosk-model-small-fr-0.22`. Le pack peut être installé dans
-l’environnement de construction avec `pip install -e '.[speech]'`. Le modèle
-reste un téléchargement séparé afin de ne pas alourdir l’application de base.
-Tant que le moteur, le microphone et le modèle ne sont pas tous présents, le
-bouton de dictée indique précisément ce qui manque. L’enregistrement et la
-transcription restent entièrement locaux.
-
-Une fenêtre de relecture permet de corriger la transcription avant de l’insérer
-dans la zone de texte. La reformulation automatique locale reste expérimentale :
-elle n’est pas exposée dans l’interface tant que sa fidélité au message original
-n’est pas suffisamment fiable.
+Depuis une zone de texte, le bouton ChatGPT copie une consigne de dictée ou de
+reformulation puis ouvre le site ChatGPT dans le navigateur par défaut. Aucun
+contenu n’est envoyé automatiquement. L’utilisateur colle lui-même la consigne,
+puis peut rapatrier le résultat par le presse-papiers et le relire avant insertion.
 
 Le module **Stock et découpe** conserve localement le stock de plaques dans
 SQLite. Il accepte des formats et quantités différents, l’état des chutes, une
@@ -53,10 +45,9 @@ déjà installé sur l’ordinateur, il est détecté automatiquement pour les c
 fidèles, PowerPoint, OpenDocument, les anciens formats et les mises en page complexes.
 LibreOffice reste un logiciel indépendant et n’est pas inclus dans les paquets Lou Còdi.
 
-L’installation complète ajoute le modèle français de dictée locale, le raccourci et les
-dossiers de travail. L’installation personnalisée permet de désactiver séparément ces
-éléments facultatifs ; le cœur de l’application et ses bibliothèques PDF sont toujours
-installés.
+L’installation complète ajoute le raccourci et les dossiers de travail.
+L’installation personnalisée permet de désactiver ces éléments facultatifs ; le cœur de
+l’application et ses bibliothèques PDF sont toujours installés.
 
 Au premier lancement, l’application présente son fonctionnement gratuit. Un rappel de
 soutien volontaire est ensuite proposé toutes les vingt ouvertures ; il peut être

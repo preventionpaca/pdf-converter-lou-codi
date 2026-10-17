@@ -9,10 +9,9 @@ anciens ou PowerPoint.
 L’absence de LibreOffice ne doit jamais empêcher l’installation ou le lancement de Lou
 Còdi. L’interface indique clairement le moteur disponible et ses limites.
 
-La publication Linux et Windows est construite avec Vosk, le modèle français et le
-moteur audio en définissant `LOU_CODI_BUNDLE_SPEECH=1`. Les scripts de mise en paquet
-placent ensuite le modèle dans le dossier facultatif `options/speech-models` :
-l’installation complète le copie, tandis que l’installation personnalisée peut l’omettre.
+La dictée locale expérimentale n’est plus embarquée. Le bouton ChatGPT ouvre le
+navigateur et le presse-papiers sert de passerelle explicite ; aucun texte n’est envoyé
+automatiquement par Lou Còdi.
 
 Une construction doit être produite et testée séparément sur Linux, Windows et macOS :
 

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import copy
 import math
-import queue
+import shutil
+import subprocess
 import sys
 import tempfile
-import threading
 import tkinter as tk
 import uuid
 import webbrowser
@@ -58,7 +58,6 @@ from ..services.geometry import (
     split_closed_polyline_by_segment,
     split_segment_by_closed_polyline,
 )
-from ..services.speech_recognition import speech_status, transcribe_microphone
 from ..services.table_formulas import evaluate_table, evaluate_table_cells
 from ..system import open_path
 from .input_dialogs import ask_number, ask_table_size, ask_text, choose_color, pick_symbol
@@ -372,7 +371,13 @@ def merge_mirrored_outlines(
 class DocumentEditorWindow(tk.Toplevel):
     """Editeur de pages : PDF original ou A4 blanc, avec objets indépendants."""
 
-    def __init__(self, parent: tk.Misc, *, template_mode: bool = False) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        template_mode: bool = False,
+        project_path: Path | None = None,
+    ) -> None:
         super().__init__(parent, class_="Loucodiworkshop")
         self.template_mode = template_mode
         self.title(("Créer un modèle" if template_mode else "Créer un document") + " — Lou Còdi Workshop")
@@ -390,7 +395,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._background_image: ImageTk.PhotoImage | None = None
         self._overlay_images: list[ImageTk.PhotoImage] = []
         self._drag_origin: tuple[float, float, float, float] | None = None
-        self._resize_origin: tuple[float, float, float, float] | None = None
+        self._resize_origin: tuple[str, float, float, float, float, float, float] | None = None
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
         self._vertex_drag_origin: tuple[int, int, list[list[float]]] | None = None
         self._selected_vertex: tuple[int, int] | None = None
@@ -433,6 +438,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._placing_work_origin = False
         self._coincident_edge_highlight: Segment | None = None
         self._tool_buttons: list[tk.Widget] = []
+        self._last_context_kind: str | None = None
         self.toolbar_size_var = tk.StringVar(value=toolbar_size())
         self._measurement_mode = ""
         self._measurement_points: list[tuple[float, float]] = []
@@ -445,6 +451,12 @@ class DocumentEditorWindow(tk.Toplevel):
             self.iconphoto(False, icon)
         self._build()
         self._apply_toolbar_size()
+        if project_path is not None:
+            loaded = CanvasDocument.load(project_path)
+            self.document = loaded
+            self._saved_document = copy.deepcopy(loaded)
+            self.project_path = project_path
+            self.status.configure(text=f"Projet ouvert : {project_path.name}")
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self._toggle_properties_panel()
         translate_widget_tree(self)
@@ -458,7 +470,6 @@ class DocumentEditorWindow(tk.Toplevel):
         header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
-        tk.Label(header, text="Mise en page locale — canevas A4/PDF", bg=NAVY, fg="#CBDFF5", font=("Sans", 10)).pack(side="left", padx=18)
         tk.Button(
             header,
             text="⚙  Propriétés  F4",
@@ -486,26 +497,38 @@ class DocumentEditorWindow(tk.Toplevel):
 
         self.ribbon = ttk.Notebook(self)
         self.ribbon.pack(fill="x", padx=8, pady=(4, 2))
-        formatting = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         insertion = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        formatting = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        table_tools = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        tools = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         layout = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         diagrams = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
-        self.ribbon.add(formatting, text="Accueil")
-        self.ribbon.add(insertion, text="Insertion")
+        technical = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
+        self.ribbon.add(insertion, text="Insérer")
+        self.ribbon.add(formatting, text="Texte et style")
+        self.ribbon.add(table_tools, text="Tableau")
+        self.ribbon.add(tools, text="Outils")
         self.ribbon.add(layout, text="Mise en page")
-        self.ribbon.add(diagrams, text="Schémas")
+        self.ribbon.add(technical, text="Technique")
+        self._contextual_ribbon_tabs = {
+            "text": formatting,
+            "table": table_tools,
+            "technical": technical,
+        }
         self._buttons(formatting, (
             ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
-            ("Cop", self._copy_objects, "Copier les objets sélectionnés"),
-            ("Col", self._paste_objects, "Coller une copie indépendante sur cette page"),
-            ("Fmt+", self._copy_format, "Copier la mise en forme"),
-            ("Fmt✓", self._apply_format, "Appliquer la mise en forme copiée"),
+            ("⧉", self._copy_objects, "Copier les objets sélectionnés"),
+            ("▣", self._paste_objects, "Coller une copie indépendante sur cette page"),
+            ("🖌", self._copy_format, "Copier la mise en forme"),
+            ("🖌✓", self._apply_format, "Appliquer la mise en forme copiée"),
             ("B", lambda: self._toggle("bold"), "Gras"),
             ("I", lambda: self._toggle("italic"), "Italique"),
-            ("←", lambda: self._align("left"), "Aligner à gauche"),
-            ("↔", lambda: self._align("center"), "Centrer"),
-            ("→", lambda: self._align("right"), "Aligner à droite"),
-            ("J", lambda: self._align("justify"), "Justifier"),
+            ("U̲", lambda: self._toggle("underline"), "Souligné"),
+            ("S̶", lambda: self._toggle("strikethrough"), "Barré"),
+            ("≡←", lambda: self._align("left"), "Aligner à gauche"),
+            ("≡↔", lambda: self._align("center"), "Centrer"),
+            ("→≡", lambda: self._align("right"), "Aligner à droite"),
+            ("≡", lambda: self._align("justify"), "Justifier"),
             ("A−", lambda: self._change_font(-1), "Réduire la taille du texte"),
             ("A+", lambda: self._change_font(1), "Agrandir la taille du texte"),
         ), color="#DCEBFA")
@@ -549,7 +572,7 @@ class DocumentEditorWindow(tk.Toplevel):
         border_width.pack(side="left", padx=2)
         border_width.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_width())
         border_width.bind("<Return>", lambda _event: self._apply_border_width())
-        table_borders = ttk.Menubutton(formatting, text="Quadrillage ▾")
+        table_borders = ttk.Menubutton(table_tools, text="Quadrillage ▾")
         table_border_menu = tk.Menu(table_borders, tearoff=False)
         table_border_menu.add_command(label="Quadrillage standard", command=lambda: self._set_table_border_preset("standard"))
         table_border_menu.add_command(label="Bordure extérieure épaisse", command=lambda: self._set_table_border_preset("outer"))
@@ -573,22 +596,64 @@ class DocumentEditorWindow(tk.Toplevel):
         table_borders.configure(menu=table_border_menu)
         table_borders.pack(side="left", padx=2, pady=3)
         self._buttons(insertion, (
-            ("T+", self._add_text, "Insérer une zone de texte"),
-            ("🎙", self._dictate_selected, "Dicter localement dans la zone de texte sélectionnée"),
+            ("T  Texte", self._add_text, "Insérer une zone de texte"),
+            ("🖼  Image", self._add_image, "Insérer une image"),
+            ("🔗  Lien", self._set_selected_hyperlink, "Ajouter ou modifier un lien Internet sur l’objet sélectionné"),
+            ("▦  Tableau", self._add_table, "Insérer un tableau"),
+            ("▒  Masque", self._add_mask, "Insérer un masque blanc"),
+        ), color="#DDF3E7")
+        shapes_button = tk.Menubutton(
+            insertion,
+            text="◯  Formes ▾",
+            bg="#DDF3E7",
+            activebackground="#B8DFC9",
+            relief="flat",
+            padx=10,
+            pady=5,
+        )
+        shapes_menu = tk.Menu(shapes_button, tearoff=False)
+        for label, command in (
+            ("Rectangle orienté", lambda: self._start_rectangle(False)),
+            ("Carré orienté", lambda: self._start_rectangle(True)),
+            ("Ellipse", lambda: self._add_shape("ellipse")),
+            ("Triangle quelconque", lambda: self._start_triangle(False)),
+            ("Triangle rectangle", lambda: self._start_triangle(True)),
+            ("Trapèze", lambda: self._add_shape("trapezoid")),
+            ("Flèche", lambda: self._add_shape("arrow")),
+            ("Trait libre", self._add_line),
+            ("Polyligne / profil", self._start_polyline),
+            ("Trait d’axe", self._add_axis),
+        ):
+            shapes_menu.add_command(label=label, command=command)
+        shapes_button.configure(menu=shapes_menu)
+        shapes_button.pack(side="left", padx=4)
+        self._tool_buttons.append(shapes_button)
+        self._buttons(formatting, (
+            ("🤖", self._open_chatgpt_for_selected, "Ouvrir ChatGPT pour dicter, corriger ou reformuler le texte"),
+            ("📋", self._paste_chatgpt_result, "Coller le résultat de ChatGPT dans la zone de texte"),
             ("✓", self._review_selected, "Relire et corriger manuellement la zone de texte"),
-            ("🖼", self._add_image, "Insérer une image"),
-            ("🌐", self._set_selected_hyperlink, "Ajouter ou modifier un lien Internet sur l’objet sélectionné"),
-            ("▦", self._add_table, "Insérer un tableau"),
-            ("▧", self._add_mask, "Insérer un masque blanc"),
-            ("╱", self._add_line, "Insérer un trait"),
             ("Ω", self._insert_symbol, "Insérer un caractère spécial"),
             ("•", lambda: self._make_list(False), "Liste à puces"),
             ("1.", lambda: self._make_list(True), "Liste numérotée"),
+        ), color="#DCEBFA")
+        self._buttons(table_tools, (
             ("▥", lambda: self._add_chart("bar"), "Graphique en barres lié au tableau"),
             ("◔", lambda: self._add_chart("pie"), "Camembert lié au tableau"),
+        ), color="#DDF3E7")
+        structure_button = ttk.Menubutton(table_tools, text="Lignes / colonnes ▾")
+        structure_menu = tk.Menu(structure_button, tearoff=False)
+        structure_menu.add_command(label="Insérer une ligne au-dessus", command=lambda: self._change_table_structure("insert_row_before"))
+        structure_menu.add_command(label="Insérer une ligne en dessous", command=lambda: self._change_table_structure("insert_row_after"))
+        structure_menu.add_command(label="Supprimer la ligne active", command=lambda: self._change_table_structure("delete_row"))
+        structure_menu.add_separator()
+        structure_menu.add_command(label="Insérer une colonne à gauche", command=lambda: self._change_table_structure("insert_column_before"))
+        structure_menu.add_command(label="Insérer une colonne à droite", command=lambda: self._change_table_structure("insert_column_after"))
+        structure_menu.add_command(label="Supprimer la colonne active", command=lambda: self._change_table_structure("delete_column"))
+        structure_button.configure(menu=structure_menu)
+        structure_button.pack(side="left", padx=4, pady=3)
+        self._buttons(tools, (
             ("📏", self._start_measurement, "Mesurer librement deux points"),
             ("∠", self._start_angle_measurement, "Mesurer un angle intérieur avec trois points"),
-            ("Éch.", self._start_scale_calibration, "Étalonner l’échelle d’un plan importé"),
         ), color="#DDF3E7")
         self._buttons(layout, (
             ("▯", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
@@ -614,6 +679,14 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         page_format.pack(side="left", padx=2)
         page_format.bind("<<ComboboxSelected>>", lambda _event: self._set_page_format())
+        scale_button = ttk.Button(
+            layout,
+            text="Échelle…",
+            command=self._start_scale_calibration,
+            style="EditorTool.TButton",
+        )
+        scale_button.pack(side="left", padx=(6, 2))
+        self._tool_buttons.append(scale_button)
         tk.Label(
             layout,
             text="Chaînage : 1  sélectionnez la première zone   →   2  cliquez sur Lier texte   →   3  cliquez sur la zone verte",
@@ -638,7 +711,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("↻", lambda: self._rotate_selected(1), "Pivoter selon le pas vers la droite"),
         ), color="#E8E0F5")
 
-        profile_button = ttk.Menubutton(diagrams, text="Profil ▾")
+        profile_button = ttk.Menubutton(technical, text="Profil ▾")
         profile_menu = tk.Menu(profile_button, tearoff=False)
         profile_menu.add_command(label="Chanfrein entre deux traits…", command=self._chamfer_selected)
         profile_menu.add_command(label="Chanfrein ou arrondi sur des coins…", command=self._treat_shape_corner)
@@ -661,12 +734,12 @@ class DocumentEditorWindow(tk.Toplevel):
         profile_button.pack(side="left", padx=2, pady=3)
 
         self._buttons(
-            diagrams,
+            technical,
             (("✂", self._split_selection_automatically, "Découper automatiquement selon la sélection"),),
             color="#E8E0F5",
         )
 
-        arrange_button = ttk.Menubutton(diagrams, text="Assembler ▾")
+        arrange_button = ttk.Menubutton(technical, text="Assembler ▾")
         arrange_menu = tk.Menu(arrange_button, tearoff=False)
         arrange_menu.add_command(label="Sélectionner par zone", command=self._explain_marquee_selection)
         arrange_menu.add_command(label="Bords confondus guidés…", command=self._snap_selected_edges)
@@ -682,7 +755,7 @@ class DocumentEditorWindow(tk.Toplevel):
         arrange_button.configure(menu=arrange_menu)
         arrange_button.pack(side="left", padx=2, pady=3)
 
-        hatch_button = ttk.Menubutton(diagrams, text="Hachures ▾")
+        hatch_button = ttk.Menubutton(technical, text="Hachures ▾")
         hatch_menu = tk.Menu(hatch_button, tearoff=False)
         for label, preset in (
             ("Acier — 45°, moyen", "steel"),
@@ -698,17 +771,37 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         hatch_button.configure(menu=hatch_menu)
         hatch_button.pack(side="left", padx=2, pady=3)
-        ttk.Label(diagrams, text="Rotation", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        self._color_menu_button(technical, "Fond ▾", "fill", "Couleur de fond de la forme")
+        self._color_menu_button(technical, "Bord ▾", "border_color", "Couleur de la bordure de la forme")
+        technical_border_style = ttk.Combobox(
+            technical,
+            textvariable=self.border_style_var,
+            values=("Continu", "Pointillé", "Tirets"),
+            state="readonly",
+            width=8,
+        )
+        technical_border_style.pack(side="left", padx=2)
+        technical_border_style.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_style())
+        technical_border_width = ttk.Combobox(
+            technical,
+            textvariable=self.border_width_var,
+            values=("0", "0.5", "1", "1.5", "2", "3", "4", "6"),
+            width=4,
+        )
+        technical_border_width.pack(side="left", padx=2)
+        technical_border_width.bind("<<ComboboxSelected>>", lambda _event: self._apply_border_width())
+        technical_border_width.bind("<Return>", lambda _event: self._apply_border_width())
+        ttk.Label(technical, text="Rotation", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.rotation_step_var = tk.StringVar(value="15")
         ttk.Combobox(
-            diagrams,
+            technical,
             textvariable=self.rotation_step_var,
             values=("5", "10", "15", "30", "45", "60", "90"),
             width=4,
         ).pack(side="left", padx=2)
         self.angle_var = tk.StringVar(value="0")
         angle = ttk.Combobox(
-            diagrams,
+            technical,
             textvariable=self.angle_var,
             values=("0", "15", "30", "45", "60", "90", "120", "135", "150"),
             width=5,
@@ -716,10 +809,10 @@ class DocumentEditorWindow(tk.Toplevel):
         angle.pack(side="left", padx=2)
         angle.bind("<<ComboboxSelected>>", lambda _event: self._apply_absolute_angle())
         angle.bind("<Return>", lambda _event: self._apply_absolute_angle())
-        ttk.Label(diagrams, text="Pas (mm)", style="Body.TLabel").pack(side="left", padx=(10, 3))
+        ttk.Label(technical, text="Pas (mm)", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.nudge_var = tk.StringVar(value="1")
         ttk.Combobox(
-            diagrams,
+            technical,
             textvariable=self.nudge_var,
             values=("10", "1", "0.1", "0.01"),
             state="readonly",
@@ -850,6 +943,7 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Button(
             hyperlink_actions, text="Supprimer le lien", command=self._remove_selected_hyperlink
         ).pack(side="left", fill="x", expand=True, padx=(2, 0))
+        measurement_existing = set(panel.pack_slaves())
         ttk.Separator(panel).pack(fill="x", pady=8)
         ttk.Label(panel, text="MESURE", style="Section.TLabel").pack(anchor="w")
         self.measurement_result = ttk.Label(
@@ -873,6 +967,12 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Button(panel, text="∠ Angle intérieur (3 points)", command=self._start_angle_measurement).pack(fill="x", pady=2)
         ttk.Button(panel, text="⊥ Construire un triangle rectangle", command=self._start_right_triangle).pack(fill="x", pady=2)
         ttk.Button(panel, text="Étalonner l’échelle du plan", command=self._start_scale_calibration).pack(fill="x", pady=2)
+        self._measurement_property_layout = [
+            (widget, widget.pack_info())
+            for widget in panel.pack_slaves()
+            if widget not in measurement_existing
+        ]
+        scope_existing = set(panel.pack_slaves())
         ttk.Label(panel, text="Appliquer sur", style="Body.TLabel").pack(anchor="w", pady=(10, 0))
         self.scope_var = tk.StringVar(value="Cette page")
         self.scope_box = ttk.Combobox(
@@ -894,7 +994,18 @@ class DocumentEditorWindow(tk.Toplevel):
         pages_entry.pack(fill="x", pady=(0, 5))
         pages_entry.bind("<Return>", lambda _event: self._apply_scope())
         ttk.Button(panel, text="Appliquer aux pages", command=self._apply_scope).pack(fill="x", pady=4)
+        self._scope_property_layout = [
+            (widget, widget.pack_info())
+            for widget in panel.pack_slaves()
+            if widget not in scope_existing
+        ]
         ttk.Label(panel, text="Glissez un objet pour le déplacer. Double-cliquez pour modifier son contenu.", style="Body.TLabel", wraplength=230, justify="left").pack(anchor="w", pady=14)
+        self._properties_static_layout = [
+            (widget, widget.pack_info())
+            for widget in panel.pack_slaves()
+            if widget is not self.kind_label and widget is not self.triangle_frame
+        ]
+        self._properties_details_visible = True
 
         self._build_context_menu()
 
@@ -937,10 +1048,6 @@ class DocumentEditorWindow(tk.Toplevel):
         file_menu.add_command(
             label="Exporter en DOCX modifiable…",
             command=self._export_docx,
-        )
-        file_menu.add_command(
-            label="Exporter en DOCX compatible TextMaker…",
-            command=lambda: self._export_docx(compatibility_mode=True),
         )
         file_menu.add_command(label="Imprimer…", command=self._print, accelerator="Ctrl+P")
         file_menu.add_separator()
@@ -1056,7 +1163,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _apply_toolbar_size(self) -> None:
         size = self.toolbar_size_var.get()
         set_toolbar_size(size)
-        font_size, padding = (13, 7) if size == "large" else (10, 3)
+        font_size, padding = (14, 8) if size == "large" else (11, 5)
         ttk.Style(self).configure("EditorTool.TButton", padding=(padding, padding), font=("Sans", font_size))
         for button in self._tool_buttons:
             if isinstance(button, tk.Button):
@@ -1225,6 +1332,26 @@ class DocumentEditorWindow(tk.Toplevel):
         level_menu.add_command(label="Descendre d’un niveau", command=lambda: self._change_selected_level(-1))
         level_menu.add_command(label="Placer au niveau 0", command=lambda: self._set_selected_level(0))
         menu.add_cascade(label="Niveau (plan)", menu=level_menu)
+        appearance_menu = tk.Menu(menu, tearoff=False)
+        fill_menu = tk.Menu(appearance_menu, tearoff=False)
+        fill_menu.add_command(label="Transparent", command=lambda: self._set_object_color("fill", "transparent"))
+        for name, color in (("Blanc", "#FFFFFF"), ("Bleu", "#DCEBFA"), ("Vert", "#DDF3E7"), ("Orange", "#F9E8C8"), ("Rouge", "#F7D8D8")):
+            fill_menu.add_command(label=name, command=lambda value=color: self._set_object_color("fill", value))
+        fill_menu.add_command(label="Autre couleur…", command=lambda: self._choose_color("fill"))
+        appearance_menu.add_cascade(label="Fond", menu=fill_menu)
+        border_menu = tk.Menu(appearance_menu, tearoff=False)
+        border_menu.add_command(label="Sans bordure", command=lambda: self._set_border_width_value(0.0))
+        border_menu.add_command(label="Fine", command=lambda: self._set_border_width_value(0.6))
+        border_menu.add_command(label="Normale", command=lambda: self._set_border_width_value(1.5))
+        border_menu.add_command(label="Épaisse", command=lambda: self._set_border_width_value(3.0))
+        border_menu.add_separator()
+        border_menu.add_command(label="Continue", command=lambda: self._set_border_style_value("solid"))
+        border_menu.add_command(label="Tirets", command=lambda: self._set_border_style_value("dashed"))
+        border_menu.add_command(label="Pointillée", command=lambda: self._set_border_style_value("dotted"))
+        border_menu.add_separator()
+        border_menu.add_command(label="Couleur…", command=lambda: self._choose_color("border_color"))
+        appearance_menu.add_cascade(label="Bordure", menu=border_menu)
+        menu.add_cascade(label="Apparence", menu=appearance_menu)
         menu.add_command(
             label="🌐 Lien hypertexte sur l’objet…",
             command=self._set_selected_hyperlink,
@@ -1539,6 +1666,33 @@ class DocumentEditorWindow(tk.Toplevel):
         self.page_label.configure(text=f"Page {self.current_page + 1} / {self.document.page_count}")
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
         self._show_properties()
+        self._update_contextual_ribbon()
+
+    def _update_contextual_ribbon(self) -> None:
+        """Only expose commands that apply to the selected object."""
+        kind = None
+        if self.selected is not None and self.selected < len(self.document.objects):
+            kind = self.document.objects[self.selected].kind
+        states = {
+            "text": kind == "text",
+            "table": kind == "table",
+            "technical": kind in {"line", "polyline", "shape", "dimension", "origin"}
+            or len(self.selected_indices) > 1,
+        }
+        current = self.ribbon.select()
+        for name, frame in self._contextual_ribbon_tabs.items():
+            self.ribbon.tab(frame, state="normal" if states[name] else "hidden")
+        contextual_name = kind if kind in {"text", "table"} else "technical" if states["technical"] else None
+        if contextual_name is not None and contextual_name != self._last_context_kind:
+            self.ribbon.select(self._contextual_ribbon_tabs[contextual_name])
+        visible_frames = [
+            str(frame) for name, frame in self._contextual_ribbon_tabs.items() if states[name]
+        ]
+        if current and current not in visible_frames:
+            current_state = self.ribbon.tab(current, "state")
+            if current_state == "hidden":
+                self.ribbon.select(0)
+        self._last_context_kind = contextual_name
 
     def _draw_rulers(self, width: float, height: float) -> None:
         """Draw page rulers in millimetres around the current sheet."""
@@ -1626,6 +1780,22 @@ class DocumentEditorWindow(tk.Toplevel):
                         font=("Sans", max(7, round(item.font_size * self.zoom)), "underline" if hyperlink else "normal"),
                         tags=tags,
                     )
+                    active_cell = self._active_table_cell
+                    if (
+                        selected
+                        and active_cell is not None
+                        and active_cell == (item.object_id, row_index, column_index)
+                    ):
+                        self.canvas.create_rectangle(
+                            cx + 1,
+                            cy + 1,
+                            cx + cell_w - 1,
+                            cy + cell_h - 1,
+                            fill="",
+                            outline="#E47D16",
+                            width=max(2, round(2 * self.zoom)),
+                            tags=tags + ("active-table-cell",),
+                        )
             inner_width = max(0, round(item.table_inner_border_width * self.zoom))
             border_color = item.border_color
             if inner_width:
@@ -1828,6 +1998,16 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         if selected and len(self.selected_indices) == 1:
             size = 12
+            if item.kind == "line":
+                self.canvas.create_rectangle(
+                    x - size / 2,
+                    y - size / 2,
+                    x + size / 2,
+                    y + size / 2,
+                    fill="#1769AA",
+                    outline="white",
+                    tags=(f"resize-start:{index}", "resize"),
+                )
             self.canvas.create_rectangle(
                 x + w - size / 2,
                 y + h - size / 2,
@@ -1835,7 +2015,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 y + h + size / 2,
                 fill="#1769AA",
                 outline="white",
-                tags=(f"resize:{index}", "resize"),
+                tags=(f"resize-end:{index}", "resize"),
             )
 
     def _draw_dimension(
@@ -1952,11 +2132,18 @@ class DocumentEditorWindow(tk.Toplevel):
                 color = "#1769AA" if linked else item.color
                 draw.text((cursor_x, py), fragment, font=font, fill=color)
                 fragment_width = draw.textlength(fragment, font=font)
-                if linked:
+                if linked or item.underline:
                     underline_y = min(height - 1, py + size + 2)
                     draw.line(
                         (cursor_x, underline_y, cursor_x + fragment_width, underline_y),
-                        fill="#1769AA", width=max(1, round(self.zoom)),
+                        fill="#1769AA" if linked else item.color,
+                        width=max(1, round(self.zoom)),
+                    )
+                if item.strikethrough:
+                    strike_y = min(height - 1, py + size * 0.55)
+                    draw.line(
+                        (cursor_x, strike_y, cursor_x + fragment_width, strike_y),
+                        fill=item.color, width=max(1, round(self.zoom)),
                     )
                 cursor_x += fragment_width
             search_from = max(search_from, line_end)
@@ -1986,113 +2173,76 @@ class DocumentEditorWindow(tk.Toplevel):
         self._add_object(PageObject("text", self.current_page, x, y, 280, 80))
         self.after_idle(lambda: self._start_inline_text_editor(self.document.objects[self.selected]) if self.selected is not None else None)
 
-    def _dictate_selected(self) -> None:
+    def _open_chatgpt_for_selected(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
             messagebox.showinfo(
-                "Dictée locale",
-                "Sélectionnez d’abord une zone de texte qui recevra la dictée.",
+                "Assistant ChatGPT",
+                "Sélectionnez d’abord une zone de texte.",
                 parent=self,
             )
             return
-        status = speech_status()
-        if not status.ready:
-            missing: list[str] = []
-            if not status.engine_available:
-                missing.append("le moteur Python Vosk")
-            if not status.microphone_available:
-                missing.append("le module microphone sounddevice")
-            if not status.model_path.is_dir():
-                missing.append(f"le modèle français dans :\n{status.model_path}")
+        text = self.document.objects[self.selected].text.strip()
+        if text:
+            prompt = (
+                "Corrige et reformule le texte suivant en français clair et naturel. "
+                "Conserve strictement le sens et rends uniquement le texte final, sans commentaire.\n\n"
+                + text
+            )
+        else:
+            prompt = (
+                "Je vais dicter un texte. Transcris-le en français clair, corrige les erreurs "
+                "sans changer le sens et rends uniquement le texte final, sans commentaire."
+            )
+        self.clipboard_clear()
+        self.clipboard_append(prompt)
+        self.update_idletasks()
+        if not webbrowser.open("https://chatgpt.com/", new=2):
+            messagebox.showerror(
+                "Assistant ChatGPT",
+                "Impossible d’ouvrir le navigateur par défaut.",
+                parent=self,
+            )
+            return
+        self.status.configure(
+            text="Consigne copiée. Collez-la dans ChatGPT, puis copiez le résultat et utilisez 📋."
+        )
+
+    def _paste_chatgpt_result(self) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "text":
             messagebox.showinfo(
-                "Dictée locale non installée",
-                "La dictée reste optionnelle et hors ligne. Il manque :\n\n- "
-                + "\n- ".join(missing)
-                + "\n\nLe document n’est jamais envoyé sur Internet.",
+                "Assistant ChatGPT",
+                "Sélectionnez d’abord la zone de texte qui recevra le résultat.",
                 parent=self,
             )
             return
-
-        target_index = self.selected
-        stop_event = threading.Event()
-        result_queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
-        cancelled = False
-        dialog = tk.Toplevel(self)
-        dialog.title("Dictée locale — Vosk")
-        dialog.configure(bg=NAVY)
-        ttk.Label(
-            dialog,
-            text="🎙  Parlez maintenant…",
-            style="Title.TLabel",
-        ).pack(fill="x", padx=24, pady=(22, 8))
-        ttk.Label(
-            dialog,
-            text="La voix est analysée uniquement sur cet ordinateur.\nCliquez sur Arrêter pour insérer le texte reconnu.",
-            style="Body.TLabel",
-            justify="center",
-        ).pack(fill="x", padx=24, pady=8)
-        stop_button = ttk.Button(dialog, text="Arrêter et insérer")
-        stop_button.pack(padx=24, pady=(10, 22))
-
-        def request_stop() -> None:
-            stop_event.set()
-            stop_button.configure(text="Transcription en cours…", state="disabled")
-
-        def cancel() -> None:
-            nonlocal cancelled
-            cancelled = True
-            stop_event.set()
-            if dialog.winfo_exists():
-                try:
-                    dialog.grab_release()
-                except tk.TclError:
-                    pass
-                dialog.destroy()
-            self.status.configure(text="Dictée annulée.")
-
-        stop_button.configure(command=request_stop)
-        dialog.protocol("WM_DELETE_WINDOW", cancel)
-
-        def finish(text: str, error: str = "") -> None:
-            if dialog.winfo_exists():
-                try:
-                    dialog.grab_release()
-                except tk.TclError:
-                    pass
-                dialog.destroy()
-            if error:
-                messagebox.showerror("Dictée locale", error, parent=self)
-                return
-            if not text:
-                self.status.configure(text="Dictée terminée : aucun texte reconnu.")
-                return
-            if target_index >= len(self.document.objects):
-                return
-            item = self.document.objects[target_index]
-            separator = " " if item.text and not item.text.endswith((" ", "\n")) else ""
-            draft = item.text + separator + text
-            self.after_idle(lambda: self._open_message_assistant(draft, target_index))
-
-        def record() -> None:
+        try:
+            value = self.clipboard_get().strip()
+        except tk.TclError:
+            value = ""
+        if not value:
+            messagebox.showinfo(
+                "Assistant ChatGPT",
+                "Le presse-papiers ne contient aucun texte à insérer.",
+                parent=self,
+            )
+            return
+        insertion_range: tuple[int, int] | None = None
+        if (
+            self._editing_widget is not None
+            and self._editing_object_id == self.document.objects[self.selected].object_id
+        ):
+            widget = self._editing_widget
             try:
-                text = transcribe_microphone(stop_event)
-            except Exception as exc:  # noqa: BLE001 - native audio backends expose platform errors.
-                result_queue.put(("", str(exc)))
-            else:
-                result_queue.put((text, ""))
-
-        def poll_result() -> None:
-            if cancelled or not dialog.winfo_exists():
-                return
-            try:
-                text, error = result_queue.get_nowait()
-            except queue.Empty:
-                dialog.after(75, poll_result)
-                return
-            finish(text, error)
-
-        threading.Thread(target=record, daemon=True).start()
-        dialog.after(75, poll_result)
-        make_modal(dialog, self)
+                start = int(widget.count("1.0", "sel.first", "chars")[0])
+                end = int(widget.count("1.0", "sel.last", "chars")[0])
+            except tk.TclError:
+                start = end = int(widget.count("1.0", "insert", "chars")[0])
+            insertion_range = (start, end)
+            self._commit_inline_editor(render=False)
+        else:
+            end = len(self.document.objects[self.selected].text)
+            insertion_range = (end, end)
+        self._open_message_assistant(value, self.selected, insertion_range=insertion_range)
 
     def _review_selected(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
@@ -2104,11 +2254,17 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._open_message_assistant(self.document.objects[self.selected].text, self.selected)
 
-    def _open_message_assistant(self, draft: str, target_index: int) -> None:
+    def _open_message_assistant(
+        self,
+        draft: str,
+        target_index: int,
+        *,
+        insertion_range: tuple[int, int] | None = None,
+    ) -> None:
         if target_index >= len(self.document.objects):
             return
         dialog = tk.Toplevel(self)
-        dialog.title("Message — dictée et relecture")
+        dialog.title("Message — relecture")
         dialog.configure(bg=BACKGROUND)
         tk.Label(
             dialog,
@@ -2121,7 +2277,7 @@ class DocumentEditorWindow(tk.Toplevel):
         ).pack(fill="x")
         ttk.Label(
             dialog,
-            text="Le texte dicté reste sur cet ordinateur. Corrigez-le avant de l’insérer.",
+            text="Relisez le texte avant de l’insérer dans la zone sélectionnée.",
             style="Body.TLabel",
         ).pack(anchor="w", padx=18, pady=(14, 5))
         editor = tk.Text(dialog, wrap="word", undo=True, font=("Sans", 12), height=15)
@@ -2135,11 +2291,23 @@ class DocumentEditorWindow(tk.Toplevel):
             if not value or target_index >= len(self.document.objects):
                 return
             self._checkpoint()
-            self.document.objects[target_index].text = value
+            target = self.document.objects[target_index]
+            if insertion_range is None:
+                target.text = value
+            else:
+                start, end = insertion_range
+                before, after = target.text[:start], target.text[end:]
+                separator_before = "\n" if before and not before.endswith(("\n", " ")) else ""
+                separator_after = "\n" if after and not after.startswith(("\n", " ")) else ""
+                target.text = before + separator_before + value + separator_after + after
             self.selected = target_index
             self.selected_indices = {target_index}
             dialog.destroy()
-            self.status.configure(text="Message relu et inséré dans la zone de texte.")
+            self.status.configure(
+                text="Message ajouté à la position du curseur dans la zone de texte."
+                if insertion_range is not None
+                else "Message relu et inséré dans la zone de texte."
+            )
             self._render()
 
         ttk.Button(actions, text="Annuler", command=dialog.destroy).pack(side="right")
@@ -2148,7 +2316,7 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         ttk.Button(
             actions,
-            text="Revenir au texte dicté",
+            text="Revenir au texte initial",
             command=lambda: (
                 editor.delete("1.0", "end"),
                 editor.insert("1.0", draft),
@@ -3271,15 +3439,19 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._drag_origin = None
                 return
             for tag in self.canvas.gettags(current[0]):
-                if tag.startswith("resize:"):
-                    self.selected = int(tag.split(":", 1)[1])
+                if tag.startswith(("resize-start:", "resize-end:")):
+                    mode, object_index = tag.split(":", 1)
+                    self.selected = int(object_index)
                     item = self.document.objects[self.selected]
                     if item.locked:
                         self.status.configure(text="Cet objet est verrouillé.")
                         return
                     self._resize_origin = (
+                        mode,
                         self.canvas.canvasx(event.x),
                         self.canvas.canvasy(event.y),
+                        item.x,
+                        item.y,
                         item.width,
                         item.height,
                     )
@@ -3333,6 +3505,9 @@ class DocumentEditorWindow(tk.Toplevel):
             } or {clicked}
         if self.selected is not None:
             item = self.document.objects[self.selected]
+            if item.kind == "table" and len(self.selected_indices) == 1:
+                row, column = self._table_cell_at_event(item, event)
+                self._active_table_cell = (item.object_id, row, column)
             if any(self.document.objects[index].locked for index in self.selected_indices):
                 self._drag_origin = None
                 self.status.configure(
@@ -3428,13 +3603,19 @@ class DocumentEditorWindow(tk.Toplevel):
             )
             return
         if self.selected is not None and self._resize_origin is not None:
-            sx, sy, old_width, old_height = self._resize_origin
+            mode, sx, sy, old_x, old_y, old_width, old_height = self._resize_origin
             item = self.document.objects[self.selected]
             delta_x = (self.canvas.canvasx(event.x) - sx) / self.zoom
             delta_y = (self.canvas.canvasy(event.y) - sy) / self.zoom
             if item.kind == "line":
-                new_width = old_width + delta_x
-                new_height = old_height + delta_y
+                if mode == "resize-start":
+                    item.x = old_x + delta_x
+                    item.y = old_y + delta_y
+                    new_width = old_width - delta_x
+                    new_height = old_height - delta_y
+                else:
+                    new_width = old_width + delta_x
+                    new_height = old_height + delta_y
             else:
                 new_width = max(20, old_width + delta_x)
                 new_height = max(20, old_height + delta_y)
@@ -3476,9 +3657,22 @@ class DocumentEditorWindow(tk.Toplevel):
         dy = (self.canvas.canvasy(event.y) - sy) / self.zoom
         if abs(dx) > 1e-8 or abs(dy) > 1e-8:
             self._coincident_edge_highlight = None
+        moving_assembly = len(self._drag_positions) > 1
+        if moving_assembly:
+            original_objects = [
+                self._drag_before.objects[index]
+                for index in self._drag_positions
+            ] if self._drag_before is not None else [
+                self.document.objects[index] for index in self._drag_positions
+            ]
+            left, top, group_width, group_height = objects_bounds(original_objects)
+            dx = max(-left, min(pw - (left + group_width), dx))
+            dy = max(-top, min(ph - (top + group_height), dy))
         for index, (start_x, start_y) in self._drag_positions.items():
             item = self.document.objects[index]
-            if item.kind == "dimension":
+            if moving_assembly:
+                new_x, new_y = start_x + dx, start_y + dy
+            elif item.kind == "dimension":
                 length = math.hypot(item.width, item.height)
                 if length <= 1e-8:
                     continue
@@ -3498,7 +3692,8 @@ class DocumentEditorWindow(tk.Toplevel):
             move_y = (new_y - item.y) * self.zoom
             item.x, item.y = new_x, new_y
             self.canvas.move(f"object:{index}", move_x, move_y)
-            self.canvas.move(f"resize:{index}", move_x, move_y)
+            self.canvas.move(f"resize-start:{index}", move_x, move_y)
+            self.canvas.move(f"resize-end:{index}", move_x, move_y)
         if self.selected is not None:
             if len(self.selected_indices) > 1:
                 self._update_assembly_geometry_fields()
@@ -3558,11 +3753,15 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.redo_stack.clear()
         self._assembly_resize_origin = None
         if self._resize_origin is not None and self.selected is not None:
-            _, _, old_width, old_height = self._resize_origin
+            _, _, _, old_x, old_y, old_width, old_height = self._resize_origin
             item = self.document.objects[self.selected]
-            if (item.width, item.height) != (old_width, old_height):
+            if (item.x, item.y, item.width, item.height) != (
+                old_x, old_y, old_width, old_height
+            ):
                 changed = True
                 snapshot = copy.deepcopy(self.document)
+                snapshot.objects[self.selected].x = old_x
+                snapshot.objects[self.selected].y = old_y
                 snapshot.objects[self.selected].width = old_width
                 snapshot.objects[self.selected].height = old_height
                 self.undo_stack.append(snapshot)
@@ -3638,7 +3837,11 @@ class DocumentEditorWindow(tk.Toplevel):
         widget = tk.Text(
             self.canvas,
             wrap="word",
-            font=("Liberation Sans", max(8, round(item.font_size * self.zoom))),
+            font=(
+                "Liberation Sans",
+                max(8, round(item.font_size * self.zoom)),
+                "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
+            ),
             bg="white",
             fg=item.color,
             relief="solid",
@@ -3661,7 +3864,7 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         link_toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
         tk.Button(
-            link_toolbar, text="🔗 Lier la sélection", relief="flat",
+            link_toolbar, text="🔗 Hyperlien", relief="flat",
             command=self._set_selected_hyperlink,
         ).pack(side="left", padx=2, pady=2)
         tk.Button(
@@ -3697,7 +3900,7 @@ class DocumentEditorWindow(tk.Toplevel):
             if link.get("hyperlink") and end > start:
                 widget.tag_add("hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars")
         self.status.configure(
-            text="Pour lier un mot ou une phrase : sélectionnez-le, puis cliquez sur « Lier la sélection »."
+            text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
         )
 
     @staticmethod
@@ -3845,6 +4048,13 @@ class DocumentEditorWindow(tk.Toplevel):
         merge_menu.add_command(label="Fusionner avec la cellule de droite", command=lambda: self._merge_table_cell(item, row, column, 1, 2))
         merge_menu.add_command(label="Fusionner avec la cellule du dessous", command=lambda: self._merge_table_cell(item, row, column, 2, 1))
         merge_menu.add_command(label="Séparer les cellules", command=lambda: self._unmerge_table_cell(item, row, column))
+        merge_menu.add_separator()
+        merge_menu.add_command(label="Insérer une ligne au-dessus", command=lambda: self._change_table_structure("insert_row_before"))
+        merge_menu.add_command(label="Insérer une ligne en dessous", command=lambda: self._change_table_structure("insert_row_after"))
+        merge_menu.add_command(label="Supprimer cette ligne", command=lambda: self._change_table_structure("delete_row"))
+        merge_menu.add_command(label="Insérer une colonne à gauche", command=lambda: self._change_table_structure("insert_column_before"))
+        merge_menu.add_command(label="Insérer une colonne à droite", command=lambda: self._change_table_structure("insert_column_after"))
+        merge_menu.add_command(label="Supprimer cette colonne", command=lambda: self._change_table_structure("delete_column"))
         merge_button.configure(menu=merge_menu)
         merge_button.pack(side="left", padx=2, pady=2)
         function_button = tk.Menubutton(toolbar, text="fx ▾", relief="flat")
@@ -4072,6 +4282,80 @@ class DocumentEditorWindow(tk.Toplevel):
         self._checkpoint()
         item.table_merges.remove(merge)
         self.status.configure(text="Cellules séparées.")
+        self._render()
+
+    @staticmethod
+    def _empty_table_cell() -> dict[str, str]:
+        return {
+            "text": "",
+            "hyperlink": "",
+            "image_path": "",
+            "horizontal_align": "left",
+            "vertical_align": "top",
+        }
+
+    def _change_table_structure(self, operation: str) -> None:
+        item = self._selected_table()
+        if item is None:
+            return
+        coordinates = self._active_table_coordinates(item)
+        if coordinates is None:
+            self.status.configure(
+                text="Cliquez d’abord dans une cellule pour choisir la ligne ou la colonne."
+            )
+            return
+        self._commit_inline_editor(render=False)
+        cells = self._ensure_table_cells(item)
+        row, column = coordinates
+        rows = len(cells)
+        columns = max((len(candidate) for candidate in cells), default=1)
+        if operation == "delete_row" and rows <= 1:
+            self.status.configure(text="Un tableau doit conserver au moins une ligne.")
+            return
+        if operation == "delete_column" and columns <= 1:
+            self.status.configure(text="Un tableau doit conserver au moins une colonne.")
+            return
+        self._checkpoint()
+        old_row_height = item.height / max(1, rows)
+        old_column_width = item.width / max(1, columns)
+        if operation.startswith("insert_row"):
+            index = row if operation.endswith("before") else row + 1
+            cells.insert(index, [self._empty_table_cell() for _ in range(columns)])
+            item.height += old_row_height
+            row = index
+        elif operation == "delete_row":
+            cells.pop(row)
+            item.height = max(24.0, item.height - old_row_height)
+            row = min(row, len(cells) - 1)
+        elif operation.startswith("insert_column"):
+            index = column if operation.endswith("before") else column + 1
+            for candidate in cells:
+                candidate.insert(index, self._empty_table_cell())
+            item.width += old_column_width
+            column = index
+        elif operation == "delete_column":
+            for candidate in cells:
+                candidate.pop(column)
+            item.width = max(24.0, item.width - old_column_width)
+            column = min(column, len(cells[0]) - 1)
+        else:
+            return
+        # Structural edits can cross merged cells and custom outlines. Resetting those
+        # two decorations prevents invisible or out-of-range cell references.
+        item.table_merges.clear()
+        item.table_row_border_widths.clear()
+        item.table_border_ranges.clear()
+        self._sync_table_text(item)
+        self._active_table_cell = (item.object_id, row, column)
+        labels = {
+            "insert_row_before": "Ligne insérée au-dessus.",
+            "insert_row_after": "Ligne insérée en dessous.",
+            "delete_row": "Ligne supprimée.",
+            "insert_column_before": "Colonne insérée à gauche.",
+            "insert_column_after": "Colonne insérée à droite.",
+            "delete_column": "Colonne supprimée.",
+        }
+        self.status.configure(text=labels[operation])
         self._render()
 
     def _active_table_row(self, item: PageObject) -> int | None:
@@ -4314,7 +4598,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 ):
                     continue
                 self.canvas.delete(f"object:{index}")
-                self.canvas.delete(f"resize:{index}")
+                self.canvas.delete(f"resize-start:{index}")
+                self.canvas.delete(f"resize-end:{index}")
                 self._draw_object(index, candidate)
 
     def _commit_inline_editor(self, *, render: bool = True) -> None:
@@ -4405,6 +4690,12 @@ class DocumentEditorWindow(tk.Toplevel):
             )
             return
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
+
+    def _set_border_width_value(self, value: float) -> None:
+        self._mutate(lambda item: setattr(item, "border_width", value))
+
+    def _set_border_style_value(self, value: str) -> None:
+        self._mutate(lambda item: setattr(item, "border_style", value))
 
     def _set_selected_hyperlink(self) -> None:
         if self.selected is None:
@@ -6557,8 +6848,12 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _show_properties(self) -> None:
         if self.selected is None or self.selected >= len(self.document.objects):
+            if self._properties_details_visible:
+                for widget, _layout in self._properties_static_layout:
+                    widget.pack_forget()
+                self._properties_details_visible = False
             self.triangle_frame.pack_forget()
-            self.kind_label.configure(text="Aucun objet")
+            self.kind_label.configure(text="Sélectionnez un objet pour afficher ses propriétés.")
             self.geometry_help.configure(text="")
             self.shape_geometry_label.configure(text="")
             self.hyperlink_status.configure(text="Aucun lien")
@@ -6567,7 +6862,21 @@ class DocumentEditorWindow(tk.Toplevel):
             self.scope_var.set("Cette page")
             self.pages_var.set("")
             return
+        if not self._properties_details_visible:
+            for widget, layout in self._properties_static_layout:
+                options = dict(layout)
+                options.pop("in", None)
+                widget.pack(**options)
+            self._properties_details_visible = True
         item = self.document.objects[self.selected]
+        self._set_property_layout_visibility(
+            self._measurement_property_layout,
+            item.kind in {"line", "polyline", "shape", "dimension", "image"},
+        )
+        self._set_property_layout_visibility(
+            self._scope_property_layout,
+            item.kind in {"text", "image", "mask", "table", "shape", "chart"},
+        )
         self.hyperlink_status.configure(
             text=(f"Lien actif : {item.hyperlink}" if item.hyperlink else "Aucun lien")
         )
@@ -6653,6 +6962,19 @@ class DocumentEditorWindow(tk.Toplevel):
         self.angle_var.set(f"{self._object_angle(item):g}")
         self.scope_var.set("Toutes les pages" if item.pages == "all" else "Pages choisies" if item.pages else "Cette page")
         self.pages_var.set("" if item.pages == "all" else item.pages)
+
+    @staticmethod
+    def _set_property_layout_visibility(
+        layout_items: list[tuple[tk.Widget, dict[str, object]]], visible: bool
+    ) -> None:
+        for widget, layout in layout_items:
+            if visible:
+                if not widget.winfo_manager():
+                    options = dict(layout)
+                    options.pop("in", None)
+                    widget.pack(**options)
+            elif widget.winfo_manager():
+                widget.pack_forget()
 
     def _shape_geometry_summary(self, item: PageObject) -> str:
         scale = 25.4 / 72
@@ -7118,7 +7440,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self,
             destination,
             initial_name,
-            ".loucodi-document",
+            ".cod",
         )
         if not selected:
             return False
@@ -7133,7 +7455,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text=f"Projet enregistré : {path.name}")
 
     def _load(self) -> None:
-        files = choose_documents(self, {".loucodi-document"}, initial_directory=self._project_directory())
+        files = choose_documents(
+            self,
+            {".cod", ".loucodi-document"},
+            initial_directory=self._project_directory(),
+        )
         if not files:
             return
         try:
@@ -7194,11 +7520,129 @@ class DocumentEditorWindow(tk.Toplevel):
         target = Path(tempfile.gettempdir()) / "lou-codi-document-a-imprimer.pdf"
         try:
             export_canvas_pdf(self.document, target)
-            open_path(target)
         except (OSError, RuntimeError, ValueError) as exc:
             messagebox.showerror("Impression impossible", str(exc), parent=self)
             return
-        messagebox.showinfo("Impression", "Le document a été ouvert. Utilisez la commande Imprimer du lecteur PDF.", parent=self)
+        printers = self._available_printers()
+        if not printers:
+            open_path(target)
+            messagebox.showinfo(
+                "Impression",
+                "Aucune imprimante système n’a été détectée. Le PDF a été ouvert dans le lecteur.",
+                parent=self,
+            )
+            return
+        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
+        dialog.title("Imprimer le document")
+        dialog.configure(bg=BACKGROUND)
+        tk.Label(
+            dialog,
+            text="Imprimer",
+            bg=NAVY,
+            fg="white",
+            font=("Sans", 16, "bold"),
+            padx=18,
+            pady=10,
+        ).pack(fill="x")
+        form = ttk.Frame(dialog, padding=18)
+        form.pack(fill="both", expand=True)
+        ttk.Label(form, text="Imprimante").grid(row=0, column=0, sticky="w", pady=5)
+        printer_var = tk.StringVar(value=printers[0])
+        ttk.Combobox(
+            form, textvariable=printer_var, values=printers, state="readonly", width=42
+        ).grid(row=0, column=1, sticky="ew", pady=5)
+        ttk.Label(form, text="Nombre de copies").grid(row=1, column=0, sticky="w", pady=5)
+        copies_var = tk.IntVar(value=1)
+        ttk.Spinbox(form, from_=1, to=99, textvariable=copies_var, width=6).grid(
+            row=1, column=1, sticky="w", pady=5
+        )
+        form.columnconfigure(1, weight=1)
+        actions = ttk.Frame(dialog, padding=(18, 0, 18, 18))
+        actions.pack(fill="x")
+
+        def send() -> None:
+            try:
+                self._send_to_printer(target, printer_var.get(), max(1, copies_var.get()))
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                messagebox.showerror("Impression impossible", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self.status.configure(text=f"Document envoyé à l’imprimante {printer_var.get()}.")
+
+        ttk.Button(actions, text="Annuler", command=dialog.destroy).pack(side="right")
+        ttk.Button(actions, text="Imprimer", style="Primary.TButton", command=send).pack(
+            side="right", padx=8
+        )
+        center_window(dialog, 560, 230)
+        make_modal(dialog, self)
+
+    @staticmethod
+    def _available_printers() -> list[str]:
+        if sys.platform == "win32":
+            try:
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "Get-Printer | Select-Object -ExpandProperty Name",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return ["Imprimante par défaut"]
+            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if shutil.which("lpstat"):
+            try:
+                result = subprocess.run(
+                    ["lpstat", "-p"], check=True, capture_output=True, text=True, timeout=8
+                )
+            except (OSError, subprocess.SubprocessError):
+                return []
+            return [
+                line.split()[1]
+                for line in result.stdout.splitlines()
+                if line.startswith("printer ") and len(line.split()) >= 2
+            ]
+        return []
+
+    @staticmethod
+    def _send_to_printer(target: Path, printer: str, copies: int) -> None:
+        if sys.platform == "win32":
+            # Windows delegates PDF rendering to the registered PDF application.
+            for _copy in range(copies):
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        "Start-Process -FilePath $args[0] -Verb PrintTo -ArgumentList ('\"' + $args[1] + '\"')",
+                        str(target),
+                        printer,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        result.stderr.strip()
+                        or "Windows n’a pas pu transmettre le PDF à l’imprimante."
+                    )
+            return
+        if not shutil.which("lp"):
+            raise RuntimeError("Le service d’impression CUPS (commande lp) est indisponible.")
+        result = subprocess.run(
+            ["lp", "-d", printer, "-n", str(copies), str(target)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "Le service d’impression a refusé le document.")
 
 
 class RevolutionPreview(tk.Toplevel):

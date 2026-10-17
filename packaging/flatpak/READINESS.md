@@ -46,16 +46,13 @@ versions.
 - Toutes les archives Python et leurs empreintes doivent être déclarées comme sources : la
   construction Flathub n'a pas d'accès réseau.
 - Dépendances Python directes : pypdf, pdfplumber, pdf2docx, PyMuPDF, openpyxl, Pillow,
-  reportlab, arabic-reshaper, python-bidi, python-docx, vosk et sounddevice.
-- Le modèle français Vosk doit être déclaré comme source redistribuable avec URL et SHA-256,
-  et non téléchargé pendant la compilation.
+  reportlab, arabic-reshaper, python-bidi et python-docx.
 
 ## Permissions envisagées
 
 Objectif minimal après adaptation aux portails :
 
 - affichage X11/XWayland pour Tkinter ;
-- audio PulseAudio/PipeWire pour le microphone de dictée ;
 - accès créé et limité au dossier Téléchargements ;
 - ouverture de fichiers et d'URL via les portails du bureau ;
 - aucun accès réseau pour le traitement des documents.
@@ -71,7 +68,7 @@ finalité devront être annoncées clairement sur la fiche Flathub.
    exige l'usage des portails lorsqu'ils couvrent le besoin.
 2. Vérifier les favoris vers Google Drive, NAS et dossiers personnels dans le bac à sable.
 3. Utiliser le portail OpenURI pour ouvrir les PDF, dossiers et liens hypertextes.
-4. Tester la dictée avec le portail microphone et PipeWire/PulseAudio.
+4. Tester l’ouverture du navigateur pour le raccourci ChatGPT.
 5. Désactiver proprement la détection de LibreOffice hôte : une application Flatpak ne peut
    pas exécuter directement le LibreOffice installé sur l'hôte. La conversion locale allégée
    restera disponible dans cette édition.
@@ -105,7 +102,7 @@ mise à jour et désinstallation.
 
 ## Points bloquants actuels
 
-- la version publiée `2.0.0a2` est une alpha et non une version stable ;
+- la version préparée `2.0.0a3` est une alpha et non une version stable ;
 - les portails de fichiers ne sont pas encore intégrés ;
 - les captures propres et permanentes ne sont pas encore publiées ;
 - le manifeste de soumission doit être écrit humainement ;

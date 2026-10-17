@@ -25,8 +25,6 @@ LICENSE_ROWS = (
     ("python-docx", "MIT", "Création de documents DOCX"),
     ("arabic-reshaper", "MIT", "Affichage de l’arabe"),
     ("python-bidi", "LGPL-3.0-or-later", "Texte bidirectionnel"),
-    ("Vosk", "Apache-2.0", "Dictée locale hors ligne (composant facultatif)"),
-    ("sounddevice", "MIT", "Accès local au microphone pour la dictée"),
 )
 
 
@@ -67,10 +65,8 @@ def _build_about_tab(tab: ttk.Frame) -> None:
             "Le projet est distribué sous licence GNU Affero General Public License v3.0 "
             "ou ultérieure. Les composants tiers conservent leurs propres licences.\n\n"
             "SQLite est disponible localement avec Python, sans serveur ni abonnement. "
-            "La reconnaissance vocale Vosk fonctionne localement lorsqu’elle est installée. "
-            "La voix et les messages ne sont alors transmis à aucun service Internet. "
-            "La reformulation automatique reste expérimentale et n’est pas proposée dans "
-            "cette version."
+            "Le raccourci ChatGPT ouvre un service externe dans le navigateur, mais Lou Còdi "
+            "n’y transmet automatiquement aucun document ni aucun texte."
         ),
         style="Body.TLabel",
         wraplength=720,

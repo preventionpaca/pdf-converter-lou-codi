@@ -88,7 +88,7 @@ def set_document_destination(directory: Path, path: Path | None = None) -> None:
 
 
 def toolbar_size(path: Path | None = None) -> str:
-    value = _read(path or settings_path()).get("document_toolbar_size", "compact")
+    value = _read(path or settings_path()).get("document_toolbar_size", "large")
     return value if value in {"compact", "large"} else "compact"
 
 

@@ -16,6 +16,7 @@ mkdir -p \
   "$package_root/usr/bin" \
   "$package_root/usr/share/applications" \
   "$package_root/usr/share/icons/hicolor/256x256/apps" \
+  "$package_root/usr/share/mime/packages" \
   "$installer_dir"
 
 cp -a "$project_dir/dist/lou-codi-pdf-converter/." "$package_root/opt/lou-codi-workshop/"
@@ -33,12 +34,24 @@ cat > "$package_root/usr/share/applications/lou-codi-workshop.desktop" <<'EOF'
 Type=Application
 Name=Lou Còdi Workshop
 Comment=Des outils pratiques, en local, pour créer et fabriquer
-Exec=lou-codi-workshop
+Exec=lou-codi-workshop %f
 Icon=lou-codi-workshop
 Terminal=false
 Categories=Office;Graphics;Utility;
+MimeType=application/x-loucodi-document;
 StartupNotify=true
 StartupWMClass=Lou Còdi Workshop
+EOF
+
+cat > "$package_root/usr/share/mime/packages/lou-codi-document.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-loucodi-document">
+    <comment>Document Lou Còdi</comment>
+    <glob pattern="*.cod"/>
+    <glob pattern="*.loucodi-document"/>
+  </mime-type>
+</mime-info>
 EOF
 
 installed_size=$(du -sk "$package_root/opt/lou-codi-workshop" | cut -f1)
@@ -48,13 +61,13 @@ Version: $deb_version
 Section: graphics
 Priority: optional
 Architecture: amd64
-Depends: libc6, libportaudio2
+Depends: libc6
 Installed-Size: $installed_size
 Maintainer: Lou Còdi <contact@lou-codi.fr>
 Homepage: https://github.com/preventionpaca/pdf-converter-lou-codi
 Description: Outils locaux pour les PDF, documents et travaux d'atelier
  Lou Còdi Workshop rassemble PDF Studio, Document Studio et les outils
- d'optimisation de découpe. Les traitements et la dictée restent locaux.
+ d'optimisation de découpe. Les traitements documentaires restent locaux.
  LibreOffice est facultatif et n'est pas installé par ce paquet.
 EOF
 
@@ -66,6 +79,9 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+if command -v update-mime-database >/dev/null 2>&1; then
+  update-mime-database /usr/share/mime >/dev/null 2>&1 || true
 fi
 exit 0
 EOF

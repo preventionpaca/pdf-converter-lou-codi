@@ -34,6 +34,8 @@ class PageObject:
     font_size: float = 12
     bold: bool = False
     italic: bool = False
+    underline: bool = False
+    strikethrough: bool = False
     align: str = "left"
     color: str = "#000000"
     fill: str = "#FFFFFF"
@@ -281,6 +283,24 @@ def _draw_object(
                 align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
                 overlay=True,
             )
+            if item.underline or item.strikethrough:
+                for text_line in (line.strip() for line in rendered_text.splitlines()):
+                    if not text_line:
+                        continue
+                    for text_rectangle in page.search_for(text_line, clip=rectangle):
+                        if item.underline:
+                            page.draw_line(
+                                text_rectangle.bottom_left,
+                                text_rectangle.bottom_right,
+                                color=_rgb(item.color), width=0.8, overlay=True,
+                            )
+                        if item.strikethrough:
+                            middle_y = (text_rectangle.y0 + text_rectangle.y1) / 2
+                            page.draw_line(
+                                pymupdf.Point(text_rectangle.x0, middle_y),
+                                pymupdf.Point(text_rectangle.x1, middle_y),
+                                color=_rgb(item.color), width=0.8, overlay=True,
+                            )
             for link in item.text_links:
                 start = max(0, int(link.get("start", 0)))
                 end = min(len(rendered_text), int(link.get("end", 0)))

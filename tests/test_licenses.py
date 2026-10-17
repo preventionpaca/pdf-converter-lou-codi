@@ -13,7 +13,6 @@ def test_license_folder_contains_required_notices() -> None:
         "PYTHON-PSF-NOTICE.txt",
         "README.md",
         "SQLITE-PUBLIC-DOMAIN.txt",
-        "VOSK-NOTICE.txt",
     }
     assert expected <= {path.name for path in license_dir.iterdir()}
 
@@ -21,10 +20,4 @@ def test_license_folder_contains_required_notices() -> None:
 def test_about_catalogue_identifies_sqlite() -> None:
     assert any(
         component == "SQLite" and name == "Domaine public" for component, name, _ in LICENSE_ROWS
-    )
-
-
-def test_about_catalogue_identifies_optional_vosk_pack() -> None:
-    assert any(
-        component == "Vosk" and name == "Apache-2.0" for component, name, _ in LICENSE_ROWS
     )

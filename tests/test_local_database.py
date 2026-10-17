@@ -1,6 +1,5 @@
 import math
 import sqlite3
-import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,12 +27,6 @@ from lou_codi_pdf_converter.services.local_database import (
     initialize_database,
     list_stock_sheets,
     set_stock_sheet_status,
-)
-from lou_codi_pdf_converter.services.speech_recognition import (
-    FRENCH_MODEL_NAME,
-    SpeechStatus,
-    speech_status,
-    transcribe_microphone,
 )
 from lou_codi_pdf_converter.ui.document_editor import DocumentEditorWindow
 
@@ -102,33 +95,6 @@ def test_application_data_directory_is_platform_specific(tmp_path: Path) -> None
         assert application_data_directory(create=False) == (
             tmp_path / "Library" / "Application Support" / "LouCodi" / "PDFConverter"
         )
-
-
-def test_speech_pack_is_optional_and_uses_a_local_model(tmp_path: Path) -> None:
-    model = tmp_path / FRENCH_MODEL_NAME
-    status = speech_status(model)
-
-    assert status.model_path == model
-    assert status.ready is False
-
-
-def test_cancelled_dictation_returns_before_loading_audio_runtime(tmp_path: Path) -> None:
-    stop_event = threading.Event()
-    stop_event.set()
-    ready = SpeechStatus(True, True, tmp_path)
-
-    with (
-        patch(
-            "lou_codi_pdf_converter.services.speech_recognition.speech_status",
-            return_value=ready,
-        ),
-        patch(
-            "lou_codi_pdf_converter.services.speech_recognition._import_sounddevice"
-        ) as import_audio,
-    ):
-        assert transcribe_microphone(stop_event, model_path=tmp_path) == ""
-
-    import_audio.assert_not_called()
 
 
 def test_crossing_segments_are_split_into_four_independent_segments() -> None:

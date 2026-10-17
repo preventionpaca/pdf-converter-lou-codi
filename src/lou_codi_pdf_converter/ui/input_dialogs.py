@@ -240,6 +240,9 @@ def pick_symbol(parent: tk.Misc) -> str | None:
         "←", "→", "↑", "↓", "↔", "⇒", "⇐", "➜",
         "€", "£", "$", "%", "©", "®", "™", "§", "°", "±",
         "☎", "✉", "⌂", "⚠", "ℹ", "♥", "♦", "♣", "♠",
+        "²", "³", "√", "∛", "∞", "≈", "≠", "≤", "≥", "×", "÷",
+        "Σ", "∑", "∏", "∫", "∂", "∆", "π", "Ω", "α", "β", "γ", "τ",
+        "λ", "μ", "φ", "θ", "f(x)", "→", "∈", "∉", "⊂", "∩", "∪",
     )
     dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title("Caractères spéciaux")
@@ -259,7 +262,7 @@ def pick_symbol(parent: tk.Misc) -> str | None:
     for index, symbol in enumerate(symbols):
         tk.Button(grid, text=symbol, font=("DejaVu Sans", 18), width=3, height=1, command=lambda value=symbol: choose(value)).grid(row=index // 8, column=index % 8, padx=3, pady=3)
     ttk.Button(dialog, text="Annuler", command=dialog.destroy).pack(pady=(0, 14))
-    center_window(dialog, 520, 450)
+    center_window(dialog, 600, 590)
     make_modal(dialog, parent)
     dialog.wait_window()
     return result[0] if result else None

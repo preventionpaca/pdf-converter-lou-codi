@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 import webbrowser
 from dataclasses import dataclass
@@ -15,20 +16,20 @@ from .i18n import (
     set_language,
     translate_widget_tree,
 )
-from .services.local_database import initialize_database
 from .paths import initialize_workshop_directories
+from .services.local_database import initialize_database
 from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen, register_launch
 from .telemetry import analytics_consent, set_analytics_consent, track_event
 from .ui.about_dialog import show_about
-from .ui.dialogs import install_branded_messageboxes
 from .ui.cutting_stock import CuttingStockWindow
 from .ui.decorate_pdf import DecoratePdfWindow
+from .ui.dialogs import install_branded_messageboxes
 from .ui.document_editor import DocumentEditorWindow
 from .ui.documents_to_pdf import DocumentsToPdfWindow
 from .ui.organize_pdf import OrganizePdfWindow
 from .ui.pdf_to_office import PdfToOfficeWindow
 from .ui.support_dialog import show_support_reminder, show_welcome
-from .ui.windowing import center_window, make_modal
+from .ui.windowing import center_window, make_modal, maximize_window
 
 NAVY = "#193B66"
 BLUE = "#2368AF"
@@ -104,7 +105,7 @@ class Application(tk.Tk):
         WorkshopModule("decorate_pdf", "Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
     )
 
-    def __init__(self) -> None:
+    def __init__(self, project_path: Path | None = None) -> None:
         set_language(load_language(), save=False)
         install_messagebox_translations()
         super().__init__(className="Loucodiworkshop")
@@ -118,8 +119,26 @@ class Application(tk.Tk):
         self._configure_styles()
         install_branded_messageboxes()
         self._build()
+        if sys.platform == "darwin":
+            self.createcommand("::tk::mac::OpenDocument", self._mac_open_document)
         self.launch_state = register_launch()
         self.after(350, self._show_launch_information)
+        if project_path is not None:
+            self.after(50, lambda: self._open_document_project(project_path))
+
+    def _open_document_project(self, project_path: Path) -> None:
+        try:
+            window = DocumentEditorWindow(self, project_path=project_path)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            messagebox.showerror("Document illisible", str(exc), parent=self)
+            return
+        self._replace_workspace(self, window, force_maximized=True)
+
+    def _mac_open_document(self, *paths: str) -> None:
+        if paths:
+            candidate = Path(paths[0]).expanduser()
+            if candidate.suffix.lower() in {".cod", ".loucodi-document"}:
+                self._open_document_project(candidate.resolve())
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self)
@@ -255,7 +274,7 @@ class Application(tk.Tk):
             "Aider à améliorer Lou Còdi Workshop en envoyant des statistiques anonymes ?\n\n"
             "Sont envoyés : module utilisé, réussite ou erreur générale, version et système. "
             "Le serveur pourra agréger le pays et la grande région.\n\n"
-            "Ne sont jamais envoyés : documents, textes, dictée, noms ou chemins de fichiers.\n\n"
+            "Ne sont jamais envoyés automatiquement : documents, textes, noms ou chemins de fichiers.\n\n"
             "Vous pourrez modifier ce choix avec le bouton Confidentialité."
         )
         enabled = messagebox.askyesno(
@@ -422,7 +441,12 @@ class Application(tk.Tk):
 
 
 def main() -> None:
-    Application().mainloop()
+    project_path = None
+    if len(sys.argv) > 1:
+        candidate = Path(sys.argv[1]).expanduser()
+        if candidate.suffix.lower() in {".cod", ".loucodi-document"}:
+            project_path = candidate.resolve()
+    Application(project_path=project_path).mainloop()
 
 
 if __name__ == "__main__":
