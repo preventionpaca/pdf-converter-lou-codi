@@ -26,6 +26,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     merge_mirrored_outlines,
     normalize_external_text,
     objects_bounds,
+    parse_tabular_clipboard,
     revolution_axis_target,
     revolution_stations,
     transform_object_assembly,
@@ -636,3 +637,39 @@ def test_clipboard_image_file_uri_is_recognized(tmp_path: Path) -> None:
     )
 
     assert result == image
+
+
+def test_spreadsheet_clipboard_becomes_an_editable_table() -> None:
+    cells = parse_tabular_clipboard("Nom\tQuantité\nVis\t12\nÉcrou\t8")
+
+    assert [[cell["text"] for cell in row] for row in cells] == [
+        ["Nom", "Quantité"],
+        ["Vis", "12"],
+        ["Écrou", "8"],
+    ]
+    assert parse_tabular_clipboard("Un texte ordinaire") == []
+
+
+def test_image_rotation_and_symmetry_are_baked_into_pixels(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    Image.new("RGB", (40, 20), "red").save(source)
+    item = PageObject("image", 0, 10, 20, 80, 40, image_path=str(source))
+    editor = object.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[item])
+    editor.selected = 0
+    editor.selected_indices = {0}
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    def replace(target: PageObject, image: Image.Image) -> None:
+        path = tmp_path / f"edited-{image.width}-{image.height}.png"
+        image.save(path)
+        target.image_path = str(path)
+
+    editor._replace_image_pixels = replace
+    editor._rotate_selected_degrees(90)
+
+    assert Image.open(item.image_path).size == (20, 40)
+    assert (item.width, item.height) == (40, 80)
+    editor._mirror_selected("horizontal")
+    assert Path(item.image_path).is_file()

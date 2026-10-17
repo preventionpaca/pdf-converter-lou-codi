@@ -7,6 +7,7 @@ data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 application_target="$data_root/lou-codi-workshop/app"
 applications_dir="$data_root/applications"
 icons_dir="$data_root/icons/hicolor/256x256/apps"
+mime_icons_dir="$data_root/icons/hicolor/256x256/mimetypes"
 mime_packages_dir="$data_root/mime/packages"
 install_launcher=1
 create_workspace=1
@@ -56,7 +57,7 @@ if [ -t 0 ]; then
   esac
 fi
 
-install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_packages_dir"
+install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir"
 cp -a "$application_source/." "$application_target/"
 if [ "$create_workspace" -eq 1 ]; then
   downloads_dir="${XDG_DOWNLOAD_DIR:-$HOME/Téléchargements}"
@@ -72,6 +73,7 @@ fi
 
 if [ "$install_launcher" -eq 1 ]; then
   install -m 0644 "$bundle_dir/lou-codi-workshop.png" "$icons_dir/lou-codi-workshop.png"
+  install -m 0644 "$bundle_dir/lou-codi-document.png" "$mime_icons_dir/application-x-loucodi-document.png"
 
 # Migrate installations made under the former PDF Converter desktop identity.
 # Keeping both launchers makes Linux associate the running window with a generic

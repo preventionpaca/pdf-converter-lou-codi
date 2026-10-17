@@ -333,6 +333,14 @@ def _draw_object(
             _draw_chart(page, rectangle, source, item.fill)
     elif item.kind == "image" and Path(item.image_path).is_file():
         page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
+        if item.border_width > 0:
+            page.draw_rect(
+                rectangle,
+                color=_rgb(item.border_color),
+                width=max(0.5, item.border_width),
+                dashes="[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
+                overlay=True,
+            )
     elif item.kind in {"text", "table"}:
         content = flowed_text_for_object(item, objects) if item.kind == "text" else item.text
         rendered_text = resolve_dynamic_text(content, page_number, page_count, document_name)

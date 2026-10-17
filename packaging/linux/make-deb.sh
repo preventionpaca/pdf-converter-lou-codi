@@ -4,6 +4,7 @@ set -eu
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 python_command=${PYTHON:-python3}
 app_version=$(PYTHONPATH="$project_dir/src" "$python_command" -c 'from lou_codi_pdf_converter import __version__; print(__version__)')
+"$python_command" "$project_dir/packaging/generate_document_icons.py"
 deb_version=${app_version/a/~a}
 package_root="$project_dir/dist/deb-root"
 installer_dir="$project_dir/dist/installers"
@@ -22,6 +23,9 @@ mkdir -p \
 cp -a "$project_dir/dist/lou-codi-pdf-converter/." "$package_root/opt/lou-codi-workshop/"
 cp "$project_dir/src/lou_codi_pdf_converter/assets/croix-lou-codi.png" \
   "$package_root/usr/share/icons/hicolor/256x256/apps/lou-codi-workshop.png"
+mkdir -p "$package_root/usr/share/icons/hicolor/256x256/mimetypes"
+cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.png" \
+  "$package_root/usr/share/icons/hicolor/256x256/mimetypes/application-x-loucodi-document.png"
 
 cat > "$package_root/usr/bin/lou-codi-workshop" <<'EOF'
 #!/usr/bin/env sh

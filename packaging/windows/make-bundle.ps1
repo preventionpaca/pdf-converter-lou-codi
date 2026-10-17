@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 $Project = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Version = & python -c "import sys; sys.path.insert(0, r'$Project\src'); from lou_codi_pdf_converter import __version__; print(__version__)"
+& python (Join-Path $Project "packaging\generate_document_icons.py")
 $Bundle = Join-Path $Project "dist\Lou-Codi-Workshop-$Version-windows-x86_64"
 $Installers = Join-Path $Project "dist\installers"
 if (Test-Path $Bundle) { Remove-Item $Bundle -Recurse -Force }

@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a3"
+  #define AppVersion "2.0.0a4"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."
@@ -24,7 +24,7 @@ PrivilegesRequired=lowest
 WizardStyle=modern
 SetupLogging=yes
 UninstallDisplayIcon={app}\lou-codi-pdf-converter.exe
-VersionInfoVersion=2.0.0.3
+VersionInfoVersion=2.0.0.4
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
@@ -42,6 +42,7 @@ Name: "desktopicon"; Description: "Créer une icône sur le Bureau"; GroupDescri
 
 [Files]
 Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: core
+Source: "{#ProjectDir}\src\lou_codi_pdf_converter\assets\lou-codi-document.ico"; DestDir: "{app}"; Flags: ignoreversion; Components: core
 
 [Dirs]
 Name: "{%USERPROFILE}\Downloads\LouCodi\PDF vers Office"; Components: workspace
@@ -59,7 +60,7 @@ Name: "{autodesktop}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converte
 Root: HKA; Subkey: "Software\Classes\.cod"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.loucodi-document"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\LouCodi.Document"; ValueType: string; ValueData: "Document Lou Còdi"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\LouCodi.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\lou-codi-pdf-converter.exe,0"
+Root: HKA; Subkey: "Software\Classes\LouCodi.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\lou-codi-document.ico,0"
 Root: HKA; Subkey: "Software\Classes\LouCodi.Document\shell\open\command"; ValueType: string; ValueData: """{app}\lou-codi-pdf-converter.exe"" ""%1"""
 
 [Run]

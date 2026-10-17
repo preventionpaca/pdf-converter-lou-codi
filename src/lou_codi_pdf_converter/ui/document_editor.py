@@ -16,7 +16,7 @@ from tkinter import messagebox, ttk
 from urllib.parse import unquote, urlparse
 
 import pymupdf
-from PIL import Image, ImageDraw, ImageFont, ImageGrab, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageGrab, ImageOps, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
 from ..paths import module_output_directory
@@ -79,6 +79,21 @@ def normalize_external_text(value: str) -> str:
     value = value.replace("\u2028", "\n").replace("\u2029", "\n")
     value = value.replace("\u00a0", " ")
     return "".join(character for character in value if character in "\n\t" or ord(character) >= 32)
+
+
+def parse_tabular_clipboard(value: str) -> list[list[dict[str, str]]]:
+    """Recognise a spreadsheet clipboard as editable Lou Còdi cells."""
+    normalized = normalize_external_text(value).strip("\n")
+    if not normalized or "\t" not in normalized:
+        return []
+    rows = [line.split("\t") for line in normalized.split("\n")]
+    columns = max((len(row) for row in rows), default=0)
+    if columns < 2:
+        return []
+    return [
+        [{"text": row[column] if column < len(row) else ""} for column in range(columns)]
+        for row in rows
+    ]
 
 
 def objects_bounds(objects: list[PageObject]) -> tuple[float, float, float, float]:
@@ -1484,6 +1499,16 @@ class DocumentEditorWindow(tk.Toplevel):
                 structure.add_command(label=label, command=lambda value=action: self._change_table_structure(value))
             menu.add_cascade(label="Lignes et colonnes", menu=structure)
 
+        if one is not None and one.kind == "image":
+            image_menu = tk.Menu(menu, tearoff=False)
+            image_menu.add_command(label="Rogner…", command=self._crop_selected_image)
+            image_menu.add_command(
+                label="Réduire la définition / le poids…",
+                command=self._resize_selected_image_pixels,
+            )
+            image_menu.add_command(label="Exporter en PNG ou JPEG…", command=self._export_selected_image)
+            menu.add_cascade(label="Image", menu=image_menu)
+
         technical_kinds = {"shape", "polyline", "line", "dimension", "origin"}
         if kinds & technical_kinds:
             has_hatches = any(item.shape == "hatch" for item in objects)
@@ -1528,10 +1553,20 @@ class DocumentEditorWindow(tk.Toplevel):
             menu.add_cascade(label="Symétrie", menu=symmetry)
 
         appearance = tk.Menu(menu, tearoff=False)
-        appearance.add_command(label="Fond transparent", command=lambda: self._set_object_color("fill", "transparent"))
-        appearance.add_command(label="Couleur du fond…", command=lambda: self._choose_color("fill"))
-        appearance.add_command(label="Sans bordure", command=lambda: self._set_border_width_value(0.0))
-        appearance.add_command(label="Couleur de bordure…", command=lambda: self._choose_color("border_color"))
+        if kinds != {"image"}:
+            appearance.add_command(label="Fond transparent", command=lambda: self._set_object_color("fill", "transparent"))
+            appearance.add_command(label="Couleur du fond…", command=lambda: self._choose_color("fill"))
+            appearance.add_separator()
+        border = tk.Menu(appearance, tearoff=False)
+        for label, width in (("Aucune", 0.0), ("Fine", 0.6), ("Normale", 1.5), ("Épaisse", 3.0)):
+            border.add_command(label=label, command=lambda value=width: self._set_border_width_value(value))
+        border.add_separator()
+        border.add_command(label="Continue", command=lambda: self._set_border_style_value("solid"))
+        border.add_command(label="Tirets", command=lambda: self._set_border_style_value("dashed"))
+        border.add_command(label="Pointillée", command=lambda: self._set_border_style_value("dotted"))
+        border.add_separator()
+        border.add_command(label="Couleur…", command=lambda: self._choose_color("border_color"))
+        appearance.add_cascade(label="Bordure", menu=border)
         menu.add_cascade(label="Apparence", menu=appearance)
         level = tk.Menu(menu, tearoff=False)
         level.add_command(label="Monter d’un niveau", command=lambda: self._change_selected_level(1))
@@ -1868,7 +1903,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.canvas.create_image(x + w / 2, y + h / 2, image=picture, tags=tags)
             except OSError:
                 self.canvas.create_text(x + 4, y + 4, text="Image introuvable", anchor="nw", tags=tags)
-            self.canvas.create_rectangle(x, y, x + w, y + h, outline=outline, width=3 if selected else 1, tags=tags)
+            border = item.border_color if item.border_width > 0 else outline
+            border_width = max(1, round(item.border_width * self.zoom)) if item.border_width > 0 else (3 if selected else 1)
+            dash = (6, 4) if item.border_style == "dashed" else (2, 3) if item.border_style == "dotted" else None
+            self.canvas.create_rectangle(x, y, x + w, y + h, outline=border, width=border_width, dash=dash, tags=tags)
         elif item.kind == "table":
             cells = self._ensure_table_cells(item)
             rows = evaluate_table_cells(cells)
@@ -4901,6 +4939,98 @@ class DocumentEditorWindow(tk.Toplevel):
     def _set_border_style_value(self, value: str) -> None:
         self._mutate(lambda item: setattr(item, "border_style", value))
 
+    def _write_edited_image(self, source: Image.Image, suffix: str = ".png") -> Path:
+        directory = module_output_directory("Document Studio") / "Images modifiées"
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"image_{uuid.uuid4().hex[:10]}{suffix}"
+        if suffix.lower() in {".jpg", ".jpeg"}:
+            source.convert("RGB").save(target, "JPEG", quality=88, optimize=True)
+        else:
+            source.save(target, "PNG", optimize=True)
+        return target
+
+    def _replace_image_pixels(self, item: PageObject, image: Image.Image) -> None:
+        item.image_path = str(self._write_edited_image(image))
+
+    def _crop_selected_image(self) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "image":
+            return
+        item = self.document.objects[self.selected]
+        values: list[float] = []
+        for label in ("gauche", "haut", "droite", "bas"):
+            value = ask_number(self, "Rogner l’image", f"Retirer à {label} (%) :", 0.0, minimum=0, maximum=95)
+            if value is None:
+                return
+            values.append(value)
+        left, top, right, bottom = values
+        if left + right >= 100 or top + bottom >= 100:
+            messagebox.showerror("Rognage impossible", "Les marges retireraient toute l’image.", parent=self)
+            return
+        try:
+            with Image.open(item.image_path) as source:
+                image = source.copy()
+        except OSError as exc:
+            messagebox.showerror("Image illisible", str(exc), parent=self)
+            return
+        width, height = image.size
+        box = (
+            round(width * left / 100), round(height * top / 100),
+            round(width * (1 - right / 100)), round(height * (1 - bottom / 100)),
+        )
+        self._checkpoint()
+        cropped = image.crop(box)
+        item.width *= cropped.width / max(1, width)
+        item.height *= cropped.height / max(1, height)
+        self._replace_image_pixels(item, cropped)
+        self.status.configure(text=f"Image rognée : {cropped.width} × {cropped.height} pixels.")
+        self._render()
+
+    def _resize_selected_image_pixels(self) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "image":
+            return
+        item = self.document.objects[self.selected]
+        try:
+            with Image.open(item.image_path) as source:
+                image = source.copy()
+        except OSError as exc:
+            messagebox.showerror("Image illisible", str(exc), parent=self)
+            return
+        maximum = ask_number(
+            self, "Réduire l’image", "Dimension maximale en pixels (ratio conservé) :",
+            float(max(image.size)), minimum=32,
+        )
+        if maximum is None:
+            return
+        resized = image.copy()
+        maximum_pixels = max(32, round(maximum))
+        resized.thumbnail((maximum_pixels, maximum_pixels), Image.Resampling.LANCZOS)
+        self._checkpoint()
+        self._replace_image_pixels(item, resized)
+        self.status.configure(text=f"Image optimisée : {resized.width} × {resized.height} pixels, ratio conservé.")
+        self._render()
+
+    def _export_selected_image(self) -> None:
+        if self.selected is None or self.document.objects[self.selected].kind != "image":
+            return
+        item = self.document.objects[self.selected]
+        extension = (ask_text(self, "Exporter l’image", "Format : PNG ou JPEG", "PNG") or "").strip().lower()
+        suffix = ".jpg" if extension in {"jpg", "jpeg"} else ".png"
+        target = choose_save_path(
+            self, document_destination(), f"image_{self.project_path.stem if self.project_path else 'document'}", suffix
+        )
+        if not target:
+            return
+        try:
+            with Image.open(item.image_path) as source:
+                if suffix == ".jpg":
+                    source.convert("RGB").save(target, "JPEG", quality=92, optimize=True)
+                else:
+                    source.save(target, "PNG", optimize=True)
+        except OSError as exc:
+            messagebox.showerror("Export impossible", str(exc), parent=self)
+            return
+        self.status.configure(text=f"Image exportée : {Path(target).name}")
+
     def _set_selected_hyperlink(self) -> None:
         if self.selected is None:
             return
@@ -5156,6 +5286,17 @@ class DocumentEditorWindow(tk.Toplevel):
             text_value = ""
         if text_value == "LOUCODI_OBJECTS" and self._object_clipboard:
             self._paste_objects()
+            return
+        table_cells = parse_tabular_clipboard(text_value)
+        if table_cells:
+            rows, columns = len(table_cells), len(table_cells[0])
+            self._add_object(PageObject(
+                "table", self.current_page, 70, 80,
+                min(500.0, max(180.0, columns * 105.0)),
+                min(520.0, max(70.0, rows * 38.0)),
+                table_cells=table_cells, font_size=10,
+            ))
+            self.status.configure(text=f"Tableau modifiable collé : {rows} ligne(s) × {columns} colonne(s).")
             return
         image = self._clipboard_image()
         image_path = self._clipboard_image_file(text_value)
@@ -6932,6 +7073,13 @@ class DocumentEditorWindow(tk.Toplevel):
         self._checkpoint()
         for index in self.selected_indices:
             item = self.document.objects[index]
+            if item.kind == "image":
+                try:
+                    with Image.open(item.image_path) as source:
+                        rotated = source.rotate(-degrees, expand=True, resample=Image.Resampling.BICUBIC)
+                    self._replace_image_pixels(item, rotated)
+                except OSError:
+                    pass
             if item.kind == "line":
                 self._rotate_line(item, degrees)
                 continue
@@ -6943,6 +7091,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.width, item.height = item.height, item.width
             item.x, item.y = center_x - item.width / 2, center_y - item.height / 2
             item.rotation = round((item.rotation + degrees) % 360)
+            if item.kind == "image":
+                item.rotation = 0
         self._render()
 
     def _rotate_free(self) -> None:
@@ -7113,11 +7263,25 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.flip_horizontal = not item.flip_horizontal
                 if item.kind == "polyline":
                     item.points = [[item.width - point[0], point[1]] for point in item.points]
+                elif item.kind == "image":
+                    try:
+                        with Image.open(item.image_path) as source:
+                            self._replace_image_pixels(item, ImageOps.mirror(source))
+                        item.flip_horizontal = False
+                    except OSError:
+                        pass
             else:
                 item.y = top + bottom - item.y - item.height
                 item.flip_vertical = not item.flip_vertical
                 if item.kind == "polyline":
                     item.points = [[point[0], item.height - point[1]] for point in item.points]
+                elif item.kind == "image":
+                    try:
+                        with Image.open(item.image_path) as source:
+                            self._replace_image_pixels(item, ImageOps.flip(source))
+                        item.flip_vertical = False
+                    except OSError:
+                        pass
         self._render()
 
     def _mirror_copy_about_axis(self) -> None:

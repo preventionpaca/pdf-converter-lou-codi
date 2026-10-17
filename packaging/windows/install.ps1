@@ -56,6 +56,17 @@ if (Test-Path $Target) { Remove-Item $Target -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 Copy-Item (Join-Path $Source "*") $Target -Recurse -Force
 
+$classes = "HKCU:\Software\Classes"
+New-Item -Force -Path "$classes\.cod" -Value "LouCodi.Document" | Out-Null
+New-Item -Force -Path "$classes\.loucodi-document" -Value "LouCodi.Document" | Out-Null
+New-Item -Force -Path "$classes\LouCodi.Document" -Value "Document Lou Còdi" | Out-Null
+New-Item -ItemType Directory -Force -Path "$classes\LouCodi.Document\DefaultIcon" | Out-Null
+$installedDocumentIcon = Join-Path $Target "_internal\lou_codi_pdf_converter\assets\lou-codi-document.ico"
+Set-Item "$classes\LouCodi.Document\DefaultIcon" -Value "$installedDocumentIcon,0"
+New-Item -ItemType Directory -Force -Path "$classes\LouCodi.Document\shell\open\command" | Out-Null
+$openCommand = ('"{0}" "%1"' -f (Join-Path $Target "lou-codi-pdf-converter.exe"))
+Set-Item "$classes\LouCodi.Document\shell\open\command" -Value $openCommand
+
 if ($createWorkspace) {
   try {
     $Downloads = (New-Object -ComObject Shell.Application).NameSpace("shell:Downloads").Self.Path
