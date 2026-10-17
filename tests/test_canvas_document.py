@@ -504,3 +504,32 @@ def test_technical_shapes_are_saved_and_exported(tmp_path: Path) -> None:
     assert restored.objects[3].points[2] == [120, 10]
     assert restored.objects[-1].locked is True
     assert len(PdfReader(target).pages) == 1
+
+
+def test_remove_hatches_keeps_their_source_shape() -> None:
+    group = "hachures-1"
+    source = PageObject(
+        "polyline", 0, 10, 10, 100, 100,
+        points=[[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]],
+        shape="square_geometry", group=group,
+    )
+    hatches = [
+        PageObject(
+            "line", 0, 20 + offset, 20, 30, 30,
+            group=group, source_id=source.object_id, shape="hatch",
+        )
+        for offset in range(4)
+    ]
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[source, *hatches])
+    editor.selected_indices = set(range(5))
+    editor.selected = 1
+    editor.status = _StatusRecorder()
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    editor._remove_selected_hatches()
+
+    assert editor.document.objects == [source]
+    assert source.group == ""
+    assert "4 hachure(s) supprimée(s)" in editor.status.text

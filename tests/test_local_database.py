@@ -232,3 +232,16 @@ def test_hatches_are_clipped_inside_a_closed_square() -> None:
         for segment in segments
         for coordinate in (segment.x1, segment.y1, segment.x2, segment.y2)
     )
+
+
+def test_aluminium_hatches_can_be_generated_as_close_pairs() -> None:
+    outline = [(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]
+    first = hatch_segments(outline, spacing=10, angle_degrees=45, offset_shift=0)
+    second = hatch_segments(outline, spacing=10, angle_degrees=45, offset_shift=2)
+
+    assert first and second
+    # Les deux familles ont le même pas long, avec seulement un petit décalage
+    # entre les deux traits de chaque paire.
+    first_offsets = sorted({round((segment.y1 - segment.x1) / 2**0.5, 6) for segment in first})
+    second_offsets = sorted({round((segment.y1 - segment.x1) / 2**0.5, 6) for segment in second})
+    assert min(abs(a - b) for a in first_offsets for b in second_offsets) <= 2.000001

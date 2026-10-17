@@ -757,9 +757,14 @@ class DocumentEditorWindow(tk.Toplevel):
 
         hatch_button = ttk.Menubutton(technical, text="Hachures ▾")
         hatch_menu = tk.Menu(hatch_button, tearoff=False)
+        hatch_menu.add_command(
+            label="Enlever toutes les hachures",
+            command=self._remove_selected_hatches,
+        )
+        hatch_menu.add_separator()
         for label, preset in (
             ("Acier — 45°, moyen", "steel"),
-            ("Aluminium — 45°, fin", "aluminium"),
+            ("Aluminium — 45°, traits doubles", "aluminium"),
             ("Fonte — 45°, large", "cast_iron"),
             ("Croisées — 45° / 135°", "cross"),
             ("Verticales — 90°", "vertical"),
@@ -5600,7 +5605,7 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         presets = {
             "steel": (3.0, (45.0,)),
-            "aluminium": (2.0, (45.0,)),
+            "aluminium": (5.0, (45.0,)),
             "cast_iron": (5.0, (45.0,)),
             "cross": (4.0, (45.0, 135.0)),
             "vertical": (3.0, (90.0,)),
@@ -5615,11 +5620,21 @@ class DocumentEditorWindow(tk.Toplevel):
             angles = (angle,)
         else:
             spacing_mm, angles = presets[preset]
-        segments = [
-            segment
-            for angle in angles
-            for segment in hatch_segments(outline, spacing_mm * 72 / 25.4, angle)
-        ]
+        if preset == "aluminium":
+            pair_gap = 1.0 * 72 / 25.4
+            repeat = spacing_mm * 72 / 25.4
+            segments = [
+                segment
+                for shift in (0.0, pair_gap)
+                for angle in angles
+                for segment in hatch_segments(outline, repeat, angle, shift)
+            ]
+        else:
+            segments = [
+                segment
+                for angle in angles
+                for segment in hatch_segments(outline, spacing_mm * 72 / 25.4, angle)
+            ]
         if not segments:
             messagebox.showwarning("Hachures", "Aucune hachure ne peut être créée.", parent=self)
             return
@@ -5637,6 +5652,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 segment.y2 - segment.y1,
                 pages=source.pages,
                 group=group,
+                source_id=source.object_id,
+                shape="hatch",
                 border_color=source.border_color,
                 border_width=max(0.5, source.border_width * 0.65),
             )
@@ -5645,6 +5662,54 @@ class DocumentEditorWindow(tk.Toplevel):
         self.selected_indices = new_indices
         self.selected = max(new_indices)
         self.status.configure(text=f"{len(segments)} hachure(s) créée(s) et assemblée(s) au contour.")
+        self._render()
+
+    def _remove_selected_hatches(self) -> None:
+        if not self.selected_indices:
+            self.status.configure(text="Sélectionnez une forme hachurée ou l’une de ses hachures.")
+            return
+        selected_objects = [self.document.objects[index] for index in self.selected_indices]
+        group_ids = {item.group for item in selected_objects if item.group}
+        source_ids = {
+            item.source_id for item in selected_objects if item.shape == "hatch" and item.source_id
+        } | {
+            item.object_id for item in selected_objects if item.kind != "line"
+        }
+        explicit = {
+            index
+            for index, item in enumerate(self.document.objects)
+            if item.shape == "hatch"
+            and (item.source_id in source_ids or (item.group and item.group in group_ids))
+        }
+        legacy: set[int] = set()
+        for group_id in group_ids:
+            members = [
+                (index, item)
+                for index, item in enumerate(self.document.objects)
+                if item.group == group_id
+            ]
+            if any(self._closed_outline(item) for _index, item in members if item.kind != "line"):
+                legacy.update(
+                    index
+                    for index, item in members
+                    if item.kind == "line" and not item.shape
+                )
+        to_delete = explicit | legacy
+        if not to_delete:
+            self.status.configure(text="Aucune hachure associée à cette sélection.")
+            return
+        self._checkpoint()
+        for index in sorted(to_delete, reverse=True):
+            del self.document.objects[index]
+        for item in self.document.objects:
+            if item.group in group_ids and not any(
+                candidate.group == item.group and candidate.shape == "hatch"
+                for candidate in self.document.objects
+            ):
+                item.group = ""
+        self.selected = None
+        self.selected_indices.clear()
+        self.status.configure(text=f"{len(to_delete)} hachure(s) supprimée(s) en une seule opération.")
         self._render()
 
     def _chamfer_selected(self) -> None:

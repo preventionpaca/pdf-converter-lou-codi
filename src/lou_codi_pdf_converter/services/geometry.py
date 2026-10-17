@@ -288,7 +288,10 @@ def chamfer_segments(
 
 
 def hatch_segments(
-    points: list[tuple[float, float]], spacing: float, angle_degrees: float = 45
+    points: list[tuple[float, float]],
+    spacing: float,
+    angle_degrees: float = 45,
+    offset_shift: float = 0.0,
 ) -> list[Segment]:
     """Clip parallel hatch lines to a simple closed polygon."""
     if len(points) < 3 or spacing <= 0:
@@ -301,7 +304,7 @@ def hatch_segments(
     normal = (-direction[1], direction[0])
     projections = [x * normal[0] + y * normal[1] for x, y in polygon]
     minimum, maximum = min(projections), max(projections)
-    offset = math.floor(minimum / spacing) * spacing
+    offset = math.floor((minimum - offset_shift) / spacing) * spacing + offset_shift
     result: list[Segment] = []
     while offset <= maximum + EPSILON:
         crossings: list[float] = []
