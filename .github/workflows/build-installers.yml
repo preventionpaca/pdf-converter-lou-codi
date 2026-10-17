@@ -32,6 +32,12 @@ jobs:
         run: bash packaging/linux/make-bundle.sh
       - if: runner.os == 'Windows'
         shell: pwsh
+        run: >-
+          [void][scriptblock]::Create(
+            (Get-Content packaging/windows/install.ps1 -Raw)
+          )
+      - if: runner.os == 'Windows'
+        shell: pwsh
         run: packaging/windows/make-bundle.ps1
       - uses: actions/upload-artifact@v4
         with:

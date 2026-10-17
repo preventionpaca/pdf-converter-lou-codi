@@ -11,6 +11,7 @@ from lou_codi_pdf_converter.services.documents_to_pdf import convert_document_to
 def test_office_conversion_invokes_libreoffice_headlessly(tmp_path: Path) -> None:
     source = tmp_path / "source.docx"
     target = tmp_path / "result.pdf"
+    office_engine = Path("/opt/lou-codi/office-runtime/program/soffice")
     source.touch()
     commands: list[list[str]] = []
 
@@ -22,7 +23,7 @@ def test_office_conversion_invokes_libreoffice_headlessly(tmp_path: Path) -> Non
 
     with patch(
         "lou_codi_pdf_converter.services.documents_to_pdf.find_office_engine",
-        return_value=Path("/opt/lou-codi/office-runtime/program/soffice"),
+        return_value=office_engine,
     ), patch(
         "lou_codi_pdf_converter.services.documents_to_pdf.subprocess.run",
         side_effect=fake_run,
@@ -30,7 +31,7 @@ def test_office_conversion_invokes_libreoffice_headlessly(tmp_path: Path) -> Non
         convert_document_to_pdf(source, target)
 
     assert target.read_bytes() == b"pdf"
-    assert commands[0][0] == "/opt/lou-codi/office-runtime/program/soffice"
+    assert commands[0][0] == str(office_engine)
     assert "--headless" in commands[0]
     assert any(argument.startswith("-env:UserInstallation=file://") for argument in commands[0])
 

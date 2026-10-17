@@ -10,4 +10,4 @@ def test_open_path_uses_xdg_open_on_linux() -> None:
     ) as popen:
         open_path(Path("/tmp/result.pdf"))
 
-    popen.assert_called_once_with(["xdg-open", "/tmp/result.pdf"])
+    popen.assert_called_once_with(["xdg-open", str(Path("/tmp/result.pdf"))])

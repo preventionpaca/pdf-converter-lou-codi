@@ -1,4 +1,7 @@
+import os
 from pathlib import Path
+
+import pytest
 
 from lou_codi_pdf_converter.services.destinations import (
     document_destination,
@@ -33,6 +36,10 @@ def test_document_destination_can_be_configured(tmp_path: Path) -> None:
     assert document_destination(settings) == destination
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows ne permet pas de créer un dossier distinct par un espace final.",
+)
 def test_cloud_directory_with_invisible_trailing_space_is_resolved(tmp_path: Path) -> None:
     real_directory = tmp_path / "Notes fil de l'eau "
     real_directory.mkdir()
