@@ -2003,8 +2003,8 @@ class DocumentEditorWindow(tk.Toplevel):
             menu.add_cascade(label="Lignes et colonnes", menu=structure)
 
         if one is not None and one.kind == "image":
+            menu.add_command(label="Rogner l’image…", command=self._crop_selected_image)
             image_menu = tk.Menu(menu, tearoff=False)
-            image_menu.add_command(label="Rogner…", command=self._crop_selected_image)
             image_menu.add_command(
                 label="Réduire la définition / le poids…",
                 command=self._resize_selected_image_pixels,
@@ -2471,7 +2471,9 @@ class DocumentEditorWindow(tk.Toplevel):
             try:
                 with Image.open(item.image_path) as source:
                     preview = source.copy()
-                preview.thumbnail((max(1, int(w)), max(1, int(h))))
+                preview = preview.resize(
+                    (max(1, int(w)), max(1, int(h))), Image.Resampling.BILINEAR
+                )
                 picture = ImageTk.PhotoImage(preview)
                 self._overlay_images.append(picture)
                 self.canvas.create_image(x + w / 2, y + h / 2, image=picture, tags=tags)
@@ -3122,7 +3124,20 @@ class DocumentEditorWindow(tk.Toplevel):
     def _add_image(self) -> None:
         files = choose_documents(self, {".png", ".jpg", ".jpeg", ".tif", ".tiff"})
         if files:
-            self._add_object(PageObject("image", self.current_page, 70, 80, 180, 120, image_path=str(files[0])))
+            display_width, display_height = 180.0, 120.0
+            try:
+                with Image.open(files[0]) as source:
+                    source_width, source_height = source.size
+                display_height = display_width * source_height / max(1, source_width)
+                if display_height > 180:
+                    display_height = 180.0
+                    display_width = display_height * source_width / max(1, source_height)
+            except OSError:
+                pass
+            self._add_object(PageObject(
+                "image", self.current_page, 70, 80, display_width, display_height,
+                image_path=str(files[0]),
+            ))
 
     def _add_mask(self) -> None:
         self._add_object(PageObject("mask", self.current_page, 70, 80, 220, 55))
@@ -6094,18 +6109,22 @@ class DocumentEditorWindow(tk.Toplevel):
     def _set_border_style_value(self, value: str) -> None:
         self._mutate(lambda item: setattr(item, "border_style", value))
 
-    def _write_edited_image(self, source: Image.Image, suffix: str = ".png") -> Path:
+    def _write_edited_image(
+        self, source: Image.Image, suffix: str = ".png", *, optimize: bool = True
+    ) -> Path:
         directory = module_output_directory("Document Studio") / "Images modifiées"
         directory.mkdir(parents=True, exist_ok=True)
         target = directory / f"image_{uuid.uuid4().hex[:10]}{suffix}"
         if suffix.lower() in {".jpg", ".jpeg"}:
-            source.convert("RGB").save(target, "JPEG", quality=88, optimize=True)
+            source.convert("RGB").save(target, "JPEG", quality=88, optimize=optimize)
         else:
-            source.save(target, "PNG", optimize=True)
+            source.save(target, "PNG", optimize=optimize)
         return target
 
-    def _replace_image_pixels(self, item: PageObject, image: Image.Image) -> None:
-        item.image_path = str(self._write_edited_image(image))
+    def _replace_image_pixels(
+        self, item: PageObject, image: Image.Image, *, optimize: bool = True
+    ) -> None:
+        item.image_path = str(self._write_edited_image(image, optimize=optimize))
 
     def _crop_selected_image(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "image":
@@ -6185,7 +6204,8 @@ class DocumentEditorWindow(tk.Toplevel):
         else:
             bottom = max(top + minimum, min(original_bottom, pointer_y))
         self._crop_box[:] = [left, top, right, bottom]
-        self._render()
+        self.canvas.delete("crop-overlay")
+        self._draw_crop_overlay()
 
     def _apply_visual_crop(self) -> None:
         if self._crop_mode_index is None or self._crop_box is None:
@@ -6212,7 +6232,8 @@ class DocumentEditorWindow(tk.Toplevel):
         cropped = image.crop(box)
         item.x, item.y = left, top
         item.width, item.height = right - left, bottom - top
-        self._replace_image_pixels(item, cropped)
+        # A fast save is sufficient here: final package embedding can optimise later.
+        self._replace_image_pixels(item, cropped, optimize=False)
         self._crop_mode_index = None
         self._crop_box = None
         self._crop_drag_edge = None
