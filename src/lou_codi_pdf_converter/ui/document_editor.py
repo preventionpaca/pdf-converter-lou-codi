@@ -4268,14 +4268,7 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if self._editing_widget is not None:
             widget = self._editing_widget
-            try:
-                start = widget.index("sel.first linestart")
-                end = widget.index("sel.last lineend")
-            except tk.TclError:
-                start = widget.index("insert linestart")
-                end = widget.index("insert lineend")
-            first_line = int(start.split(".", 1)[0])
-            last_line = int(end.split(".", 1)[0])
+            first_line, last_line = self._inline_selected_line_numbers(widget)
             # Modifier seulement le préfixe de chaque paragraphe. Remplacer le
             # bloc entier détruisait les tags Tk qui portent gras, taille,
             # couleur, surlignage et liens.
@@ -5331,6 +5324,11 @@ class DocumentEditorWindow(tk.Toplevel):
         def tool(parent: tk.Misc, label: str, command: object, help_text: str) -> tk.Button:
             button = tk.Button(parent, text=label, relief="flat", command=command, padx=6)
             button.pack(side="left", padx=1, pady=2)
+            button.bind(
+                "<ButtonPress-1>",
+                lambda _event, current=widget: self._preserve_inline_text_selection(current),
+                add="+",
+            )
             self._add_tooltip(button, help_text)
             return button
 
@@ -5363,6 +5361,11 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         families.configure(menu=family_menu)
         families.pack(side="left", padx=2, pady=2)
+        families.bind(
+            "<ButtonPress-1>",
+            lambda _event, current=widget: self._preserve_inline_text_selection(current),
+            add="+",
+        )
         sizes = ttk.Combobox(
             primary,
             textvariable=self.font_size_var,
@@ -5370,6 +5373,11 @@ class DocumentEditorWindow(tk.Toplevel):
             width=4,
         )
         sizes.pack(side="left", padx=2, pady=2)
+        sizes.bind(
+            "<ButtonPress-1>",
+            lambda _event, current=widget: self._preserve_inline_text_selection(current),
+            add="+",
+        )
         sizes.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
         sizes.bind("<Return>", lambda _event: self._apply_font_size())
         tool(primary, "A−", lambda: self._change_font(-1), "Réduire la taille du texte")
@@ -5394,6 +5402,11 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         highlight.configure(menu=highlight_menu)
         highlight.pack(side="left", padx=2, pady=2)
+        highlight.bind(
+            "<ButtonPress-1>",
+            lambda _event, current=widget: self._preserve_inline_text_selection(current),
+            add="+",
+        )
         background = tk.Menubutton(primary, text="Fond ▾", relief="flat", padx=6)
         background_menu = tk.Menu(background, tearoff=False)
         background_menu.add_command(
@@ -5544,21 +5557,48 @@ class DocumentEditorWindow(tk.Toplevel):
         self._remember_inline_text_selection(widget)
         return "break"
 
+    def _preserve_inline_text_selection(self, widget: tk.Text) -> None:
+        """Keep the selection when focus moves from the text to its toolbar."""
+        if widget is not self._editing_widget:
+            return
+        try:
+            start = self._text_character_offset(widget, "sel.first")
+            end = self._text_character_offset(widget, "sel.last")
+        except tk.TclError:
+            return
+        if end > start:
+            self._editing_selection_range = (start, end)
+
+    def _inline_selected_line_numbers(self, widget: tk.Text) -> tuple[int, int]:
+        """Resolve selected paragraphs after a toolbar button has taken focus."""
+        if self._editing_selection_range is not None:
+            start_offset, end_offset = self._editing_selection_range
+            start = widget.index(f"1.0 + {start_offset} chars")
+            end = widget.index(f"1.0 + {end_offset} chars")
+            if end_offset > start_offset and widget.compare(end, "==", f"{end} linestart"):
+                end = widget.index(f"{end} - 1 chars")
+        else:
+            try:
+                start = widget.index("sel.first")
+                end = widget.index("sel.last")
+            except tk.TclError:
+                start = end = widget.index("insert")
+        return int(start.split(".", 1)[0]), int(end.split(".", 1)[0])
+
     def _insert_inline_tab(self, _event: object = None) -> str:
         widget = self._editing_widget
         if widget is None:
             return "break"
-        try:
-            start = widget.index("sel.first linestart")
-            end = widget.index("sel.last lineend")
-        except tk.TclError:
+        if self._editing_selection_range is None:
             widget.insert("insert", "\t")
         else:
-            lines = widget.get(start, end).split("\n")
-            widget.delete(start, end)
-            widget.insert(start, "\n".join(f"\t{line}" for line in lines))
-            widget.tag_add("sel", start, f"{start} + {sum(len(line) for line in lines) + len(lines) * 2 - 1} chars")
-            self._remember_inline_text_selection(widget)
+            first_line, last_line = self._inline_selected_line_numbers(widget)
+            for line_number in range(last_line, first_line - 1, -1):
+                widget.insert(f"{line_number}.0", "\t")
+            self._editing_selection_range = (
+                self._text_character_offset(widget, f"{first_line}.0"),
+                self._text_character_offset(widget, f"{last_line}.0 lineend"),
+            )
         widget.focus_set()
         return "break"
 
@@ -5566,19 +5606,18 @@ class DocumentEditorWindow(tk.Toplevel):
         widget = self._editing_widget
         if widget is None:
             return "break"
-        try:
-            start = widget.index("sel.first linestart")
-            end = widget.index("sel.last lineend")
-        except tk.TclError:
-            start = widget.index("insert linestart")
-            end = widget.index("insert lineend")
-        lines = widget.get(start, end).split("\n")
-        changed = [
-            line[1:] if line.startswith("\t") else line.removeprefix("    ")
-            for line in lines
-        ]
-        widget.delete(start, end)
-        widget.insert(start, "\n".join(changed))
+        first_line, last_line = self._inline_selected_line_numbers(widget)
+        for line_number in range(last_line, first_line - 1, -1):
+            line_start = f"{line_number}.0"
+            content = widget.get(line_start, f"{line_start} lineend")
+            if content.startswith("\t"):
+                widget.delete(line_start, f"{line_start} + 1 chars")
+            elif content.startswith("    "):
+                widget.delete(line_start, f"{line_start} + 4 chars")
+        self._editing_selection_range = (
+            self._text_character_offset(widget, f"{first_line}.0"),
+            self._text_character_offset(widget, f"{last_line}.0 lineend"),
+        )
         widget.focus_set()
         return "break"
 
@@ -6584,11 +6623,15 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is not None:
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
-            if item.kind == "text" and selection is not None:
+            if item.kind == "text" and self._editing_widget is not None:
+                if selection is None:
+                    self.status.configure(text="Sélectionnez d’abord le texte à mettre en forme.")
+                    self._editing_widget.focus_set()
+                    return
                 widget = self._editing_widget
                 current = bool(
                     self._inline_text_style_at(widget, item, selection[0]).get(name, getattr(item, name))
-                ) if widget is not None else bool(getattr(item, name))
+                )
                 self._apply_inline_text_style(item, {name: not current})
                 return
         self._mutate(lambda item: setattr(item, name, not getattr(item, name)))
@@ -6659,7 +6702,10 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if attribute == "color" and self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and self._apply_inline_text_style(item, {"color": normalized.upper()}):
+            if item.kind == "text" and self._editing_widget is not None:
+                if not self._apply_inline_text_style(item, {"color": normalized.upper()}):
+                    self.status.configure(text="Sélectionnez d’abord le texte à colorer.")
+                    self._editing_widget.focus_set()
                 return
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
 
@@ -7021,11 +7067,15 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is not None:
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
-            if item.kind == "text" and selection is not None:
+            if item.kind == "text" and self._editing_widget is not None:
+                if selection is None:
+                    self.status.configure(text="Sélectionnez d’abord le texte à redimensionner.")
+                    self._editing_widget.focus_set()
+                    return
                 widget = self._editing_widget
                 current = float(
                     self._inline_text_style_at(widget, item, selection[0]).get("font_size", item.font_size)
-                ) if widget is not None else float(item.font_size)
+                )
                 new_size = max(6, current + change)
                 self._apply_inline_text_style(item, {"font_size": new_size})
                 self.font_size_var.set(f"{new_size:g}")
@@ -7042,16 +7092,22 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and self._apply_inline_text_style(item, {"font_size": value}):
+            if item.kind == "text" and self._editing_widget is not None:
+                if not self._apply_inline_text_style(item, {"font_size": value}):
+                    self.status.configure(text="Sélectionnez d’abord le texte à redimensionner.")
+                    self._editing_widget.focus_set()
                 return
         self._mutate(lambda item: setattr(item, "font_size", value))
 
     def _apply_font_family(self) -> None:
         if self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and self._apply_inline_text_style(
-                item, {"font_family": self.font_family_var.get()}
-            ):
+            if item.kind == "text" and self._editing_widget is not None:
+                if not self._apply_inline_text_style(
+                    item, {"font_family": self.font_family_var.get()}
+                ):
+                    self.status.configure(text="Sélectionnez d’abord le texte dont vous voulez changer la police.")
+                    self._editing_widget.focus_set()
                 return
         self._mutate(lambda item: setattr(item, "font_family", self.font_family_var.get()))
 
