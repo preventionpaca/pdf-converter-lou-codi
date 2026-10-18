@@ -582,7 +582,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_selection_range: tuple[int, int] | None = None
-        self._editing_word_selection_locked = False
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -2925,21 +2924,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 color = "#1769AA" if linked else str(fragment_style["color"])
                 highlight = str(fragment_style.get("highlight", ""))
                 if highlight:
-                    text_box = draw.textbbox(
-                        (cursor_x, py), fragment or "Ag", font=fragment_font
-                    )
-                    highlight_height = max(
-                        line_height,
-                        fragment_size * 1.3,
-                        float(text_box[3]) - py + 2,
-                    )
                     draw.rectangle(
-                        (
-                            cursor_x,
-                            py,
-                            cursor_x + fragment_width,
-                            min(render_height - 1, py + highlight_height),
-                        ),
+                        (cursor_x, py, cursor_x + fragment_width, min(render_height - 1, py + line_height)),
                         fill=highlight,
                     )
                 draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
@@ -5146,36 +5132,6 @@ class DocumentEditorWindow(tk.Toplevel):
             self._editing_selection_range = None
             return
         self._editing_selection_range = (start, end) if end > start else None
-        if self._editing_selection_range is not None and self.selected is not None:
-            item = self.document.objects[self.selected]
-            if item.kind == "text" and item.object_id == self._editing_object_id:
-                size = float(
-                    self._inline_text_style_at(widget, item, start).get(
-                        "font_size", item.font_size
-                    )
-                )
-                self.font_size_var.set(f"{size:g}")
-
-    def _select_inline_word(self, event: tk.Event[tk.Text]) -> str:
-        """Select exactly one word and prevent drag-extension toward a toolbar."""
-        widget = event.widget
-        index = widget.index(f"@{event.x},{event.y}")
-        start = widget.index(f"{index} wordstart")
-        end = widget.index(f"{index} wordend")
-        widget.tag_remove("sel", "1.0", "end")
-        widget.tag_add("sel", start, end)
-        widget.mark_set("insert", end)
-        widget.tag_raise("sel")
-        self._editing_word_selection_locked = True
-        self.after_idle(lambda: self._remember_inline_text_selection(widget))
-        return "break"
-
-    def _protect_inline_word_selection(self, _event: tk.Event[tk.Text]) -> str | None:
-        return "break" if self._editing_word_selection_locked else None
-
-    def _finish_inline_pointer_selection(self, widget: tk.Text) -> None:
-        self._editing_word_selection_locked = False
-        self.after_idle(lambda: self._remember_inline_text_selection(widget))
 
     @staticmethod
     def _text_character_offset(widget: tk.Text, index: object) -> int:
@@ -5235,11 +5191,11 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
-        widget.bind("<Double-Button-1>", self._select_inline_word)
-        widget.bind("<B1-Motion>", self._protect_inline_word_selection)
         widget.bind(
             "<ButtonRelease-1>",
-            lambda _event, current=widget: self._finish_inline_pointer_selection(current),
+            lambda _event: self.after_idle(
+                lambda current=widget: self._remember_inline_text_selection(current)
+            ),
             add="+",
         )
         widget.bind(
@@ -5254,7 +5210,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_selection_range = None
-        self._editing_word_selection_locked = False
         self.canvas.create_window(
             x,
             y,
@@ -6073,7 +6028,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_original_styles = []
         self._editing_selection_range = None
-        self._editing_word_selection_locked = False
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
@@ -6497,14 +6451,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 current = float(
                     self._inline_text_style_at(widget, item, selection[0]).get("font_size", item.font_size)
                 ) if widget is not None else float(item.font_size)
-                new_size = max(6, current + change)
-                self._apply_inline_text_style(item, {"font_size": new_size})
-                self.font_size_var.set(f"{new_size:g}")
+                self._apply_inline_text_style(item, {"font_size": max(6, current + change)})
                 return
-        if self.selected is not None:
-            new_size = max(6, self.document.objects[self.selected].font_size + change)
-            self._mutate(lambda item: setattr(item, "font_size", new_size))
-            self.font_size_var.set(f"{new_size:g}")
+        self._mutate(lambda item: setattr(item, "font_size", max(6, item.font_size + change)))
 
     def _apply_font_size(self) -> None:
         try:
