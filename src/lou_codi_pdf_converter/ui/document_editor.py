@@ -582,6 +582,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_selection_range: tuple[int, int] | None = None
+        self._editing_word_range: tuple[str, str] | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -5133,6 +5134,29 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._editing_selection_range = (start, end) if end > start else None
 
+    def _prepare_inline_word_selection(self, event: tk.Event[tk.Text]) -> None:
+        """Remember the exact word under a double-click without replacing Tk bindings."""
+        widget = event.widget
+        index = widget.index(f"@{event.x},{event.y}")
+        self._editing_word_range = (
+            widget.index(f"{index} wordstart"),
+            widget.index(f"{index} wordend"),
+        )
+
+    def _finish_inline_text_selection(self, widget: tk.Text) -> None:
+        """Stabilise a double-clicked word after Tk has completed its native selection."""
+        if widget is not self._editing_widget:
+            return
+        word_range = self._editing_word_range
+        self._editing_word_range = None
+        if word_range is not None:
+            start, end = word_range
+            widget.tag_remove("sel", "1.0", "end")
+            widget.tag_add("sel", start, end)
+            widget.mark_set("insert", end)
+            widget.tag_raise("sel")
+        self.after_idle(lambda: self._remember_inline_text_selection(widget))
+
     @staticmethod
     def _text_character_offset(widget: tk.Text, index: object) -> int:
         """Return a character offset; Tk represents a zero-length count as None."""
@@ -5191,10 +5215,11 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
+        widget.bind("<Double-Button-1>", self._prepare_inline_word_selection, add="+")
         widget.bind(
             "<ButtonRelease-1>",
-            lambda _event: self.after_idle(
-                lambda current=widget: self._remember_inline_text_selection(current)
+            lambda _event, current=widget: self.after_idle(
+                lambda current=current: self._finish_inline_text_selection(current)
             ),
             add="+",
         )
@@ -5210,6 +5235,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_selection_range = None
+        self._editing_word_range = None
         self.canvas.create_window(
             x,
             y,
@@ -6028,6 +6054,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_original_styles = []
         self._editing_selection_range = None
+        self._editing_word_range = None
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
@@ -6451,9 +6478,14 @@ class DocumentEditorWindow(tk.Toplevel):
                 current = float(
                     self._inline_text_style_at(widget, item, selection[0]).get("font_size", item.font_size)
                 ) if widget is not None else float(item.font_size)
-                self._apply_inline_text_style(item, {"font_size": max(6, current + change)})
+                new_size = max(6, current + change)
+                self._apply_inline_text_style(item, {"font_size": new_size})
+                self.font_size_var.set(f"{new_size:g}")
                 return
-        self._mutate(lambda item: setattr(item, "font_size", max(6, item.font_size + change)))
+        if self.selected is not None:
+            new_size = max(6, self.document.objects[self.selected].font_size + change)
+            self._mutate(lambda item: setattr(item, "font_size", new_size))
+            self.font_size_var.set(f"{new_size:g}")
 
     def _apply_font_size(self) -> None:
         try:
