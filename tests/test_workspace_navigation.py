@@ -65,4 +65,4 @@ def test_workspace_is_detached_and_shown_before_parent_is_hidden() -> None:
     hide_parent = log.index("home:hide")
     assert detach < hide_parent
     assert show < hide_parent
-    assert "studio:group" in log
+    assert "studio:tk:group" in log

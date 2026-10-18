@@ -397,11 +397,12 @@ class Application(tk.Tk):
         previous_geometry = previous.geometry()
         previous_state = previous.state()
         # A transient window is hidden automatically when its parent is withdrawn on
-        # Linux. Promote the module to a normal workspace before hiding the previous
-        # one, while retaining its WM group and shared Loucodiworkshop class/icon.
+        # Linux. Promote the module to a normal top-level workspace. WM_CLASS already
+        # groups it with the launcher; keeping the withdrawn root as WM group leader
+        # makes some desktops lose the running indicator for maximized workspaces.
         try:
             window.tk.call("wm", "transient", window._w, "")
-            window.wm_group(self)
+            window.tk.call("wm", "group", window._w, "")
         except tk.TclError:
             pass
         try:
@@ -409,7 +410,7 @@ class Application(tk.Tk):
         except tk.TclError:
             pass
         try:
-            window.iconphoto(False, self.app_icon)
+            window.iconphoto(True, self.app_icon)
         except tk.TclError:
             pass
         if force_maximized or previous_state == "zoomed":

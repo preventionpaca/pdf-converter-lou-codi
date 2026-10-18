@@ -122,6 +122,13 @@ def rotation_step_for_objects(objects: list[PageObject], configured_step: float)
     return max(0.1, abs(configured_step))
 
 
+def point_hits_rotation_handle(
+    pointer: tuple[float, float], handle: tuple[float, float], radius: float = 15.0
+) -> bool:
+    """Use a generous hit area so the rotation handle remains easy to grab."""
+    return math.dist(pointer, handle) <= radius
+
+
 def spreadsheet_column_name(index: int) -> str:
     name = ""
     index += 1
@@ -3471,23 +3478,6 @@ class DocumentEditorWindow(tk.Toplevel):
     def _object_at_event(self, event: tk.Event[tk.Misc]) -> int | None:
         current = self.canvas.find_withtag("current")
         if current:
-            if "rotation-handle" in self.canvas.gettags(current[0]) and self.selected_indices:
-                indices = expanded_group_indices(self.document.objects, self.selected_indices)
-                objects = [self.document.objects[index] for index in indices]
-                left, top, width, height = objects_bounds(objects)
-                pivot_x, pivot_y = left + width / 2, top + height / 2
-                pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
-                pointer_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
-                start_angle = math.degrees(math.atan2(pointer_y - pivot_y, pointer_x - pivot_x))
-                self.selected_indices = indices
-                self.selected = min(indices)
-                self._rotation_drag_origin = (pivot_x, pivot_y, start_angle)
-                self._rotation_drag_delta = 0.0
-                self._drag_origin = None
-                self.status.configure(
-                    text="Rotation guidée : déplacez la poignée ; le pas est celui du champ Rotation."
-                )
-                return
             for tag in self.canvas.gettags(current[0]):
                 if tag.startswith("object:"):
                     return int(tag.split(":", 1)[1])
@@ -3531,6 +3521,8 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._commit_inline_editor(render=False)
         self.canvas.focus_set()
+        if self._start_rotation_drag_if_hit(event):
+            return
         if self._drawing_text:
             page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
             page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
@@ -3768,6 +3760,35 @@ class DocumentEditorWindow(tk.Toplevel):
         else:
             self._drag_origin = None
         self._render()
+
+    def _start_rotation_drag_if_hit(self, event: tk.Event[tk.Misc]) -> bool:
+        if not self.selected_indices:
+            return False
+        indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        objects = [self.document.objects[index] for index in indices]
+        if any(item.locked for item in objects):
+            return False
+        left, top, width, height = objects_bounds(objects)
+        handle = (
+            self.page_x + (left + width / 2) * self.zoom,
+            self.page_y + top * self.zoom - 30,
+        )
+        pointer = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+        if not point_hits_rotation_handle(pointer, handle):
+            return False
+        pivot_x, pivot_y = left + width / 2, top + height / 2
+        pointer_x = (pointer[0] - self.page_x) / self.zoom
+        pointer_y = (pointer[1] - self.page_y) / self.zoom
+        start_angle = math.degrees(math.atan2(pointer_y - pivot_y, pointer_x - pivot_x))
+        self.selected_indices = indices
+        self.selected = min(indices)
+        self._rotation_drag_origin = (pivot_x, pivot_y, start_angle)
+        self._rotation_drag_delta = 0.0
+        self._drag_origin = None
+        self.status.configure(
+            text="Rotation guidée : maintenez le clic et déplacez la poignée autour de l’objet."
+        )
+        return True
 
     def _double_click(self, event: tk.Event[tk.Misc]) -> str:
         if self._drawing_line:

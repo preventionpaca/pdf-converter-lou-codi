@@ -28,6 +28,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     normalize_external_text,
     objects_bounds,
     parse_tabular_clipboard,
+    point_hits_rotation_handle,
     revolution_axis_target,
     revolution_stations,
     rotation_step_for_objects,
@@ -708,6 +709,12 @@ def test_layout_rich_objects_use_quarter_turns_for_guided_rotation() -> None:
     assert rotation_step_for_objects([PageObject("text", 0, 0, 0, 100, 40)], 15) == 90
     assert rotation_step_for_objects([PageObject("table", 0, 0, 0, 100, 40)], 5) == 90
     assert rotation_step_for_objects([PageObject("polyline", 0, 0, 0, 100, 40)], 15) == 15
+
+
+def test_rotation_handle_has_a_generous_but_bounded_hit_area() -> None:
+    assert point_hits_rotation_handle((108, 108), (100, 100))
+    assert point_hits_rotation_handle((115, 100), (100, 100))
+    assert not point_hits_rotation_handle((116, 100), (100, 100))
 
 
 def test_external_office_text_separators_become_line_breaks() -> None:

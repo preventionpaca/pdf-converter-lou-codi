@@ -44,7 +44,7 @@ Terminal=false
 Categories=Office;Graphics;Utility;
 MimeType=application/x-loucodi-document;
 StartupNotify=true
-StartupWMClass=Lou Còdi Workshop
+StartupWMClass=Loucodiworkshop
 EOF
 
 cat > "$package_root/usr/share/mime/packages/lou-codi-document.xml" <<'EOF'
