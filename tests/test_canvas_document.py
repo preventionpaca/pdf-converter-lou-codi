@@ -4,6 +4,7 @@ import zipfile
 from itertools import pairwise
 from pathlib import Path
 
+import pytest
 from pypdf import PdfReader
 from PIL import Image
 
@@ -37,6 +38,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     revolution_axis_target,
     revolution_stations,
     resized_circle_diameter,
+    rotated_rectangle_points,
     rotation_step_for_objects,
     snapped_rotation_delta,
     text_style_at,
@@ -843,6 +845,16 @@ def test_rotation_handle_uses_shortest_delta_and_configured_step() -> None:
     assert snapped_rotation_delta(-90, -52, 15) == 45
     assert snapped_rotation_delta(170, -170, 5) == 20
     assert snapped_rotation_delta(-170, 170, 10) == -20
+
+
+def test_rotated_text_frame_keeps_all_corners_around_the_same_centre() -> None:
+    item = PageObject("text", 0, 10, 20, 100, 40, rotation=90)
+
+    points = rotated_rectangle_points(item)
+
+    expected = [(80.0, -10.0), (80.0, 90.0), (40.0, 90.0), (40.0, -10.0)]
+    for point, expected_point in zip(points, expected, strict=True):
+        assert point == pytest.approx(expected_point)
 
 
 def test_layout_rich_objects_use_quarter_turns_for_guided_rotation() -> None:

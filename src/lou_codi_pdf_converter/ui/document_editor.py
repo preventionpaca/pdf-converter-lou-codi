@@ -110,6 +110,27 @@ def objects_bounds(objects: list[PageObject]) -> tuple[float, float, float, floa
     return left, top, right - left, bottom - top
 
 
+def rotated_rectangle_points(item: PageObject) -> list[tuple[float, float]]:
+    """Return an object's four corners after rotation around its centre."""
+    center_x = item.x + item.width / 2
+    center_y = item.y + item.height / 2
+    angle = math.radians(float(item.rotation) % 360)
+    cosine, sine = math.cos(angle), math.sin(angle)
+    points: list[tuple[float, float]] = []
+    for x, y in (
+        (item.x, item.y),
+        (item.x + item.width, item.y),
+        (item.x + item.width, item.y + item.height),
+        (item.x, item.y + item.height),
+    ):
+        offset_x, offset_y = x - center_x, y - center_y
+        points.append((
+            center_x + offset_x * cosine - offset_y * sine,
+            center_y + offset_x * sine + offset_y * cosine,
+        ))
+    return points
+
+
 def snapped_rotation_delta(start_angle: float, current_angle: float, step: float) -> float:
     """Return the shortest signed rotation, snapped to the configured angular step."""
     delta = (current_angle - start_angle + 180.0) % 360.0 - 180.0
@@ -2304,18 +2325,35 @@ class DocumentEditorWindow(tk.Toplevel):
             left, top, rotation_width, rotation_height = objects_bounds(rotation_objects)
             center_x = self.page_x + (left + rotation_width / 2) * self.zoom
             top_y = self.page_y + top * self.zoom
+            handle_x = center_x
             handle_y = top_y - 30
+            connection_x = center_x
+            connection_y = top_y
+            if len(rotation_objects) == 1 and rotation_objects[0].kind == "text":
+                item = rotation_objects[0]
+                corners = rotated_rectangle_points(item)
+                top_middle_x = (corners[0][0] + corners[1][0]) / 2
+                top_middle_y = (corners[0][1] + corners[1][1]) / 2
+                item_center_x = item.x + item.width / 2
+                item_center_y = item.y + item.height / 2
+                normal_x = top_middle_x - item_center_x
+                normal_y = top_middle_y - item_center_y
+                normal_length = max(1e-9, math.hypot(normal_x, normal_y))
+                connection_x = self.page_x + top_middle_x * self.zoom
+                connection_y = self.page_y + top_middle_y * self.zoom
+                handle_x = connection_x + normal_x / normal_length * 30
+                handle_y = connection_y + normal_y / normal_length * 30
             self.canvas.create_line(
-                center_x, top_y, center_x, handle_y + 8,
+                connection_x, connection_y, handle_x, handle_y,
                 fill="#1769AA", width=2, tags=("rotation-decoration",),
             )
             self.canvas.create_oval(
-                center_x - 9, handle_y - 9, center_x + 9, handle_y + 9,
+                handle_x - 9, handle_y - 9, handle_x + 9, handle_y + 9,
                 fill="#FFFFFF", outline="#1769AA", width=2,
                 tags=("rotation-handle",),
             )
             self.canvas.create_text(
-                center_x, handle_y, text="↻", fill="#1769AA",
+                handle_x, handle_y, text="↻", fill="#1769AA",
                 font=("Sans", 11, "bold"), tags=("rotation-handle",),
             )
         if self._pending_text_link_id:
@@ -2662,33 +2700,35 @@ class DocumentEditorWindow(tk.Toplevel):
             flowed_text = flowed_text_for_object(item, self.document.objects)
             displayed_text = resolve_dynamic_text(flowed_text, self.current_page, self.document.page_count, source_name)
             emphasized = selected or bool(self._pending_text_link_id and item.kind == "text")
-            self.canvas.create_rectangle(
-                x,
-                y,
-                x + w,
-                y + h,
-                fill=(
-                    ""
-                    if item.kind == "text" or item.fill.lower() in {"", "none", "transparent"}
-                    else item.fill
-                ),
-                outline=outline,
-                width=4 if emphasized else 1,
-                tags=tags,
-            )
+            if item.kind != "text":
+                self.canvas.create_rectangle(
+                    x, y, x + w, y + h,
+                    fill="" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
+                    outline=outline, width=4 if emphasized else 1, tags=tags,
+                )
             picture = self._text_preview(item, displayed_text, max(1, round(w)), max(1, round(h)))
             self._overlay_images.append(picture)
             self.canvas.create_image(x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags)
-            self.canvas.create_rectangle(
-                x,
-                y,
-                x + w,
-                y + h,
-                outline=outline if emphasized else "",
-                width=4 if emphasized else 0,
-                dash=None if emphasized or item.border_style == "solid" else (5, 3) if item.border_style == "dashed" else (1, 3),
-                tags=tags,
-            )
+            if item.kind == "text" and emphasized:
+                selection_points = [
+                    coordinate
+                    for point in rotated_rectangle_points(item)
+                    for coordinate in (
+                        self.page_x + point[0] * self.zoom,
+                        self.page_y + point[1] * self.zoom,
+                    )
+                ]
+                self.canvas.create_polygon(
+                    *selection_points, fill="", outline=outline, width=4, tags=tags,
+                )
+            elif item.kind != "text":
+                self.canvas.create_rectangle(
+                    x, y, x + w, y + h,
+                    outline=outline if emphasized else "",
+                    width=4 if emphasized else 0,
+                    dash=None if emphasized or item.border_style == "solid" else (5, 3) if item.border_style == "dashed" else (1, 3),
+                    tags=tags,
+                )
             linked = item.flow_next_id or any(
                 candidate.flow_next_id == item.object_id for candidate in self.document.objects
             )
@@ -2723,11 +2763,16 @@ class DocumentEditorWindow(tk.Toplevel):
                     outline="white",
                     tags=(f"resize-start:{index}", "resize"),
                 )
+            resize_x, resize_y = x + w, y + h
+            if item.kind == "text":
+                bottom_right = rotated_rectangle_points(item)[2]
+                resize_x = self.page_x + bottom_right[0] * self.zoom
+                resize_y = self.page_y + bottom_right[1] * self.zoom
             self.canvas.create_rectangle(
-                x + w - size / 2,
-                y + h - size / 2,
-                x + w + size / 2,
-                y + h + size / 2,
+                resize_x - size / 2,
+                resize_y - size / 2,
+                resize_x + size / 2,
+                resize_y + size / 2,
                 fill="#1769AA",
                 outline="white",
                 tags=(f"resize-end:{index}", "resize"),
@@ -4502,6 +4547,18 @@ class DocumentEditorWindow(tk.Toplevel):
             self.page_x + (left + width / 2) * self.zoom,
             self.page_y + top * self.zoom - 30,
         )
+        if len(objects) == 1 and objects[0].kind == "text":
+            item = objects[0]
+            corners = rotated_rectangle_points(item)
+            top_middle_x = (corners[0][0] + corners[1][0]) / 2
+            top_middle_y = (corners[0][1] + corners[1][1]) / 2
+            normal_x = top_middle_x - (item.x + item.width / 2)
+            normal_y = top_middle_y - (item.y + item.height / 2)
+            normal_length = max(1e-9, math.hypot(normal_x, normal_y))
+            handle = (
+                self.page_x + top_middle_x * self.zoom + normal_x / normal_length * 30,
+                self.page_y + top_middle_y * self.zoom + normal_y / normal_length * 30,
+            )
         pointer = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         if not point_hits_rotation_handle(pointer, handle):
             return False
