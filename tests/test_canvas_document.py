@@ -3,7 +3,6 @@ import math
 import zipfile
 from itertools import pairwise
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfReader
@@ -958,40 +957,3 @@ def test_image_rotation_and_symmetry_are_baked_into_pixels(tmp_path: Path) -> No
     assert (item.width, item.height) == (40, 80)
     editor._mirror_selected("horizontal")
     assert Path(item.image_path).is_file()
-
-
-def test_qt_text_editor_result_updates_the_document(monkeypatch) -> None:
-    item = PageObject("text", 0, 10, 20, 180, 50, text="Texte initial")
-    editor = object.__new__(DocumentEditorWindow)
-    editor.document = CanvasDocument(objects=[item])
-    editor.undo_stack = []
-    editor.redo_stack = []
-    editor.status = _StatusRecorder()
-    editor.grab_current = lambda: None
-    editor.winfo_exists = lambda: True
-    rendered = []
-    editor._render = lambda: rendered.append(True)
-
-    def run(command, check, **kwargs):
-        assert check is False
-        assert kwargs["capture_output"] is True
-        assert kwargs["text"] is True
-        assert "lou_codi_pdf_converter.ui.qt_text_editor" in command
-        Path(command[-1]).write_text(
-            '{"text":"Texte Qt","text_styles":[{"start":0,"end":5,"bold":true}],'
-            '"text_links":[],"align":"center"}',
-            encoding="utf-8",
-        )
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(
-        "lou_codi_pdf_converter.ui.document_editor.subprocess.run", run
-    )
-
-    editor._start_inline_text_editor(item)
-
-    assert item.text == "Texte Qt"
-    assert item.text_styles == [{"start": 0, "end": 5, "bold": True}]
-    assert item.align == "center"
-    assert len(editor.undo_stack) == 1
-    assert rendered == [True]

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import copy
 import io
-import json
 import math
-import os
 import shutil
 import subprocess
 import sys
@@ -4157,6 +4155,15 @@ class DocumentEditorWindow(tk.Toplevel):
         symbol = pick_symbol(self)
         if not symbol:
             return
+        if self._editing_widget is not None:
+            widget = self._editing_widget
+            try:
+                widget.delete("sel.first", "sel.last")
+            except tk.TclError:
+                pass
+            widget.insert("insert", symbol)
+            widget.focus_set()
+            return
         if self.selected is not None and self.document.objects[self.selected].kind == "text":
             self._checkpoint()
             self.document.objects[self.selected].text += symbol
@@ -4208,6 +4215,24 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _make_list(self, numbered: bool) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
+            return
+        if self._editing_widget is not None:
+            widget = self._editing_widget
+            try:
+                start = widget.index("sel.first linestart")
+                end = widget.index("sel.last lineend")
+            except tk.TclError:
+                start = widget.index("insert linestart")
+                end = widget.index("insert lineend")
+            lines = widget.get(start, end).splitlines() or [""]
+            cleaned = [line.removeprefix("• ").strip() for line in lines]
+            value = "\n".join(
+                f"{index + 1}. {line}" if numbered else f"• {line}"
+                for index, line in enumerate(cleaned)
+            )
+            widget.delete(start, end)
+            widget.insert(start, value)
+            widget.focus_set()
             return
         self._checkpoint()
         item = self.document.objects[self.selected]
@@ -5163,109 +5188,152 @@ class DocumentEditorWindow(tk.Toplevel):
         return True
 
     def _start_inline_text_editor(self, item: PageObject) -> None:
-        payload = {
-            "text": item.text,
-            "text_styles": item.text_styles,
-            "text_links": item.text_links,
-            "align": item.align,
-            "bold": item.bold,
-            "italic": item.italic,
-            "underline": item.underline,
-            "strikethrough": item.strikethrough,
-            "color": item.color,
-            "highlight": "",
-            "font_family": item.font_family,
-            "font_size": item.font_size,
-        }
-        before = copy.deepcopy(self.document)
-        with tempfile.TemporaryDirectory(prefix="loucodi-text-") as directory:
-            input_path = Path(directory) / "input.json"
-            output_path = Path(directory) / "output.json"
-            input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            grabbed = self.grab_current() is self
-            if grabbed:
-                self.grab_release()
-            try:
-                command = (
-                    [sys.executable, "--qt-text-editor", str(input_path), str(output_path)]
-                    if getattr(sys, "frozen", False)
-                    else [
-                        sys.executable,
-                        "-m",
-                        "lou_codi_pdf_converter.ui.qt_text_editor",
-                        str(input_path),
-                        str(output_path),
-                    ]
-                )
-                environment = os.environ.copy()
-                qt_runtime = Path(sys.prefix) / "lib" / "qt-runtime"
-                if qt_runtime.is_dir():
-                    existing = environment.get("LD_LIBRARY_PATH", "")
-                    environment["LD_LIBRARY_PATH"] = str(qt_runtime) + (
-                        f":{existing}" if existing else ""
-                    )
-                completed = subprocess.run(
-                    command,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=environment,
-                )
-            finally:
-                if grabbed and self.winfo_exists():
-                    self.grab_set()
-            if completed.returncode != 0 or not output_path.is_file():
-                diagnostic = (completed.stderr or completed.stdout or "").strip()
-                if diagnostic:
-                    (Path(tempfile.gettempdir()) / "loucodi-qt-editor-error.log").write_text(
-                        diagnostic,
-                        encoding="utf-8",
-                    )
-                if diagnostic:
-                    lines = [line.strip() for line in diagnostic.splitlines() if line.strip()]
-                    diagnostic = next(
-                        (
-                            line
-                            for line in lines
-                            if "Could not" in line
-                            or "not found" in line
-                            or "No module" in line
-                            or "Traceback" in line
-                        ),
-                        lines[-1],
-                    )[:260]
-                messagebox.showerror(
-                    "Éditeur de texte indisponible",
-                    "L’éditeur Qt n’a pas pu être lancé. "
-                    "Sous Linux, vérifiez que le paquet libxcb-cursor0 est installé."
-                    + (f"\n\nDiagnostic : {diagnostic}" if diagnostic else ""),
-                    parent=self,
-                )
-                return
-            result = json.loads(output_path.read_text(encoding="utf-8"))
-        new_text = str(result.get("text", item.text))
-        new_styles = result.get("text_styles", item.text_styles)
-        new_links = result.get("text_links", item.text_links)
-        new_align = str(result.get("align", item.align))
-        if not isinstance(new_styles, list):
-            new_styles = item.text_styles
-        if not isinstance(new_links, list):
-            new_links = item.text_links
-        if (
-            new_text != item.text
-            or new_styles != item.text_styles
-            or new_links != item.text_links
-            or new_align != item.align
+        if self._editing_widget is not None:
+            self._commit_inline_editor(render=False)
+        x = self.page_x + item.x * self.zoom
+        y = self.page_y + item.y * self.zoom
+        widget = tk.Text(
+            self.canvas,
+            wrap="word",
+            font=(
+                self._tk_font_family(item.font_family),
+                max(8, round(item.font_size * self.zoom)),
+                "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
+            ),
+            bg="white",
+            fg=item.color,
+            relief="solid",
+            borderwidth=2,
+            undo=True,
+            exportselection=False,
+        )
+        # Keep native Text selection handling, but do not propagate pointer events
+        # to the Document Studio toplevel (palette/canvas drag handlers live there).
+        widget.bindtags((str(widget), "Text", "all"))
+        widget.insert("1.0", item.text)
+        widget.bind("<Control-v>", self._paste_clean_text_widget)
+        widget.bind(
+            "<ButtonRelease-1>",
+            lambda _event, current=widget: self.after_idle(
+                lambda current=current: self._remember_inline_text_selection(current)
+            ),
+            add="+",
+        )
+        widget.bind(
+            "<KeyRelease>",
+            lambda _event: self.after_idle(
+                lambda current=widget: self._remember_inline_text_selection(current)
+            ),
+            add="+",
+        )
+        self._editing_widget = widget
+        self._editing_object_id = item.object_id
+        self._editing_original_text = item.text
+        self._editing_original_styles = copy.deepcopy(item.text_styles)
+        self._editing_selection_range = None
+        self._editing_word_range = None
+        self.canvas.create_window(
+            x,
+            y,
+            window=widget,
+            anchor="nw",
+            width=max(60, item.width * self.zoom),
+            height=max(35, item.height * self.zoom),
+            tags=("inline-editor",),
+        )
+        link_toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
+        for label, command in (
+            ("↶", widget.edit_undo),
+            ("↷", widget.edit_redo),
+            ("G", lambda: self._toggle("bold")),
+            ("I", lambda: self._toggle("italic")),
+            ("S̲", lambda: self._toggle("underline")),
+            ("B̶", lambda: self._toggle("strikethrough")),
+            ("⇤", lambda: self._align("left")),
+            ("↔", lambda: self._align("center")),
+            ("⇥", lambda: self._align("right")),
+            ("A−", lambda: self._change_font(-1)),
+            ("A+", lambda: self._change_font(1)),
+            ("Ω", self._insert_symbol),
         ):
-            self.undo_stack.append(before)
-            self.undo_stack = self.undo_stack[-80:]
-            self.redo_stack.clear()
-            item.text = new_text
-            item.text_styles = new_styles
-            item.text_links = new_links
-            item.align = new_align
-            self.status.configure(text="Zone de texte modifiée dans l’éditeur Qt.")
-            self._render()
+            tk.Button(link_toolbar, text=label, relief="flat", command=command).pack(
+                side="left", padx=1, pady=2
+            )
+        highlight = tk.Menubutton(link_toolbar, text="Fluo ▾", relief="flat")
+        highlight_menu = tk.Menu(highlight, tearoff=False)
+        for label, color in (
+            ("Jaune", "#FFF176"),
+            ("Vert", "#A7F3A1"),
+            ("Violet", "#D8B4FE"),
+            ("Cyan", "#8BE9FD"),
+            ("Retirer", ""),
+        ):
+            highlight_menu.add_command(
+                label=label,
+                command=lambda value=color: self._set_text_highlight(value),
+            )
+        highlight.configure(menu=highlight_menu)
+        highlight.pack(side="left", padx=2, pady=2)
+        extras = tk.Menubutton(link_toolbar, text="Autres ▾", relief="flat")
+        extras_menu = tk.Menu(extras, tearoff=False)
+        extras_menu.add_command(label="Couleur du texte…", command=lambda: self._choose_color("color"))
+        extras_menu.add_command(label="Copier la mise en forme", command=self._copy_format)
+        extras_menu.add_command(label="Appliquer la mise en forme", command=self._apply_format)
+        extras_menu.add_separator()
+        extras_menu.add_command(label="Liste à puces", command=lambda: self._make_list(False))
+        extras_menu.add_command(label="Liste numérotée", command=lambda: self._make_list(True))
+        extras_menu.add_command(label="Caractères spéciaux…", command=self._insert_symbol)
+        extras_menu.add_separator()
+        extras_menu.add_command(label="Ajouter / modifier un hyperlien", command=self._set_selected_hyperlink)
+        extras_menu.add_command(label="Retirer l’hyperlien", command=self._remove_selected_hyperlink)
+        extras_menu.add_separator()
+        extras_menu.add_command(label="Ouvrir ChatGPT", command=self._open_chatgpt_for_selected)
+        extras_menu.add_command(label="Coller le résultat de ChatGPT", command=self._paste_chatgpt_result)
+        extras.configure(menu=extras_menu)
+        extras.pack(side="left", padx=2, pady=2)
+        tk.Button(
+            link_toolbar, text="✓ Terminer", relief="flat",
+            command=self._commit_inline_editor,
+        ).pack(side="left", padx=2, pady=2)
+        self.canvas.create_window(
+            x, max(self.page_y, y - 36), window=link_toolbar,
+            anchor="nw", tags=("inline-editor",),
+        )
+
+        def preview_flow(_event: object = None) -> None:
+            if not widget.edit_modified():
+                return
+            item.text = widget.get("1.0", "end-1c")
+            widget.edit_modified(False)
+            self._redraw_text_chain(item)
+
+        widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
+        widget.bind("<<Modified>>", preview_flow)
+        widget.edit_modified(False)
+        widget.focus_set()
+        widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
+        widget.tag_add("align", "1.0", "end")
+        widget.tag_configure("hyperlink", foreground="#1769AA", underline=True)
+        for link in item.text_links:
+            start = max(0, int(link.get("start", 0)))
+            end = max(start, int(link.get("end", 0)))
+            if link.get("hyperlink") and end > start:
+                widget.tag_add("hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars")
+        self._editing_style_tags = {}
+        for number, run in enumerate(item.text_styles):
+            start = max(0, int(run.get("start", 0)))
+            end = max(start, int(run.get("end", 0)))
+            if end <= start:
+                continue
+            tag = f"style_{number}"
+            style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
+            self._editing_style_tags[tag] = style
+            self._configure_text_style_tag(widget, tag, item, style)
+            widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+        widget.tag_raise("sel")
+        self.status.configure(
+            text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
+        )
 
     @staticmethod
     def _ensure_table_cells(item: PageObject) -> list[list[dict[str, str]]]:

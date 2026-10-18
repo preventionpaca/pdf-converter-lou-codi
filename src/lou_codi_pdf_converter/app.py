@@ -444,10 +444,6 @@ class Application(tk.Tk):
 
 
 def main() -> None:
-    if len(sys.argv) == 4 and sys.argv[1] == "--qt-text-editor":
-        from .ui.qt_text_editor import main as qt_text_editor_main
-
-        raise SystemExit(qt_text_editor_main(sys.argv[2:]))
     project_path = None
     if len(sys.argv) > 1:
         candidate = Path(sys.argv[1]).expanduser()
