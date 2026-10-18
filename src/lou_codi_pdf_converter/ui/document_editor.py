@@ -605,10 +605,10 @@ class DocumentEditorWindow(tk.Toplevel):
             ("▣", self._paste_objects, "Coller une copie indépendante sur cette page"),
             ("🖌", self._copy_format, "Copier la mise en forme"),
             ("🖌✓", self._apply_format, "Appliquer la mise en forme copiée"),
-            ("B", lambda: self._toggle("bold"), "Gras"),
+            ("G", lambda: self._toggle("bold"), "Gras"),
             ("I", lambda: self._toggle("italic"), "Italique"),
-            ("U̲", lambda: self._toggle("underline"), "Souligné"),
-            ("S̶", lambda: self._toggle("strikethrough"), "Barré"),
+            ("S̲", lambda: self._toggle("underline"), "Souligné"),
+            ("B̶", lambda: self._toggle("strikethrough"), "Barré"),
             ("≡  ←", lambda: self._align("left"), "Aligner à gauche"),
             ("← ≡ →", lambda: self._align("center"), "Centrer"),
             ("→  ≡", lambda: self._align("right"), "Aligner à droite"),
@@ -621,7 +621,7 @@ class DocumentEditorWindow(tk.Toplevel):
         font_family = ttk.Combobox(
             formatting,
             textvariable=self.font_family_var,
-            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Inter", "JetBrains Mono", "Symboles"),
+            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles"),
             state="readonly",
             width=14,
         )
@@ -2508,10 +2508,10 @@ class DocumentEditorWindow(tk.Toplevel):
         ):
             widget = self._editing_widget
             try:
-                start = int(widget.count("1.0", "sel.first", "chars")[0])
-                end = int(widget.count("1.0", "sel.last", "chars")[0])
+                start = self._text_character_offset(widget, "sel.first")
+                end = self._text_character_offset(widget, "sel.last")
             except tk.TclError:
-                start = end = int(widget.count("1.0", "insert", "chars")[0])
+                start = end = self._text_character_offset(widget, "insert")
             insertion_range = (start, end)
             self._commit_inline_editor(render=False)
         else:
@@ -4252,6 +4252,7 @@ class DocumentEditorWindow(tk.Toplevel):
             "Serif": "Liberation Serif",
             "Monospace": "Liberation Mono",
             "Cursive": "Comic Relief",
+            "Manuscrite ancienne": "Z003",
             "Inter": "Inter",
             "JetBrains Mono": "JetBrains Mono",
             "Symboles": "Noto Sans Symbols 2",
@@ -4291,11 +4292,29 @@ class DocumentEditorWindow(tk.Toplevel):
         if widget is None or self._editing_object_id != item.object_id:
             return None
         try:
-            start = int(widget.count("1.0", "sel.first", "chars")[0])
-            end = int(widget.count("1.0", "sel.last", "chars")[0])
+            start = self._text_character_offset(widget, "sel.first")
+            end = self._text_character_offset(widget, "sel.last")
         except tk.TclError:
             return None
         return (start, end) if end > start else None
+
+    @staticmethod
+    def _text_character_offset(widget: tk.Text, index: object) -> int:
+        """Return a character offset; Tk represents a zero-length count as None."""
+        counted = widget.count("1.0", index, "chars")
+        return int(counted[0]) if counted else 0
+
+    def _inline_text_style_at(
+        self, widget: tk.Text, item: PageObject, position: int
+    ) -> dict[str, object]:
+        """Resolve persisted and live toolbar styles at one character."""
+        style = text_style_at(item, position)
+        index = f"1.0 + {position} chars"
+        for tag in widget.tag_names(index):
+            live_style = self._editing_style_tags.get(tag)
+            if live_style:
+                style.update(live_style)
+        return style
 
     def _apply_inline_text_style(self, item: PageObject, style: dict[str, object]) -> bool:
         selection = self._selected_inline_text_range(item)
@@ -4303,9 +4322,11 @@ class DocumentEditorWindow(tk.Toplevel):
         if selection is None or widget is None:
             return False
         start, end = selection
+        combined_style = self._inline_text_style_at(widget, item, start)
+        combined_style.update(style)
         tag = f"style_live_{uuid.uuid4().hex}"
-        self._editing_style_tags[tag] = dict(style)
-        self._configure_text_style_tag(widget, tag, item, style)
+        self._editing_style_tags[tag] = combined_style
+        self._configure_text_style_tag(widget, tag, item, combined_style)
         widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         widget.tag_raise(tag)
         self.status.configure(text="Mise en forme appliquée uniquement au texte sélectionné.")
@@ -5159,8 +5180,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 for tag, style in self._editing_style_tags.items():
                     ranges = widget.tag_ranges(tag)
                     for start_index, end_index in zip(ranges[::2], ranges[1::2], strict=True):
-                        start = int(widget.count("1.0", start_index, "chars")[0])
-                        end = int(widget.count("1.0", end_index, "chars")[0])
+                        start = self._text_character_offset(widget, start_index)
+                        end = self._text_character_offset(widget, end_index)
                         if end > start:
                             styles.append({"start": start, "end": end, **style})
                 item.text_styles = styles
@@ -5199,7 +5220,10 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
             if item.kind == "text" and selection is not None:
-                current = bool(text_style_at(item, selection[0]).get(name, getattr(item, name)))
+                widget = self._editing_widget
+                current = bool(
+                    self._inline_text_style_at(widget, item, selection[0]).get(name, getattr(item, name))
+                ) if widget is not None else bool(getattr(item, name))
                 self._apply_inline_text_style(item, {name: not current})
                 return
         self._mutate(lambda item: setattr(item, name, not getattr(item, name)))
@@ -5336,8 +5360,8 @@ class DocumentEditorWindow(tk.Toplevel):
             and self._editing_object_id == item.object_id
         ):
             try:
-                start = int(self._editing_widget.count("1.0", "sel.first", "chars")[0])
-                end = int(self._editing_widget.count("1.0", "sel.last", "chars")[0])
+                start = self._text_character_offset(self._editing_widget, "sel.first")
+                end = self._text_character_offset(self._editing_widget, "sel.last")
                 if end > start:
                     text_selection = (start, end)
             except tk.TclError:
@@ -5383,8 +5407,8 @@ class DocumentEditorWindow(tk.Toplevel):
             and self._editing_object_id == item.object_id
         ):
             try:
-                start = int(self._editing_widget.count("1.0", "sel.first", "chars")[0])
-                end = int(self._editing_widget.count("1.0", "sel.last", "chars")[0])
+                start = self._text_character_offset(self._editing_widget, "sel.first")
+                end = self._text_character_offset(self._editing_widget, "sel.last")
             except tk.TclError:
                 start = end = -1
             if end > start:
@@ -5439,7 +5463,10 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
             if item.kind == "text" and selection is not None:
-                current = float(text_style_at(item, selection[0]).get("font_size", item.font_size))
+                widget = self._editing_widget
+                current = float(
+                    self._inline_text_style_at(widget, item, selection[0]).get("font_size", item.font_size)
+                ) if widget is not None else float(item.font_size)
                 self._apply_inline_text_style(item, {"font_size": max(6, current + change)})
                 return
         self._mutate(lambda item: setattr(item, "font_size", max(6, item.font_size + change)))
@@ -5474,7 +5501,11 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
             if item.kind == "text" and selection is not None:
-                self._format_clipboard = text_style_at(item, selection[0])
+                widget = self._editing_widget
+                self._format_clipboard = (
+                    self._inline_text_style_at(widget, item, selection[0])
+                    if widget is not None else text_style_at(item, selection[0])
+                )
                 self.status.configure(text="Format du texte sélectionné copié.")
             else:
                 keys = ("font_size", "font_family", "bold", "italic", "underline", "strikethrough", "align", "color", "fill")

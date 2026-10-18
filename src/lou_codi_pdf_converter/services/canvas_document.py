@@ -873,6 +873,7 @@ def _font_file(family: str, bold: bool, italic: bool) -> str | None:
         "Serif": {"Regular": "DejaVuSerif.ttf", "Bold": "DejaVuSerif-Bold.ttf", "Italic": "DejaVuSerif-Italic.ttf", "BoldItalic": "DejaVuSerif-BoldItalic.ttf"},
         "Monospace": {"Regular": "DejaVuSansMono.ttf", "Bold": "DejaVuSansMono-Bold.ttf", "Italic": "DejaVuSansMono-Oblique.ttf", "BoldItalic": "DejaVuSansMono-BoldOblique.ttf"},
         "Cursive": {"Regular": "ComicRelief-Regular.ttf", "Bold": "ComicRelief-Bold.ttf", "Italic": "ComicRelief-Regular.ttf", "BoldItalic": "ComicRelief-Bold.ttf"},
+        "Manuscrite ancienne": {"Regular": "Z003-MediumItalic.otf", "Bold": "Z003-MediumItalic.otf", "Italic": "Z003-MediumItalic.otf", "BoldItalic": "Z003-MediumItalic.otf"},
         "Inter": {"Regular": "Inter-Regular.ttf", "Bold": "Inter-Bold.ttf", "Italic": "Inter-Italic.ttf", "BoldItalic": "Inter-BoldItalic.ttf"},
         "JetBrains Mono": {"Regular": "JetBrainsMono-Regular.ttf", "Bold": "JetBrainsMono-Bold.ttf", "Italic": "JetBrainsMono-Italic.ttf", "BoldItalic": "JetBrainsMono-BoldItalic.ttf"},
         "Symboles": {"Regular": "DejaVuSans.ttf", "Bold": "DejaVuSans-Bold.ttf", "Italic": "DejaVuSans-Oblique.ttf", "BoldItalic": "DejaVuSans-BoldOblique.ttf"},

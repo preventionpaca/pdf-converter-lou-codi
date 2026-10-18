@@ -724,6 +724,15 @@ def test_character_style_only_applies_inside_its_text_range() -> None:
     assert text_style_at(item, 10)["color"] == "#CC0000"
 
 
+def test_zero_character_offset_from_tk_is_not_treated_as_an_error() -> None:
+    class FirstCharacter:
+        @staticmethod
+        def count(*_args: object) -> None:
+            return None
+
+    assert DocumentEditorWindow._text_character_offset(FirstCharacter(), "1.0") == 0  # type: ignore[arg-type]
+
+
 def test_rotation_handle_has_a_generous_but_bounded_hit_area() -> None:
     assert point_hits_rotation_handle((108, 108), (100, 100))
     assert point_hits_rotation_handle((115, 100), (100, 100))

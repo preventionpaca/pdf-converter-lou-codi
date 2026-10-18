@@ -419,7 +419,13 @@ class Application(tk.Tk):
             window.geometry(previous_geometry)
         window.deiconify()
         window.update_idletasks()
-        previous.withdraw()
+        # Keep the root iconified (rather than withdrawn) while a large workspace is
+        # open. Some Linux docks only retain the running indicator for an iconified
+        # application leader; all Lou Còdi workspaces still share the same WM_CLASS.
+        if previous is self:
+            previous.iconify()
+        else:
+            previous.withdraw()
         window.lift()
         window.focus_force()
         previous.wait_window(window)

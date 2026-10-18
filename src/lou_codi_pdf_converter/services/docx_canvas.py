@@ -229,7 +229,7 @@ def _textbox_xml(
     italic = "<w:i/>" if item.italic else ""
     font_size = round(item.font_size * 2)
     color = item.color.lstrip("#")
-    family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "URW Chancery L", "Symboles": "Noto Sans Symbols 2", "Flèches": "Noto Sans Symbols"}.get(item.font_family, "Liberation Sans")
+    family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "Comic Relief", "Manuscrite ancienne": "Z003", "Inter": "Inter", "JetBrains Mono": "JetBrains Mono", "Symboles": "DejaVu Sans", "Flèches": "DejaVu Sans"}.get(item.font_family, "DejaVu Sans")
     alignment = {"left": "left", "center": "center", "right": "right", "justify": "both"}.get(item.align, "left")
     run_properties = f'{bold}{italic}<w:rFonts w:ascii="{family}" w:hAnsi="{family}"/><w:sz w:val="{font_size}"/><w:color w:val="{color}"/>'
     boundaries = {0, len(text)}
