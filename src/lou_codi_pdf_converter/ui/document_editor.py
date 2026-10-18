@@ -5217,6 +5217,11 @@ class DocumentEditorWindow(tk.Toplevel):
             if completed.returncode != 0 or not output_path.is_file():
                 diagnostic = (completed.stderr or completed.stdout or "").strip()
                 if diagnostic:
+                    (Path(tempfile.gettempdir()) / "loucodi-qt-editor-error.log").write_text(
+                        diagnostic,
+                        encoding="utf-8",
+                    )
+                if diagnostic:
                     lines = [line.strip() for line in diagnostic.splitlines() if line.strip()]
                     diagnostic = next(
                         (

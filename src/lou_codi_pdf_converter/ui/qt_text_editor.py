@@ -127,7 +127,7 @@ SYMBOLS = (
 
 def _format_from_style(style: dict[str, object]) -> QTextCharFormat:
     result = QTextCharFormat()
-    result.setFontFamily(str(style.get("font_family", "Sans-serif")))
+    result.setFontFamilies([str(style.get("font_family", "Sans-serif"))])
     result.setFontPointSize(float(style.get("font_size", 12)))
     result.setFontWeight(QFont.Weight.Bold if style.get("bold") else QFont.Weight.Normal)
     result.setFontItalic(bool(style.get("italic")))
@@ -148,7 +148,7 @@ def _style_from_format(value: QTextCharFormat) -> dict[str, object]:
         "strikethrough": value.fontStrikeOut(),
         "color": value.foreground().color().name().upper(),
         "highlight": "" if background.alpha() == 0 else background.name().upper(),
-        "font_family": value.fontFamily() or "Sans-serif",
+        "font_family": (value.fontFamilies() or ["Sans-serif"])[0],
         "font_size": value.fontPointSize() if value.fontPointSize() > 0 else 12.0,
     }
 
@@ -394,7 +394,8 @@ class RichTextWindow(QMainWindow):
             button.setChecked(checked)
             button.blockSignals(False)
         self.family.blockSignals(True)
-        self.family.setCurrentFont(QFont(fmt.fontFamily()))
+        families = fmt.fontFamilies()
+        self.family.setCurrentFont(QFont(families[0] if families else "Sans-serif"))
         self.family.blockSignals(False)
         point_size = fmt.fontPointSize()
         if point_size > 0:
