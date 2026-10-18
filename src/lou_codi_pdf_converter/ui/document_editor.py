@@ -582,7 +582,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_selection_range: tuple[int, int] | None = None
-        self._editing_word_range: tuple[str, str] | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -5119,6 +5118,9 @@ class DocumentEditorWindow(tk.Toplevel):
             start = self._text_character_offset(widget, "sel.first")
             end = self._text_character_offset(widget, "sel.last")
         except tk.TclError:
+            if self._editing_dialog is not None:
+                end = self._text_character_offset(widget, "end-1c")
+                return (0, end) if end > 0 else None
             return None
         return (start, end) if end > start else None
 
@@ -5133,29 +5135,12 @@ class DocumentEditorWindow(tk.Toplevel):
             self._editing_selection_range = None
             return
         self._editing_selection_range = (start, end) if end > start else None
-
-    def _prepare_inline_word_selection(self, event: tk.Event[tk.Text]) -> None:
-        """Remember the exact word under a double-click without replacing Tk bindings."""
-        widget = event.widget
-        index = widget.index(f"@{event.x},{event.y}")
-        self._editing_word_range = (
-            widget.index(f"{index} wordstart"),
-            widget.index(f"{index} wordend"),
-        )
-
-    def _finish_inline_text_selection(self, widget: tk.Text) -> None:
-        """Stabilise a double-clicked word after Tk has completed its native selection."""
-        if widget is not self._editing_widget:
-            return
-        word_range = self._editing_word_range
-        self._editing_word_range = None
-        if word_range is not None:
-            start, end = word_range
-            widget.tag_remove("sel", "1.0", "end")
-            widget.tag_add("sel", start, end)
-            widget.mark_set("insert", end)
-            widget.tag_raise("sel")
-        self.after_idle(lambda: self._remember_inline_text_selection(widget))
+        if self._editing_selection_range is not None and self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and item.object_id == self._editing_object_id:
+                style = self._inline_text_style_at(widget, item, start)
+                self.font_size_var.set(f"{float(style['font_size']):g}")
+                self.font_family_var.set(str(style["font_family"]))
 
     @staticmethod
     def _text_character_offset(widget: tk.Text, index: object) -> int:
@@ -5196,14 +5181,86 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
-        x = self.page_x + item.x * self.zoom
-        y = self.page_y + item.y * self.zoom
+        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
+        dialog.title("Modifier la zone de texte — Lou Còdi")
+        dialog.configure(bg=BACKGROUND)
+        dialog.transient(self)
+        width, height = 820, 470
+        x = max(20, self.winfo_rootx() + (self.winfo_width() - width) // 2)
+        y = max(40, self.winfo_rooty() + (self.winfo_height() - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
+        tk.Label(
+            dialog,
+            text="Édition de la zone de texte",
+            bg=NAVY,
+            fg="white",
+            font=("Sans", 14, "bold"),
+            padx=14,
+            pady=8,
+        ).pack(fill="x")
+
+        toolbar = tk.Frame(dialog, bg="#E8EEF5", padx=8, pady=6)
+        toolbar.pack(fill="x")
+
+        def tool(text: str, command: object, width: int = 3) -> None:
+            tk.Button(
+                toolbar, text=text, command=command, width=width,
+                relief="flat", padx=4, pady=3,
+            ).pack(side="left", padx=2)
+
+        tool("G", lambda: self._toggle("bold"))
+        tool("I", lambda: self._toggle("italic"))
+        tool("S̲", lambda: self._toggle("underline"))
+        tool("B̶", lambda: self._toggle("strikethrough"))
+        tool("A−", lambda: self._change_font(-1), 4)
+        tool("A+", lambda: self._change_font(1), 4)
+
+        ttk.Label(toolbar, text="Police").pack(side="left", padx=(10, 3))
+        family = ttk.Combobox(
+            toolbar,
+            textvariable=self.font_family_var,
+            values=(
+                "Sans-serif", "Serif", "Monospace", "Cursive",
+                "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles",
+            ),
+            state="readonly",
+            width=16,
+        )
+        family.pack(side="left", padx=2)
+        family.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
+
+        ttk.Label(toolbar, text="Taille").pack(side="left", padx=(8, 3))
+        size = ttk.Combobox(
+            toolbar,
+            textvariable=self.font_size_var,
+            values=("8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36", "48", "60", "72"),
+            width=5,
+        )
+        size.pack(side="left", padx=2)
+        size.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
+        size.bind("<Return>", lambda _event: self._apply_font_size())
+
+        tool("Couleur", lambda: self._choose_color("color"), 7)
+        highlight = tk.Menubutton(toolbar, text="Surligner ▾", relief="flat", padx=6, pady=3)
+        highlight_menu = tk.Menu(highlight, tearoff=False)
+        for label, color in (
+            ("Jaune", "#FFF176"), ("Vert", "#A7F3A1"),
+            ("Violet", "#D8B4FE"), ("Cyan", "#8BE9FD"),
+            ("Retirer", ""),
+        ):
+            highlight_menu.add_command(
+                label=label, command=lambda value=color: self._set_text_highlight(value)
+            )
+        highlight.configure(menu=highlight_menu)
+        highlight.pack(side="left", padx=2)
+
         widget = tk.Text(
-            self.canvas,
+            dialog,
             wrap="word",
             font=(
                 self._tk_font_family(item.font_family),
-                max(8, round(item.font_size * self.zoom)),
+                max(8, round(item.font_size)),
                 "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
             ),
             bg="white",
@@ -5212,14 +5269,16 @@ class DocumentEditorWindow(tk.Toplevel):
             borderwidth=2,
             undo=True,
             exportselection=False,
+            padx=10,
+            pady=10,
         )
+        widget.pack(fill="both", expand=True, padx=12, pady=10)
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
-        widget.bind("<Double-Button-1>", self._prepare_inline_word_selection, add="+")
         widget.bind(
             "<ButtonRelease-1>",
             lambda _event, current=widget: self.after_idle(
-                lambda current=current: self._finish_inline_text_selection(current)
+                lambda current=current: self._remember_inline_text_selection(current)
             ),
             add="+",
         )
@@ -5231,37 +5290,26 @@ class DocumentEditorWindow(tk.Toplevel):
             add="+",
         )
         self._editing_widget = widget
+        self._editing_dialog = dialog
         self._editing_object_id = item.object_id
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_selection_range = None
-        self._editing_word_range = None
-        self.canvas.create_window(
-            x,
-            y,
-            window=widget,
-            anchor="nw",
-            width=max(60, item.width * self.zoom),
-            height=max(35, item.height * self.zoom),
-            tags=("inline-editor",),
-        )
-        link_toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
+        actions = tk.Frame(dialog, bg=BACKGROUND, padx=12, pady=8)
+        actions.pack(fill="x")
         tk.Button(
-            link_toolbar, text="🔗 Hyperlien", relief="flat",
+            actions, text="🔗 Hyperlien", relief="flat",
             command=self._set_selected_hyperlink,
-        ).pack(side="left", padx=2, pady=2)
+        ).pack(side="left", padx=2)
         tk.Button(
-            link_toolbar, text="✕ Retirer le lien", relief="flat",
+            actions, text="✕ Retirer le lien", relief="flat",
             command=self._remove_selected_hyperlink,
-        ).pack(side="left", padx=2, pady=2)
+        ).pack(side="left", padx=2)
         tk.Button(
-            link_toolbar, text="✓ Terminer", relief="flat",
+            actions, text="✓ Terminer", relief="flat", bg="#2368AF", fg="white",
+            activebackground="#174D85", activeforeground="white", padx=18, pady=5,
             command=self._commit_inline_editor,
-        ).pack(side="left", padx=2, pady=2)
-        self.canvas.create_window(
-            x, max(self.page_y, y - 31), window=link_toolbar,
-            anchor="nw", tags=("inline-editor",),
-        )
+        ).pack(side="right", padx=2)
 
         def preview_flow(_event: object = None) -> None:
             if not widget.edit_modified():
@@ -5270,7 +5318,8 @@ class DocumentEditorWindow(tk.Toplevel):
             widget.edit_modified(False)
             self._redraw_text_chain(item)
 
-        widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
+        widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor() or "break")
+        widget.bind("<Escape>", lambda _event: self._commit_inline_editor() or "break")
         widget.bind("<<Modified>>", preview_flow)
         widget.edit_modified(False)
         widget.focus_set()
@@ -5297,6 +5346,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(
             text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
         )
+        dialog.protocol("WM_DELETE_WINDOW", self._commit_inline_editor)
+        dialog.lift()
 
     @staticmethod
     def _ensure_table_cells(item: PageObject) -> list[list[dict[str, str]]]:
@@ -6054,7 +6105,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_original_styles = []
         self._editing_selection_range = None
-        self._editing_word_range = None
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
@@ -6406,6 +6456,13 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(
             text=("Lien ajouté au texte sélectionné." if text_selection else "Lien hypertexte ajouté à l’objet.")
         )
+        if text_selection and self._editing_widget is not None and self._editing_dialog is not None:
+            start, end = text_selection
+            self._editing_widget.tag_add(
+                "hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars"
+            )
+            self._editing_widget.tag_raise("sel")
+            return
         self._render()
 
     def _remove_selected_hyperlink(self) -> None:
@@ -6430,6 +6487,12 @@ class DocumentEditorWindow(tk.Toplevel):
                 ]
                 if len(item.text_links) != previous:
                     self.status.configure(text="Lien retiré du texte sélectionné.")
+                    if self._editing_dialog is not None:
+                        self._editing_widget.tag_remove(
+                            "hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars"
+                        )
+                        self._editing_widget.tag_raise("sel")
+                        return
                     self._render()
                     return
         if not item.hyperlink:
