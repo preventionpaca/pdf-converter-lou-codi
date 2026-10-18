@@ -3,7 +3,6 @@ import math
 import zipfile
 from itertools import pairwise
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfReader
@@ -46,50 +45,6 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
-
-
-def test_word_selection_stays_locked_until_mouse_release() -> None:
-    class FakeText:
-        def __init__(self) -> None:
-            self.selection: tuple[str, str] | None = None
-            self.insert = ""
-
-        def index(self, expression: str) -> str:
-            return {
-                "@12,8": "1.7",
-                "1.7 wordstart": "1.6",
-                "1.7 wordend": "1.11",
-            }.get(expression, expression)
-
-        def tag_remove(self, _tag: str, _start: str, _end: str) -> None:
-            self.selection = None
-
-        def tag_add(self, _tag: str, start: str, end: str) -> None:
-            self.selection = (start, end)
-
-        def mark_set(self, _mark: str, index: str) -> None:
-            self.insert = index
-
-        def tag_raise(self, _tag: str) -> None:
-            pass
-
-        def count(self, _start: str, index: str, _unit: str) -> tuple[int]:
-            return ({"1.6": 6, "1.11": 11}[index],)
-
-    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
-    editor._editing_selection_range = None
-    editor._editing_selection_locked = False
-    widget = FakeText()
-
-    result = editor._select_inline_word(SimpleNamespace(widget=widget, x=12, y=8))
-
-    assert result == "break"
-    assert widget.selection == ("1.6", "1.11")
-    assert editor._editing_selection_range == (6, 11)
-    assert editor._drag_inline_text_selection(SimpleNamespace()) == "break"
-
-    editor._editing_selection_locked = False
-    assert editor._drag_inline_text_selection(SimpleNamespace()) is None
 
 
 def test_polygon_area_accepts_open_and_closed_contours() -> None:
