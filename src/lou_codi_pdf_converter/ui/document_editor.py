@@ -543,6 +543,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
         self._rotation_drag_origin: tuple[float, float, float] | None = None
         self._rotation_drag_delta = 0.0
+        self._rotation_drag_before: CanvasDocument | None = None
+        self._rotation_preview_applied = False
         self._crop_mode_index: int | None = None
         self._crop_box: list[float] | None = None
         self._crop_drag_edge: str | None = None
@@ -1062,6 +1064,7 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         palette_definitions = {
             "shapes": ("FORMES", (
+                ("T", self._add_text, "Créer une zone de texte"),
                 ("▭", lambda: self._start_rectangle(False), "Rectangle orienté"),
                 ("□", lambda: self._start_rectangle(True), "Carré orienté"),
                 ("○", lambda: self._add_shape("circle"), "Cercle paramétrique"),
@@ -1126,8 +1129,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("Vi", lambda: self._set_text_highlight("#D8B4FE"), "Surlignage violet"),
                 ("Cy", lambda: self._set_text_highlight("#8BE9FD"), "Surlignage cyan"),
                 ("×Fl", lambda: self._set_text_highlight(""), "Retirer le surlignage"),
-                ("0°", lambda: self._set_absolute_angle_value(0), "Remettre l’objet à 0 degré"),
-                ("1°", lambda: self._set_absolute_angle_value(1), "Orienter précisément à 1 degré"),
+                ("−1°", lambda: self._rotate_selected_degrees(-1), "Tourner d’un degré vers la gauche"),
+                ("+1°", lambda: self._rotate_selected_degrees(1), "Tourner d’un degré vers la droite"),
                 ("∠°", self._ask_absolute_angle, "Saisir un angle exact"),
             )),
             "media": ("IMAGE", (
@@ -1147,8 +1150,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
                 ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
                 ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
-                ("0°", lambda: self._set_absolute_angle_value(0), "Remettre l’objet à 0 degré"),
-                ("1°", lambda: self._set_absolute_angle_value(1), "Orienter précisément à 1 degré"),
+                ("−1°", lambda: self._rotate_selected_degrees(-1), "Tourner d’un degré vers la gauche"),
+                ("+1°", lambda: self._rotate_selected_degrees(1), "Tourner d’un degré vers la droite"),
                 ("∠°", self._ask_absolute_angle, "Saisir un angle exact"),
             )),
         }
@@ -4510,6 +4513,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.selected = min(indices)
         self._rotation_drag_origin = (pivot_x, pivot_y, start_angle)
         self._rotation_drag_delta = 0.0
+        self._rotation_drag_before = copy.deepcopy(self.document)
+        self._rotation_preview_applied = False
         self._drag_origin = None
         self.status.configure(
             text="Rotation guidée : maintenez le clic et déplacez la poignée autour de l’objet."
@@ -4558,6 +4563,23 @@ class DocumentEditorWindow(tk.Toplevel):
                 [self.document.objects[index] for index in self.selected_indices], step
             )
             self._rotation_drag_delta = snapped_rotation_delta(start_angle, current_angle, step)
+            indices = expanded_group_indices(self.document.objects, self.selected_indices)
+            if self._rotation_drag_before is not None and not any(
+                self.document.objects[index].kind == "image" for index in indices
+            ):
+                for index in indices:
+                    self.document.objects[index] = copy.deepcopy(
+                        self._rotation_drag_before.objects[index]
+                    )
+                for index in indices:
+                    item = self.document.objects[index]
+                    item_pivot = (pivot_x, pivot_y) if item.group else (
+                        item.x + item.width / 2,
+                        item.y + item.height / 2,
+                    )
+                    self._rotate_item_about(item, self._rotation_drag_delta, item_pivot)
+                self._rotation_preview_applied = True
+                self._render()
             self.canvas.delete("rotation-guide")
             canvas_pivot_x = self.page_x + pivot_x * self.zoom
             canvas_pivot_y = self.page_y + pivot_y * self.zoom
@@ -4794,10 +4816,22 @@ class DocumentEditorWindow(tk.Toplevel):
             self._rotation_drag_origin = None
             self._rotation_drag_delta = 0.0
             self.canvas.delete("rotation-guide")
-            if abs(degrees) > 1e-8:
+            if self._rotation_preview_applied and self._rotation_drag_before is not None:
+                if abs(degrees) > 1e-8:
+                    self.undo_stack.append(self._rotation_drag_before)
+                    self.undo_stack = self.undo_stack[-80:]
+                    self.redo_stack.clear()
+                self._rotation_drag_before = None
+                self._rotation_preview_applied = False
+                self._render()
+                self.status.configure(text=f"Rotation guidée appliquée : {degrees:g}°.")
+            elif abs(degrees) > 1e-8:
+                self._rotation_drag_before = None
                 self._rotate_selected_degrees(degrees)
                 self.status.configure(text=f"Rotation guidée appliquée : {degrees:g}°.")
             else:
+                self._rotation_drag_before = None
+                self._rotation_preview_applied = False
                 self._render()
             return
         if self._drawing_text and self._text_draw_start is not None:
