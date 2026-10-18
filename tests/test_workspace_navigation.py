@@ -74,7 +74,6 @@ def test_workspace_is_detached_and_shown_before_parent_is_hidden() -> None:
 def test_restoring_launcher_redirects_focus_to_active_workspace() -> None:
     log: list[str] = []
     workspace = _FakeWindow("studio", log)
-    workspace.winfo_viewable = lambda: True
     application = SimpleNamespace(
         _active_workspace=workspace,
         _workspace_focus_redirect_pending=False,

@@ -116,6 +116,7 @@ class Application(tk.Tk):
         self._active_workspace: tk.Toplevel | None = None
         self._workspace_focus_redirect_pending = False
         self.bind("<Map>", self._redirect_to_active_workspace, add="+")
+        self.bind("<FocusIn>", self._redirect_to_active_workspace, add="+")
         self.local_database = initialize_database()
         self.workshop_directory = initialize_workshop_directories()
         center_window(self, 1265, 830)
@@ -296,6 +297,7 @@ class Application(tk.Tk):
 
     def _open_module(self, module_id: str) -> None:
         if getattr(self, "_workspace_opening", False):
+            self._redirect_to_active_workspace()
             return
         self._workspace_opening = True
         try:
@@ -461,7 +463,7 @@ class Application(tk.Tk):
         if target is None or target is self:
             return
         try:
-            if not target.winfo_exists() or not target.winfo_viewable():
+            if not target.winfo_exists():
                 return
         except tk.TclError:
             return

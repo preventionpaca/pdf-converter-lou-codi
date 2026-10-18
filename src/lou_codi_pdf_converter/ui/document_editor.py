@@ -5093,13 +5093,16 @@ class DocumentEditorWindow(tk.Toplevel):
         italic = bool(style.get("italic", item.italic))
         weight = "bold" if bold else "normal"
         slant = "italic" if italic else "roman"
+        highlight = str(style.get("highlight", ""))
         widget.tag_configure(
             tag,
             font=(family, size, f"{weight} {slant}"),
             foreground=str(style.get("color", item.color)),
             underline=bool(style.get("underline", item.underline)),
             overstrike=bool(style.get("strikethrough", item.strikethrough)),
-            background=str(style.get("highlight", "")),
+            # An empty Tk background is "unspecified" and therefore does not erase
+            # a lower-priority highlight tag. Paint the editor background explicitly.
+            background=highlight or str(widget.cget("background")),
         )
 
     def _selected_inline_text_range(self, item: PageObject) -> tuple[int, int] | None:
@@ -5144,6 +5147,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._configure_text_style_tag(widget, tag, item, combined_style)
         widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         widget.tag_raise(tag)
+        # Keep the native selection visible above yellow/green/cyan highlighting.
+        widget.tag_raise("sel")
         self.status.configure(text="Mise en forme appliquée uniquement au texte sélectionné.")
         return True
 
@@ -5230,6 +5235,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self._editing_style_tags[tag] = style
             self._configure_text_style_tag(widget, tag, item, style)
             widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+        widget.tag_raise("sel")
         self.status.configure(
             text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
         )
