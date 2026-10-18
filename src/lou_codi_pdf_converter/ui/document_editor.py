@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import math
 import shutil
 import subprocess
@@ -631,14 +632,14 @@ class DocumentEditorWindow(tk.Toplevel):
         }
         self.palette_visible_vars = {
             key: tk.BooleanVar(value=key in {"shapes", "measurements", "table", "media"})
-            for key in ("shapes", "measurements", "table", "formatting", "media", "shape_style", "technical")
+            for key in ("shapes", "measurements", "table", "media", "shape_style", "technical", "text_zone_style")
         }
         self.tool_palettes: dict[str, tk.Widget] = {}
         self.palette_positions = {
             "shapes": (10, 10), "measurements": (10, 440),
             "table": (108, 10), "media": (108, 530),
-            "formatting": (206, 10),
             "shape_style": (454, 10), "technical": (602, 10),
+            "text_zone_style": (454, 10),
         }
         self._palette_drag: tuple[str, int, int, int, int] | None = None
         self._last_palette_context: str | None = None
@@ -727,13 +728,11 @@ class DocumentEditorWindow(tk.Toplevel):
         diagrams = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         technical = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         self.ribbon.add(insertion, text="Insérer")
-        self.ribbon.add(formatting, text="Texte et style")
         self.ribbon.add(table_tools, text="Tableau")
         self.ribbon.add(tools, text="Outils")
         self.ribbon.add(layout, text="Mise en page")
         self.ribbon.add(technical, text="Technique")
         self._contextual_ribbon_tabs = {
-            "text": formatting,
             "table": table_tools,
             "technical": technical,
         }
@@ -1137,22 +1136,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("H▤", lambda: self._set_table_style("green"), "En-tête vert et lignes vertes alternées"),
                 ("H×", lambda: self._set_table_style("plain"), "Retirer le style d’en-tête et les lignes alternées"),
             )),
-            "formatting": ("MISE EN FORME TEXTE", (
-                ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
-                ("G", lambda: self._toggle("bold"), "Gras"),
-                ("I", lambda: self._toggle("italic"), "Italique"),
-                ("S̲", lambda: self._toggle("underline"), "Souligné"),
-                ("B̶", lambda: self._toggle("strikethrough"), "Barré"),
-                ("⇤", lambda: self._align("left"), "Aligner à gauche"),
-                ("↔", lambda: self._align("center"), "Centrer"),
-                ("⇥", lambda: self._align("right"), "Aligner à droite"),
-                ("🖌", self._copy_format, "Copier la mise en forme"),
-                ("✓", self._apply_format, "Appliquer la mise en forme"),
-                ("J", lambda: self._set_text_highlight("#FFF176"), "Surlignage jaune"),
-                ("V", lambda: self._set_text_highlight("#A7F3A1"), "Surlignage vert"),
-                ("Vi", lambda: self._set_text_highlight("#D8B4FE"), "Surlignage violet"),
-                ("Cy", lambda: self._set_text_highlight("#8BE9FD"), "Surlignage cyan"),
-                ("×Fl", lambda: self._set_text_highlight(""), "Retirer le surlignage"),
+            "text_zone_style": ("MISE EN FORME ZONE", (
                 ("−1°", lambda: self._rotate_selected_degrees(-1), "Tourner d’un degré vers la gauche"),
                 ("+1°", lambda: self._rotate_selected_degrees(1), "Tourner d’un degré vers la droite"),
                 ("∠°", self._ask_absolute_angle, "Saisir un angle exact"),
@@ -1744,7 +1728,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("measurements", "Mesures et cotations"),
             ("table", "Tableau"),
             ("media", "Image, lien et masque"),
-            ("formatting", "Mise en forme du texte"),
+            ("text_zone_style", "Mise en forme zone"),
             ("shape_style", "Apparence des formes"),
             ("technical", "Technique"),
         ):
@@ -1807,7 +1791,7 @@ class DocumentEditorWindow(tk.Toplevel):
         """Stack contextual palettes against the right edge of the drawing area."""
         self.palette_host.update_idletasks()
         y = 10
-        for key in ("formatting", "shape_style", "technical"):
+        for key in ("text_zone_style", "shape_style", "technical"):
             if key not in visible:
                 continue
             palette = self.tool_palettes[key]
@@ -1821,7 +1805,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _redock_visible_contextual_palettes(self) -> None:
         visible = {
             key
-            for key in ("formatting", "shape_style", "technical")
+            for key in ("text_zone_style", "shape_style", "technical")
             if self.palette_visible_vars[key].get()
         }
         if visible:
@@ -2389,7 +2373,6 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is not None and self.selected < len(self.document.objects):
             kind = self.document.objects[self.selected].kind
         states = {
-            "text": kind == "text",
             "table": kind == "table",
             "technical": kind in {"line", "polyline", "shape", "dimension", "origin"}
             or len(self.selected_indices) > 1,
@@ -2397,7 +2380,7 @@ class DocumentEditorWindow(tk.Toplevel):
         current = self.ribbon.select()
         for name, frame in self._contextual_ribbon_tabs.items():
             self.ribbon.tab(frame, state="normal" if states[name] else "hidden")
-        contextual_name = kind if kind in {"text", "table"} else "technical" if states["technical"] else None
+        contextual_name = "table" if kind == "table" else "technical" if states["technical"] else None
         if contextual_name is not None and contextual_name != self._last_context_kind:
             self.ribbon.select(self._contextual_ribbon_tabs[contextual_name])
         visible_frames = [
@@ -2418,12 +2401,12 @@ class DocumentEditorWindow(tk.Toplevel):
         if palette_context != self._last_palette_context:
             contextual = {
                 "general": set(),
-                "text": {"formatting"},
-                "table": {"formatting"},
+                "text": {"text_zone_style"},
+                "table": set(),
                 "media": {"shape_style"},
                 "technical": {"shape_style", "technical"},
             }[palette_context]
-            for key in {"formatting", "shape_style", "technical"}:
+            for key in ("text_zone_style", "shape_style", "technical"):
                 variable = self.palette_visible_vars[key]
                 variable.set(key in contextual)
                 self._set_palette_visibility(key)
@@ -5179,175 +5162,75 @@ class DocumentEditorWindow(tk.Toplevel):
         return True
 
     def _start_inline_text_editor(self, item: PageObject) -> None:
-        if self._editing_widget is not None:
-            self._commit_inline_editor(render=False)
-        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
-        dialog.title("Modifier la zone de texte — Lou Còdi")
-        dialog.configure(bg=BACKGROUND)
-        dialog.transient(self)
-        width, height = 820, 470
-        x = max(20, self.winfo_rootx() + (self.winfo_width() - width) // 2)
-        y = max(40, self.winfo_rooty() + (self.winfo_height() - height) // 2)
-        dialog.geometry(f"{width}x{height}+{x}+{y}")
-
-        tk.Label(
-            dialog,
-            text="Édition de la zone de texte",
-            bg=NAVY,
-            fg="white",
-            font=("Sans", 14, "bold"),
-            padx=14,
-            pady=8,
-        ).pack(fill="x")
-
-        toolbar = tk.Frame(dialog, bg="#E8EEF5", padx=8, pady=6)
-        toolbar.pack(fill="x")
-
-        def tool(text: str, command: object, width: int = 3) -> None:
-            tk.Button(
-                toolbar, text=text, command=command, width=width,
-                relief="flat", padx=4, pady=3,
-            ).pack(side="left", padx=2)
-
-        tool("G", lambda: self._toggle("bold"))
-        tool("I", lambda: self._toggle("italic"))
-        tool("S̲", lambda: self._toggle("underline"))
-        tool("B̶", lambda: self._toggle("strikethrough"))
-        tool("A−", lambda: self._change_font(-1), 4)
-        tool("A+", lambda: self._change_font(1), 4)
-
-        ttk.Label(toolbar, text="Police").pack(side="left", padx=(10, 3))
-        family = ttk.Combobox(
-            toolbar,
-            textvariable=self.font_family_var,
-            values=(
-                "Sans-serif", "Serif", "Monospace", "Cursive",
-                "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles",
-            ),
-            state="readonly",
-            width=16,
-        )
-        family.pack(side="left", padx=2)
-        family.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
-
-        ttk.Label(toolbar, text="Taille").pack(side="left", padx=(8, 3))
-        size = ttk.Combobox(
-            toolbar,
-            textvariable=self.font_size_var,
-            values=("8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36", "48", "60", "72"),
-            width=5,
-        )
-        size.pack(side="left", padx=2)
-        size.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
-        size.bind("<Return>", lambda _event: self._apply_font_size())
-
-        tool("Couleur", lambda: self._choose_color("color"), 7)
-        highlight = tk.Menubutton(toolbar, text="Surligner ▾", relief="flat", padx=6, pady=3)
-        highlight_menu = tk.Menu(highlight, tearoff=False)
-        for label, color in (
-            ("Jaune", "#FFF176"), ("Vert", "#A7F3A1"),
-            ("Violet", "#D8B4FE"), ("Cyan", "#8BE9FD"),
-            ("Retirer", ""),
-        ):
-            highlight_menu.add_command(
-                label=label, command=lambda value=color: self._set_text_highlight(value)
-            )
-        highlight.configure(menu=highlight_menu)
-        highlight.pack(side="left", padx=2)
-
-        widget = tk.Text(
-            dialog,
-            wrap="word",
-            font=(
-                self._tk_font_family(item.font_family),
-                max(8, round(item.font_size)),
-                "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
-            ),
-            bg="white",
-            fg=item.color,
-            relief="solid",
-            borderwidth=2,
-            undo=True,
-            exportselection=False,
-            padx=10,
-            pady=10,
-        )
-        widget.pack(fill="both", expand=True, padx=12, pady=10)
-        widget.insert("1.0", item.text)
-        widget.bind("<Control-v>", self._paste_clean_text_widget)
-        widget.bind(
-            "<ButtonRelease-1>",
-            lambda _event, current=widget: self.after_idle(
-                lambda current=current: self._remember_inline_text_selection(current)
-            ),
-            add="+",
-        )
-        widget.bind(
-            "<KeyRelease>",
-            lambda _event: self.after_idle(
-                lambda current=widget: self._remember_inline_text_selection(current)
-            ),
-            add="+",
-        )
-        self._editing_widget = widget
-        self._editing_dialog = dialog
-        self._editing_object_id = item.object_id
-        self._editing_original_text = item.text
-        self._editing_original_styles = copy.deepcopy(item.text_styles)
-        self._editing_selection_range = None
-        actions = tk.Frame(dialog, bg=BACKGROUND, padx=12, pady=8)
-        actions.pack(fill="x")
-        tk.Button(
-            actions, text="🔗 Hyperlien", relief="flat",
-            command=self._set_selected_hyperlink,
-        ).pack(side="left", padx=2)
-        tk.Button(
-            actions, text="✕ Retirer le lien", relief="flat",
-            command=self._remove_selected_hyperlink,
-        ).pack(side="left", padx=2)
-        tk.Button(
-            actions, text="✓ Terminer", relief="flat", bg="#2368AF", fg="white",
-            activebackground="#174D85", activeforeground="white", padx=18, pady=5,
-            command=self._commit_inline_editor,
-        ).pack(side="right", padx=2)
-
-        def preview_flow(_event: object = None) -> None:
-            if not widget.edit_modified():
+        payload = {
+            "text": item.text,
+            "text_styles": item.text_styles,
+            "text_links": item.text_links,
+            "align": item.align,
+            "bold": item.bold,
+            "italic": item.italic,
+            "underline": item.underline,
+            "strikethrough": item.strikethrough,
+            "color": item.color,
+            "highlight": "",
+            "font_family": item.font_family,
+            "font_size": item.font_size,
+        }
+        before = copy.deepcopy(self.document)
+        with tempfile.TemporaryDirectory(prefix="loucodi-text-") as directory:
+            input_path = Path(directory) / "input.json"
+            output_path = Path(directory) / "output.json"
+            input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            grabbed = self.grab_current() is self
+            if grabbed:
+                self.grab_release()
+            try:
+                command = (
+                    [sys.executable, "--qt-text-editor", str(input_path), str(output_path)]
+                    if getattr(sys, "frozen", False)
+                    else [
+                        sys.executable,
+                        "-m",
+                        "lou_codi_pdf_converter.ui.qt_text_editor",
+                        str(input_path),
+                        str(output_path),
+                    ]
+                )
+                completed = subprocess.run(command, check=False)
+            finally:
+                if grabbed and self.winfo_exists():
+                    self.grab_set()
+            if completed.returncode != 0 or not output_path.is_file():
+                messagebox.showerror(
+                    "Éditeur de texte indisponible",
+                    "L’éditeur Qt n’a pas pu être lancé. Réinstallez Lou Còdi avec ses dépendances.",
+                    parent=self,
+                )
                 return
-            item.text = widget.get("1.0", "end-1c")
-            widget.edit_modified(False)
-            self._redraw_text_chain(item)
-
-        widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor() or "break")
-        widget.bind("<Escape>", lambda _event: self._commit_inline_editor() or "break")
-        widget.bind("<<Modified>>", preview_flow)
-        widget.edit_modified(False)
-        widget.focus_set()
-        widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
-        widget.tag_add("align", "1.0", "end")
-        widget.tag_configure("hyperlink", foreground="#1769AA", underline=True)
-        for link in item.text_links:
-            start = max(0, int(link.get("start", 0)))
-            end = max(start, int(link.get("end", 0)))
-            if link.get("hyperlink") and end > start:
-                widget.tag_add("hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars")
-        self._editing_style_tags = {}
-        for number, run in enumerate(item.text_styles):
-            start = max(0, int(run.get("start", 0)))
-            end = max(start, int(run.get("end", 0)))
-            if end <= start:
-                continue
-            tag = f"style_{number}"
-            style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
-            self._editing_style_tags[tag] = style
-            self._configure_text_style_tag(widget, tag, item, style)
-            widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
-        widget.tag_raise("sel")
-        self.status.configure(
-            text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
-        )
-        dialog.protocol("WM_DELETE_WINDOW", self._commit_inline_editor)
-        dialog.lift()
+            result = json.loads(output_path.read_text(encoding="utf-8"))
+        new_text = str(result.get("text", item.text))
+        new_styles = result.get("text_styles", item.text_styles)
+        new_links = result.get("text_links", item.text_links)
+        new_align = str(result.get("align", item.align))
+        if not isinstance(new_styles, list):
+            new_styles = item.text_styles
+        if not isinstance(new_links, list):
+            new_links = item.text_links
+        if (
+            new_text != item.text
+            or new_styles != item.text_styles
+            or new_links != item.text_links
+            or new_align != item.align
+        ):
+            self.undo_stack.append(before)
+            self.undo_stack = self.undo_stack[-80:]
+            self.redo_stack.clear()
+            item.text = new_text
+            item.text_styles = new_styles
+            item.text_links = new_links
+            item.align = new_align
+            self.status.configure(text="Zone de texte modifiée dans l’éditeur Qt.")
+            self._render()
 
     @staticmethod
     def _ensure_table_cells(item: PageObject) -> list[list[dict[str, str]]]:
