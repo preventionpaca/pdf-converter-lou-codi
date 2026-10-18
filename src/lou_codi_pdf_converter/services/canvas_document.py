@@ -450,7 +450,9 @@ def _draw_object(
                     page.insert_link(
                         {"kind": pymupdf.LINK_URI, "from": linked_rectangle, "uri": uri}
                     )
-    if item.hyperlink.strip():
+    # Text frames only carry links on explicit character ranges.  A frame-wide
+    # link makes editing ambiguous and used to destabilise the inline editor.
+    if item.kind != "text" and item.hyperlink.strip():
         page.draw_line(
             pymupdf.Point(min(rectangle.x0, rectangle.x1), max(rectangle.y0, rectangle.y1) - 1),
             pymupdf.Point(max(rectangle.x0, rectangle.x1), max(rectangle.y0, rectangle.y1) - 1),

@@ -91,6 +91,48 @@ def normalize_external_text(value: str) -> str:
     )
 
 
+def draw_styled_rectangle(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    *,
+    color: str,
+    width: int,
+    style: str,
+) -> None:
+    """Draw a solid, dashed or dotted rectangular border on a Pillow canvas."""
+    if style == "solid":
+        draw.rectangle(box, outline=color, width=width)
+        return
+    left, top, right, bottom = box
+    dash = max(width, width * (1 if style == "dotted" else 4))
+    gap = max(width * 2, dash)
+    for start, end in (
+        ((left, top), (right, top)),
+        ((right, top), (right, bottom)),
+        ((right, bottom), (left, bottom)),
+        ((left, bottom), (left, top)),
+    ):
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        if length <= 0:
+            continue
+        unit_x = (end[0] - start[0]) / length
+        unit_y = (end[1] - start[1]) / length
+        position = 0.0
+        while position < length:
+            segment_end = min(length, position + dash)
+            draw.line(
+                (
+                    start[0] + unit_x * position,
+                    start[1] + unit_y * position,
+                    start[0] + unit_x * segment_end,
+                    start[1] + unit_y * segment_end,
+                ),
+                fill=color,
+                width=width,
+            )
+            position += dash + gap
+
+
 def parse_tabular_clipboard(value: str) -> list[list[dict[str, str]]]:
     """Recognise a spreadsheet clipboard as editable Lou Còdi cells."""
     normalized = normalize_external_text(value).strip("\n")
@@ -2924,10 +2966,12 @@ class DocumentEditorWindow(tk.Toplevel):
             draw.rectangle((0, 0, render_width - 1, render_height - 1), fill=render_item.fill)
         if render_item.border_width > 0:
             border_width = max(1, round(render_item.border_width * self.zoom))
-            draw.rectangle(
+            draw_styled_rectangle(
+                draw,
                 (border_width // 2, border_width // 2, render_width - 1 - border_width // 2, render_height - 1 - border_width // 2),
-                outline=render_item.border_color,
+                color=render_item.border_color,
                 width=border_width,
+                style=render_item.border_style,
             )
         size = max(7, round(render_item.font_size * self.zoom))
         suffix = "-BoldOblique" if render_item.bold and render_item.italic else "-Bold" if render_item.bold else "-Oblique" if render_item.italic else ""
@@ -6776,12 +6820,21 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             if item.kind == "text" and self._editing_widget is not None:
                 item.border_color = normalized.upper()
+                item.border_width = max(0.6, item.border_width)
                 self._editing_widget.configure(
+                    highlightthickness=max(1, round(item.border_width * self.zoom)),
                     highlightbackground=item.border_color,
                     highlightcolor=item.border_color,
                 )
                 self._editing_widget.focus_set()
                 self.status.configure(text="Couleur de bordure appliquée à la zone.")
+                return
+            if item.kind == "text":
+                def apply_text_border(target: PageObject) -> None:
+                    target.border_color = normalized.upper()
+                    target.border_width = max(0.6, target.border_width)
+
+                self._mutate(apply_text_border)
                 return
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
 
@@ -7046,13 +7099,14 @@ class DocumentEditorWindow(tk.Toplevel):
             and self._editing_widget is not None
             and self._editing_object_id == item.object_id
         ):
-            try:
-                start = self._text_character_offset(self._editing_widget, "sel.first")
-                end = self._text_character_offset(self._editing_widget, "sel.last")
-                if end > start:
-                    text_selection = (start, end)
-            except tk.TclError:
-                pass
+            text_selection = self._selected_inline_text_range(item)
+        if item.kind == "text" and text_selection is None:
+            self.status.configure(
+                text="Dans une zone de texte, sélectionnez d’abord les mots qui porteront le lien."
+            )
+            if self._editing_widget is not None:
+                self._editing_widget.focus_set()
+            return
         value = ask_text(
             self,
             "Lien hypertexte",
@@ -7061,7 +7115,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 if text_selection
                 else "Adresse du lien (https://… ou mailto:…) :"
             ),
-            item.hyperlink,
+            "" if item.kind == "text" else item.hyperlink,
         )
         if value is None:
             return
@@ -7121,6 +7175,13 @@ class DocumentEditorWindow(tk.Toplevel):
                         return
                     self._render()
                     return
+        if item.kind == "text":
+            self.status.configure(
+                text="Sélectionnez les mots dont vous voulez retirer le lien hypertexte."
+            )
+            if self._editing_widget is not None:
+                self._editing_widget.focus_set()
+            return
         if not item.hyperlink:
             self.status.configure(text="Cet objet ne contient aucun lien hypertexte.")
             return
@@ -9350,6 +9411,8 @@ class DocumentEditorWindow(tk.Toplevel):
     def _rotate_selected_degrees(self, degrees: float) -> None:
         if not self.selected_indices:
             return
+        if getattr(self, "_editing_widget", None) is not None:
+            self._commit_inline_editor(render=False)
         indices = expanded_group_indices(self.document.objects, self.selected_indices)
         objects = [self.document.objects[index] for index in indices]
         left, top, width, height = objects_bounds(objects)
@@ -9505,6 +9568,8 @@ class DocumentEditorWindow(tk.Toplevel):
             target = float(self.angle_var.get().replace(",", "."))
         except ValueError:
             return
+        if getattr(self, "_editing_widget", None) is not None:
+            self._commit_inline_editor(render=False)
         self._checkpoint()
         for index in self.selected_indices:
             item = self.document.objects[index]

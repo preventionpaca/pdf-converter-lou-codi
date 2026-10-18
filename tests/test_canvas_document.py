@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from pypdf import PdfReader
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from lou_codi_pdf_converter.services.canvas_document import (
     FLOW_BREAK_TOKEN,
@@ -27,6 +27,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     dimension_label_layout,
     dimension_line_geometry,
     driving_dimension_translation,
+    draw_styled_rectangle,
     edge_coincidence_translation,
     expanded_group_indices,
     merge_mirrored_outlines,
@@ -46,6 +47,17 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
+
+
+def test_styled_rectangle_draws_real_gaps_for_dashed_and_dotted_borders() -> None:
+    for style in ("dashed", "dotted"):
+        image = Image.new("RGB", (80, 40), "white")
+        draw_styled_rectangle(
+            ImageDraw.Draw(image), (2, 2, 77, 37), color="black", width=2, style=style
+        )
+        top_edge = [image.getpixel((x, 2)) for x in range(3, 77)]
+        assert (0, 0, 0) in top_edge
+        assert (255, 255, 255) in top_edge
 
 
 def test_paragraph_alignment_uses_local_run_without_changing_other_text() -> None:
@@ -458,8 +470,8 @@ def test_pdf_export_contains_a_standard_clickable_uri_link(tmp_path: Path) -> No
     document = CanvasDocument(
         objects=[
             PageObject(
-                "text", 0, 20, 20, 180, 40,
-                text="Site Lou Còdi", hyperlink="https://example.com",
+                "shape", 0, 20, 20, 180, 40,
+                shape="rectangle", hyperlink="https://example.com",
             )
         ]
     )
@@ -470,6 +482,22 @@ def test_pdf_export_contains_a_standard_clickable_uri_link(tmp_path: Path) -> No
     assert annotation["/Subtype"] == "/Link"
     assert annotation["/A"]["/S"] == "/URI"
     assert annotation["/A"]["/URI"] == "https://example.com"
+
+
+def test_pdf_export_ignores_legacy_link_attached_to_an_entire_text_frame(tmp_path: Path) -> None:
+    target = tmp_path / "ancien-lien-zone.pdf"
+    document = CanvasDocument(
+        objects=[
+            PageObject(
+                "text", 0, 20, 20, 180, 40,
+                text="Site Lou Còdi", hyperlink="https://example.com",
+            )
+        ]
+    )
+
+    export_canvas_pdf(document, target)
+
+    assert "/Annots" not in PdfReader(target).pages[0]
 
 
 def test_pdf_export_links_only_the_selected_text_passage(tmp_path: Path) -> None:
