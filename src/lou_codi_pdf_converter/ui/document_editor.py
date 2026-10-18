@@ -1151,7 +1151,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("H▤", lambda: self._set_table_style("green"), "En-tête vert et lignes vertes alternées"),
                 ("H×", lambda: self._set_table_style("plain"), "Retirer le style d’en-tête et les lignes alternées"),
             )),
-            "text_zone_style": ("MISE EN FORME ZONE", (
+            "text_zone_style": ("APPARENCE ZONE", (
+                ("Fond", self._choose_inline_text_frame_fill, "Choisir la couleur de fond"),
+                ("ØF", lambda: self._set_inline_text_frame_fill("transparent"), "Fond transparent"),
+                ("Bord", lambda: self._choose_color("border_color"), "Choisir la couleur de bordure"),
+                ("ØB", lambda: self._set_border_width_value(0), "Supprimer la bordure"),
+                ("0.5", lambda: self._set_border_width_value(0.5), "Bordure fine"),
+                ("1.5", lambda: self._set_border_width_value(1.5), "Bordure moyenne"),
+                ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
+                ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
+                ("···", lambda: self._set_border_style_value("dotted"), "Bordure pointillée"),
+                ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
                 ("−1°", lambda: self._rotate_selected_degrees(-1), "Tourner d’un degré vers la gauche"),
                 ("+1°", lambda: self._rotate_selected_degrees(1), "Tourner d’un degré vers la droite"),
                 ("∠°", self._ask_absolute_angle, "Saisir un angle exact"),
@@ -1172,6 +1182,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("1.5", lambda: self._set_border_width_value(1.5), "Bordure moyenne"),
                 ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
                 ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
+                ("···", lambda: self._set_border_style_value("dotted"), "Bordure pointillée"),
                 ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
                 ("−1°", lambda: self._rotate_selected_degrees(-1), "Tourner d’un degré vers la gauche"),
                 ("+1°", lambda: self._rotate_selected_degrees(1), "Tourner d’un degré vers la droite"),
@@ -1743,7 +1754,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("measurements", "Mesures et cotations"),
             ("table", "Tableau"),
             ("media", "Image, lien et masque"),
-            ("text_zone_style", "Mise en forme zone"),
+            ("text_zone_style", "Apparence de la zone de texte"),
             ("shape_style", "Apparence des formes"),
             ("technical", "Technique"),
         ):
@@ -5307,18 +5318,33 @@ class DocumentEditorWindow(tk.Toplevel):
 
         tool(primary, "↶", self._undo_inline_text, "Annuler")
         tool(primary, "↷", self._redo_inline_text, "Rétablir")
-        families = ttk.Combobox(
+        family_names = (
+            "Sans-serif", "Serif", "Monospace", "Cursive",
+            "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles",
+        )
+        families = tk.Menubutton(
             primary,
             textvariable=self.font_family_var,
-            values=(
-                "Sans-serif", "Serif", "Monospace", "Cursive",
-                "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles",
-            ),
-            state="readonly",
-            width=14,
+            relief="flat",
+            width=16,
+            anchor="w",
+            padx=5,
         )
+        family_menu = tk.Menu(families, tearoff=False)
+
+        def choose_family(name: str) -> None:
+            self.font_family_var.set(name)
+            self._apply_font_family()
+            self._update_font_sample()
+
+        for family_name in family_names:
+            family_menu.add_command(
+                label=f"{family_name}   AaBb 123",
+                font=(self._tk_font_family(family_name), 12),
+                command=lambda selected=family_name: choose_family(selected),
+            )
+        families.configure(menu=family_menu)
         families.pack(side="left", padx=2, pady=2)
-        families.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
         sizes = ttk.Combobox(
             primary,
             textvariable=self.font_size_var,
