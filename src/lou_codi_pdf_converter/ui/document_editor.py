@@ -582,6 +582,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_selection_range: tuple[int, int] | None = None
+        self._editing_word_range: tuple[str, str] | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -2878,8 +2879,8 @@ class DocumentEditorWindow(tk.Toplevel):
         line_height = text_frame_line_height(render_item) * self.zoom
         visible_lines = text_frame_line_capacity(render_item)
         search_from = 0
-        cursor_y = 4 * self.zoom
-        for line in lines[:visible_lines]:
+        for row, line in enumerate(lines[:visible_lines]):
+            py = 4 * self.zoom + row * line_height
             line_start = text.find(line, search_from) if line else search_from
             if line_start < 0:
                 line_start = search_from
@@ -2919,52 +2920,30 @@ class DocumentEditorWindow(tk.Toplevel):
             cursor_x = aligned_text_x(
                 render_width, actual_line_width, padding, render_item.align
             )
-            metrics: list[tuple[int, int]] = []
-            for _fragment, fragment_style, fragment_font, _linked, _width in fragments:
-                fragment_size = max(
-                    7, round(float(fragment_style["font_size"]) * self.zoom)
-                )
-                if hasattr(fragment_font, "getmetrics"):
-                    metrics.append(fragment_font.getmetrics())
-                else:
-                    metrics.append((fragment_size, max(1, fragment_size // 4)))
-            max_ascent = max((metric[0] for metric in metrics), default=size)
-            max_descent = max((metric[1] for metric in metrics), default=max(1, size // 4))
-            baseline_y = cursor_y + max_ascent
             for fragment, fragment_style, fragment_font, linked, fragment_width in fragments:
                 fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
                 color = "#1769AA" if linked else str(fragment_style["color"])
                 highlight = str(fragment_style.get("highlight", ""))
                 if highlight:
                     draw.rectangle(
-                        (
-                            cursor_x,
-                            cursor_y,
-                            cursor_x + fragment_width,
-                            min(render_height - 1, baseline_y + max_descent),
-                        ),
+                        (cursor_x, py, cursor_x + fragment_width, min(render_height - 1, py + line_height)),
                         fill=highlight,
                     )
-                draw.text(
-                    (cursor_x, baseline_y), fragment, font=fragment_font, fill=color, anchor="ls"
-                )
+                draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
                 if linked or fragment_style["underline"]:
-                    underline_y = min(render_height - 1, baseline_y + max(1, round(self.zoom)))
+                    underline_y = min(render_height - 1, py + fragment_size + 2)
                     draw.line(
                         (cursor_x, underline_y, cursor_x + fragment_width, underline_y),
                         fill="#1769AA" if linked else str(fragment_style["color"]),
                         width=max(1, round(self.zoom)),
                     )
                 if fragment_style["strikethrough"]:
-                    strike_y = min(render_height - 1, baseline_y - fragment_size * 0.35)
+                    strike_y = min(render_height - 1, py + fragment_size * 0.55)
                     draw.line(
                         (cursor_x, strike_y, cursor_x + fragment_width, strike_y),
                         fill=str(fragment_style["color"]), width=max(1, round(self.zoom)),
                     )
                 cursor_x += fragment_width
-            cursor_y += max(line_height, max_ascent + max_descent + 1)
-            if cursor_y >= render_height:
-                break
             search_from = max(search_from, line_end)
         rotation = float(render_item.rotation) % 360
         if rotation:
@@ -5155,22 +5134,28 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._editing_selection_range = (start, end) if end > start else None
 
-    def _select_inline_word(self, event: tk.Event[tk.Text]) -> str:
-        """Select exactly one word and prevent Tk's word-drag mode from taking over."""
+    def _prepare_inline_word_selection(self, event: tk.Event[tk.Text]) -> None:
+        """Remember the exact word under a double-click without replacing Tk bindings."""
         widget = event.widget
         index = widget.index(f"@{event.x},{event.y}")
-        start = widget.index(f"{index} wordstart")
-        end = widget.index(f"{index} wordend")
-        widget.tag_remove("sel", "1.0", "end")
-        widget.tag_add("sel", start, end)
-        widget.mark_set("insert", end)
-        widget.mark_set("anchor", start)
-        widget.tag_raise("sel")
-        self._editing_selection_range = (
-            self._text_character_offset(widget, start),
-            self._text_character_offset(widget, end),
+        self._editing_word_range = (
+            widget.index(f"{index} wordstart"),
+            widget.index(f"{index} wordend"),
         )
-        return "break"
+
+    def _finish_inline_text_selection(self, widget: tk.Text) -> None:
+        """Stabilise a double-clicked word after Tk has completed its native selection."""
+        if widget is not self._editing_widget:
+            return
+        word_range = self._editing_word_range
+        self._editing_word_range = None
+        if word_range is not None:
+            start, end = word_range
+            widget.tag_remove("sel", "1.0", "end")
+            widget.tag_add("sel", start, end)
+            widget.mark_set("insert", end)
+            widget.tag_raise("sel")
+        self.after_idle(lambda: self._remember_inline_text_selection(widget))
 
     @staticmethod
     def _text_character_offset(widget: tk.Text, index: object) -> int:
@@ -5230,11 +5215,11 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
-        widget.bind("<Double-Button-1>", self._select_inline_word)
+        widget.bind("<Double-Button-1>", self._prepare_inline_word_selection, add="+")
         widget.bind(
             "<ButtonRelease-1>",
             lambda _event, current=widget: self.after_idle(
-                lambda current=current: self._remember_inline_text_selection(current)
+                lambda current=current: self._finish_inline_text_selection(current)
             ),
             add="+",
         )
@@ -5250,6 +5235,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_selection_range = None
+        self._editing_word_range = None
         self.canvas.create_window(
             x,
             y,
@@ -6068,6 +6054,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_original_styles = []
         self._editing_selection_range = None
+        self._editing_word_range = None
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:

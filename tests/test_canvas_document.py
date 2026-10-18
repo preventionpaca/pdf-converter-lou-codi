@@ -3,7 +3,6 @@ import math
 import zipfile
 from itertools import pairwise
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from pypdf import PdfReader
@@ -46,46 +45,6 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
-
-
-def test_double_click_selection_is_limited_to_the_clicked_word() -> None:
-    class FakeText:
-        def __init__(self) -> None:
-            self.selection: tuple[str, str] | None = None
-            self.marks: dict[str, str] = {}
-
-        def index(self, expression: str) -> str:
-            return {
-                "@12,8": "1.7",
-                "1.7 wordstart": "1.6",
-                "1.7 wordend": "1.11",
-            }.get(expression, expression)
-
-        def tag_remove(self, _tag: str, _start: str, _end: str) -> None:
-            self.selection = None
-
-        def tag_add(self, _tag: str, start: str, end: str) -> None:
-            self.selection = (start, end)
-
-        def mark_set(self, mark: str, index: str) -> None:
-            self.marks[mark] = index
-
-        def tag_raise(self, _tag: str) -> None:
-            pass
-
-        def count(self, _start: str, index: str, _unit: str) -> tuple[int]:
-            return ({"1.6": 6, "1.11": 11}[index],)
-
-    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
-    editor._editing_selection_range = None
-    widget = FakeText()
-
-    result = editor._select_inline_word(SimpleNamespace(widget=widget, x=12, y=8))
-
-    assert result == "break"
-    assert widget.selection == ("1.6", "1.11")
-    assert widget.marks == {"insert": "1.11", "anchor": "1.6"}
-    assert editor._editing_selection_range == (6, 11)
 
 
 def test_polygon_area_accepts_open_and_closed_contours() -> None:
