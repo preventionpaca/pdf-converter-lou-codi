@@ -581,6 +581,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
+        self._editing_selection_range: tuple[int, int] | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -5109,12 +5110,26 @@ class DocumentEditorWindow(tk.Toplevel):
         widget = self._editing_widget
         if widget is None or self._editing_object_id != item.object_id:
             return None
+        if self._editing_selection_range is not None:
+            return self._editing_selection_range
         try:
             start = self._text_character_offset(widget, "sel.first")
             end = self._text_character_offset(widget, "sel.last")
         except tk.TclError:
             return None
         return (start, end) if end > start else None
+
+    def _remember_inline_text_selection(self, widget: tk.Text) -> None:
+        """Freeze the user's last deliberate text selection before toolbar clicks."""
+        if widget is not self._editing_widget:
+            return
+        try:
+            start = self._text_character_offset(widget, "sel.first")
+            end = self._text_character_offset(widget, "sel.last")
+        except tk.TclError:
+            self._editing_selection_range = None
+            return
+        self._editing_selection_range = (start, end) if end > start else None
 
     @staticmethod
     def _text_character_offset(widget: tk.Text, index: object) -> int:
@@ -5174,10 +5189,25 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
+        widget.bind(
+            "<ButtonRelease-1>",
+            lambda _event: self.after_idle(
+                lambda current=widget: self._remember_inline_text_selection(current)
+            ),
+            add="+",
+        )
+        widget.bind(
+            "<KeyRelease>",
+            lambda _event: self.after_idle(
+                lambda current=widget: self._remember_inline_text_selection(current)
+            ),
+            add="+",
+        )
         self._editing_widget = widget
         self._editing_object_id = item.object_id
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
+        self._editing_selection_range = None
         self.canvas.create_window(
             x,
             y,
@@ -5995,6 +6025,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_object_id = ""
         self._editing_original_text = ""
         self._editing_original_styles = []
+        self._editing_selection_range = None
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
