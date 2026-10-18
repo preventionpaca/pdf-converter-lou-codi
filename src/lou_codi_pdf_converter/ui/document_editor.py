@@ -35,6 +35,7 @@ from ..services.canvas_document import (
     text_frame_line_capacity,
     text_frame_line_height,
     wrapped_text_lines,
+    _font_file,
 )
 from ..services.docx_canvas import export_editable_docx
 from ..services.destinations import (
@@ -117,9 +118,30 @@ def snapped_rotation_delta(start_angle: float, current_angle: float, step: float
 
 def rotation_step_for_objects(objects: list[PageObject], configured_step: float) -> float:
     """Keep layout-rich objects on quarter turns while geometry remains freely stepped."""
-    if any(item.kind in {"text", "table", "chart", "mask"} for item in objects):
+    if any(item.kind in {"table", "chart", "mask"} for item in objects):
         return 90.0
     return max(0.1, abs(configured_step))
+
+
+TEXT_STYLE_KEYS = {"bold", "italic", "underline", "strikethrough", "color", "font_family", "font_size"}
+
+
+def text_style_at(item: PageObject, position: int) -> dict[str, object]:
+    style: dict[str, object] = {
+        "bold": item.bold,
+        "italic": item.italic,
+        "underline": item.underline,
+        "strikethrough": item.strikethrough,
+        "color": item.color,
+        "font_family": item.font_family,
+        "font_size": item.font_size,
+    }
+    for run in item.text_styles:
+        if int(run.get("start", 0)) <= position < int(run.get("end", 0)):
+            for key in TEXT_STYLE_KEYS:
+                if key in run:
+                    style[key] = run[key]
+    return style
 
 
 def point_hits_rotation_handle(
@@ -457,6 +479,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_dialog: tk.Toplevel | None = None
         self._editing_object_id = ""
         self._editing_original_text = ""
+        self._editing_style_tags: dict[str, dict[str, object]] = {}
+        self._editing_original_styles: list[dict[str, object]] = []
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -597,12 +621,17 @@ class DocumentEditorWindow(tk.Toplevel):
         font_family = ttk.Combobox(
             formatting,
             textvariable=self.font_family_var,
-            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Symboles"),
+            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Inter", "JetBrains Mono", "Symboles"),
             state="readonly",
-            width=11,
+            width=14,
         )
         font_family.pack(side="left", padx=2)
         font_family.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
+        self.font_sample = ttk.Label(formatting, style="Body.TLabel")
+        self.font_sample.pack(side="left", padx=(3, 5))
+        font_family.bind("<<ComboboxSelected>>", lambda _event: self._update_font_sample(), add="+")
+        self._font_sample_image: ImageTk.PhotoImage | None = None
+        self._update_font_sample()
         ttk.Label(formatting, text="Taille", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.font_size_var = tk.StringVar(value="12")
         font_size = ttk.Combobox(
@@ -2341,31 +2370,45 @@ class DocumentEditorWindow(tk.Toplevel):
             for link in item.text_links:
                 boundaries.add(max(line_start, min(line_end, int(link.get("start", 0)))))
                 boundaries.add(max(line_start, min(line_end, int(link.get("end", 0)))))
+            for style_run in item.text_styles:
+                boundaries.add(max(line_start, min(line_end, int(style_run.get("start", 0)))))
+                boundaries.add(max(line_start, min(line_end, int(style_run.get("end", 0)))))
             ordered = sorted(boundaries)
             cursor_x = px
             for start, end in pairwise(ordered):
                 fragment = text[start:end]
+                fragment_style = text_style_at(item, start)
+                fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
+                try:
+                    fragment_file = _font_file(
+                        str(fragment_style["font_family"]),
+                        bool(fragment_style["bold"]),
+                        bool(fragment_style["italic"]),
+                    )
+                    fragment_font = ImageFont.truetype(fragment_file, fragment_size) if fragment_file else font
+                except (OSError, TypeError):
+                    fragment_font = font
                 linked = any(
                     int(link.get("start", 0)) < end
                     and int(link.get("end", 0)) > start
                     and link.get("hyperlink")
                     for link in item.text_links
                 )
-                color = "#1769AA" if linked else render_item.color
-                draw.text((cursor_x, py), fragment, font=font, fill=color)
-                fragment_width = draw.textlength(fragment, font=font)
-                if linked or render_item.underline:
-                    underline_y = min(render_height - 1, py + size + 2)
+                color = "#1769AA" if linked else str(fragment_style["color"])
+                draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
+                fragment_width = draw.textlength(fragment, font=fragment_font)
+                if linked or fragment_style["underline"]:
+                    underline_y = min(render_height - 1, py + fragment_size + 2)
                     draw.line(
                         (cursor_x, underline_y, cursor_x + fragment_width, underline_y),
-                        fill="#1769AA" if linked else render_item.color,
+                        fill="#1769AA" if linked else str(fragment_style["color"]),
                         width=max(1, round(self.zoom)),
                     )
-                if render_item.strikethrough:
-                    strike_y = min(render_height - 1, py + size * 0.55)
+                if fragment_style["strikethrough"]:
+                    strike_y = min(render_height - 1, py + fragment_size * 0.55)
                     draw.line(
                         (cursor_x, strike_y, cursor_x + fragment_width, strike_y),
-                        fill=render_item.color, width=max(1, round(self.zoom)),
+                        fill=str(fragment_style["color"]), width=max(1, round(self.zoom)),
                     )
                 cursor_x += fragment_width
             search_from = max(search_from, line_end)
@@ -4190,6 +4233,71 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._start_inline_text_editor(item)
 
+    @staticmethod
+    def _tk_font_family(family: str) -> str:
+        return {
+            "Serif": "Liberation Serif",
+            "Monospace": "Liberation Mono",
+            "Cursive": "Comic Relief",
+            "Inter": "Inter",
+            "JetBrains Mono": "JetBrains Mono",
+            "Symboles": "Noto Sans Symbols 2",
+        }.get(family, "Liberation Sans")
+
+    def _update_font_sample(self) -> None:
+        preview = Image.new("RGBA", (92, 26), "#FFFFFF")
+        draw = ImageDraw.Draw(preview)
+        font_file = _font_file(self.font_family_var.get(), False, False)
+        try:
+            font = ImageFont.truetype(font_file, 15) if font_file else ImageFont.load_default()
+        except (OSError, TypeError):
+            font = ImageFont.load_default()
+        draw.text((4, 3), "AaBb 123", font=font, fill="#193B66")
+        self._font_sample_image = ImageTk.PhotoImage(preview)
+        self.font_sample.configure(image=self._font_sample_image)
+
+    def _configure_text_style_tag(
+        self, widget: tk.Text, tag: str, item: PageObject, style: dict[str, object]
+    ) -> None:
+        family = self._tk_font_family(str(style.get("font_family", item.font_family)))
+        size = max(6, round(float(style.get("font_size", item.font_size)) * self.zoom))
+        bold = bool(style.get("bold", item.bold))
+        italic = bool(style.get("italic", item.italic))
+        weight = "bold" if bold else "normal"
+        slant = "italic" if italic else "roman"
+        widget.tag_configure(
+            tag,
+            font=(family, size, f"{weight} {slant}"),
+            foreground=str(style.get("color", item.color)),
+            underline=bool(style.get("underline", item.underline)),
+            overstrike=bool(style.get("strikethrough", item.strikethrough)),
+        )
+
+    def _selected_inline_text_range(self, item: PageObject) -> tuple[int, int] | None:
+        widget = self._editing_widget
+        if widget is None or self._editing_object_id != item.object_id:
+            return None
+        try:
+            start = int(widget.count("1.0", "sel.first", "chars")[0])
+            end = int(widget.count("1.0", "sel.last", "chars")[0])
+        except tk.TclError:
+            return None
+        return (start, end) if end > start else None
+
+    def _apply_inline_text_style(self, item: PageObject, style: dict[str, object]) -> bool:
+        selection = self._selected_inline_text_range(item)
+        widget = self._editing_widget
+        if selection is None or widget is None:
+            return False
+        start, end = selection
+        tag = f"style_live_{uuid.uuid4().hex}"
+        self._editing_style_tags[tag] = dict(style)
+        self._configure_text_style_tag(widget, tag, item, style)
+        widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+        widget.tag_raise(tag)
+        self.status.configure(text="Mise en forme appliquée uniquement au texte sélectionné.")
+        return True
+
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
@@ -4199,7 +4307,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas,
             wrap="word",
             font=(
-                "Liberation Sans",
+                self._tk_font_family(item.font_family),
                 max(8, round(item.font_size * self.zoom)),
                 "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
             ),
@@ -4215,6 +4323,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_widget = widget
         self._editing_object_id = item.object_id
         self._editing_original_text = item.text
+        self._editing_original_styles = copy.deepcopy(item.text_styles)
         self.canvas.create_window(
             x,
             y,
@@ -4261,6 +4370,17 @@ class DocumentEditorWindow(tk.Toplevel):
             end = max(start, int(link.get("end", 0)))
             if link.get("hyperlink") and end > start:
                 widget.tag_add("hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars")
+        self._editing_style_tags = {}
+        for number, run in enumerate(item.text_styles):
+            start = max(0, int(run.get("start", 0)))
+            end = max(start, int(run.get("end", 0)))
+            if end <= start:
+                continue
+            tag = f"style_{number}"
+            style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
+            self._editing_style_tags[tag] = style
+            self._configure_text_style_tag(widget, tag, item, style)
+            widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         self.status.configure(
             text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
         )
@@ -4995,6 +5115,7 @@ class DocumentEditorWindow(tk.Toplevel):
             None,
         )
         original_text = self._editing_original_text
+        original_styles = self._editing_original_styles
         table_cell = self._editing_table_cell
         table_original = self._editing_table_original
         self._editing_widget = None
@@ -5002,6 +5123,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_dialog = None
         self._editing_object_id = ""
         self._editing_original_text = ""
+        self._editing_original_styles = []
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
@@ -5020,7 +5142,16 @@ class DocumentEditorWindow(tk.Toplevel):
                 changed = cell != table_original
             else:
                 item.text = value
-                changed = value != original_text
+                styles: list[dict[str, object]] = []
+                for tag, style in self._editing_style_tags.items():
+                    ranges = widget.tag_ranges(tag)
+                    for start_index, end_index in zip(ranges[::2], ranges[1::2], strict=True):
+                        start = int(widget.count("1.0", start_index, "chars")[0])
+                        end = int(widget.count("1.0", end_index, "chars")[0])
+                        if end > start:
+                            styles.append({"start": start, "end": end, **style})
+                item.text_styles = styles
+                changed = value != original_text or styles != original_styles
             if changed:
                 snapshot = copy.deepcopy(self.document)
                 snapshot_item = next(
@@ -5032,6 +5163,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     self._sync_table_text(snapshot_item)
                 else:
                     snapshot_item.text = original_text
+                    snapshot_item.text_styles = original_styles
                 self.undo_stack.append(snapshot)
                 self.undo_stack = self.undo_stack[-80:]
                 self.redo_stack.clear()
@@ -5039,6 +5171,7 @@ class DocumentEditorWindow(tk.Toplevel):
             dialog.destroy()
         elif widget.winfo_exists():
             widget.destroy()
+        self._editing_style_tags = {}
         if render:
             self._render()
 
@@ -5049,6 +5182,13 @@ class DocumentEditorWindow(tk.Toplevel):
             self._render()
 
     def _toggle(self, name: str) -> None:
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            selection = self._selected_inline_text_range(item)
+            if item.kind == "text" and selection is not None:
+                current = bool(text_style_at(item, selection[0]).get(name, getattr(item, name)))
+                self._apply_inline_text_style(item, {name: not current})
+                return
         self._mutate(lambda item: setattr(item, name, not getattr(item, name)))
 
     def _align(self, value: str) -> None:
@@ -5068,6 +5208,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 parent=self,
             )
             return
+        if attribute == "color" and self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and self._apply_inline_text_style(item, {"color": normalized.upper()}):
+                return
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
 
     def _set_border_width_value(self, value: float) -> None:
@@ -5278,6 +5422,13 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._set_object_color(attribute, chosen)
 
     def _change_font(self, change: int) -> None:
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            selection = self._selected_inline_text_range(item)
+            if item.kind == "text" and selection is not None:
+                current = float(text_style_at(item, selection[0]).get("font_size", item.font_size))
+                self._apply_inline_text_style(item, {"font_size": max(6, current + change)})
+                return
         self._mutate(lambda item: setattr(item, "font_size", max(6, item.font_size + change)))
 
     def _apply_font_size(self) -> None:
@@ -5285,9 +5436,19 @@ class DocumentEditorWindow(tk.Toplevel):
             value = max(6.0, min(144.0, float(self.font_size_var.get().replace(",", "."))))
         except ValueError:
             return
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and self._apply_inline_text_style(item, {"font_size": value}):
+                return
         self._mutate(lambda item: setattr(item, "font_size", value))
 
     def _apply_font_family(self) -> None:
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and self._apply_inline_text_style(
+                item, {"font_family": self.font_family_var.get()}
+            ):
+                return
         self._mutate(lambda item: setattr(item, "font_family", self.font_family_var.get()))
 
     def _resize(self, factor: float) -> None:
@@ -5298,12 +5459,23 @@ class DocumentEditorWindow(tk.Toplevel):
     def _copy_format(self) -> None:
         if self.selected is not None:
             item = self.document.objects[self.selected]
-            self._format_clipboard = {key: getattr(item, key) for key in ("font_size", "bold", "italic", "align", "color", "fill")}
-            self.status.configure(text="Format copié. Sélectionnez un autre objet puis appliquez-le.")
+            selection = self._selected_inline_text_range(item)
+            if item.kind == "text" and selection is not None:
+                self._format_clipboard = text_style_at(item, selection[0])
+                self.status.configure(text="Format du texte sélectionné copié.")
+            else:
+                keys = ("font_size", "font_family", "bold", "italic", "underline", "strikethrough", "align", "color", "fill")
+                self._format_clipboard = {key: getattr(item, key) for key in keys}
+                self.status.configure(text="Format du cadre entier copié. Sélectionnez la destination puis appliquez-le.")
 
     def _apply_format(self) -> None:
         if not self._format_clipboard:
             return
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            inline = {key: value for key, value in self._format_clipboard.items() if key in TEXT_STYLE_KEYS}
+            if item.kind == "text" and inline and self._apply_inline_text_style(item, inline):
+                return
         def apply(item: PageObject) -> None:
             for key, value in self._format_clipboard.items():
                 setattr(item, key, value)

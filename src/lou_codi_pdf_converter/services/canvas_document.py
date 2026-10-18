@@ -58,6 +58,7 @@ class PageObject:
     level: int = 0
     hyperlink: str = ""
     text_links: list[dict[str, object]] = field(default_factory=list)
+    text_styles: list[dict[str, object]] = field(default_factory=list)
     table_cells: list[list[dict[str, str]]] = field(default_factory=list)
     table_outer_border_width: float = 1.5
     table_inner_border_width: float = 0.6
@@ -362,6 +363,7 @@ def _draw_object(
             else:
                 family = {"Serif": "tiro", "Monospace": "cour"}.get(item.font_family, "helv")
                 font_name = "hebi" if item.bold and item.italic else "hebo" if item.bold else "heit" if item.italic else family
+            rotation = float(item.rotation) % 360
             page.insert_textbox(
                 rectangle,
                 rendered_text,
@@ -370,7 +372,8 @@ def _draw_object(
                 fontfile=font_file,
                 color=_rgb(item.color),
                 align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
-                rotate=int(item.rotation) % 360 if int(item.rotation) % 90 == 0 else 0,
+                rotate=int(rotation) if rotation % 90 == 0 else 0,
+                morph=(rectangle.tl, pymupdf.Matrix(rotation)) if rotation % 90 else None,
                 overlay=True,
             )
             if item.underline or item.strikethrough:
@@ -865,6 +868,20 @@ def _rgb(value: str) -> tuple[float, float, float]:
 @lru_cache(maxsize=32)
 def _font_file(family: str, bold: bool, italic: bool) -> str | None:
     style = "BoldItalic" if bold and italic else "Bold" if bold else "Italic" if italic else "Regular"
+    bundled_names = {
+        "Sans-serif": {"Regular": "DejaVuSans.ttf", "Bold": "DejaVuSans-Bold.ttf", "Italic": "DejaVuSans-Oblique.ttf", "BoldItalic": "DejaVuSans-BoldOblique.ttf"},
+        "Serif": {"Regular": "DejaVuSerif.ttf", "Bold": "DejaVuSerif-Bold.ttf", "Italic": "DejaVuSerif-Italic.ttf", "BoldItalic": "DejaVuSerif-BoldItalic.ttf"},
+        "Monospace": {"Regular": "DejaVuSansMono.ttf", "Bold": "DejaVuSansMono-Bold.ttf", "Italic": "DejaVuSansMono-Oblique.ttf", "BoldItalic": "DejaVuSansMono-BoldOblique.ttf"},
+        "Cursive": {"Regular": "ComicRelief-Regular.ttf", "Bold": "ComicRelief-Bold.ttf", "Italic": "ComicRelief-Regular.ttf", "BoldItalic": "ComicRelief-Bold.ttf"},
+        "Inter": {"Regular": "Inter-Regular.ttf", "Bold": "Inter-Bold.ttf", "Italic": "Inter-Italic.ttf", "BoldItalic": "Inter-BoldItalic.ttf"},
+        "JetBrains Mono": {"Regular": "JetBrainsMono-Regular.ttf", "Bold": "JetBrainsMono-Bold.ttf", "Italic": "JetBrainsMono-Italic.ttf", "BoldItalic": "JetBrainsMono-BoldItalic.ttf"},
+        "Symboles": {"Regular": "DejaVuSans.ttf", "Bold": "DejaVuSans-Bold.ttf", "Italic": "DejaVuSans-Oblique.ttf", "BoldItalic": "DejaVuSans-BoldOblique.ttf"},
+        "Flèches": {"Regular": "DejaVuSans.ttf", "Bold": "DejaVuSans-Bold.ttf", "Italic": "DejaVuSans-Oblique.ttf", "BoldItalic": "DejaVuSans-BoldOblique.ttf"},
+    }
+    bundled_root = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+    bundled = bundled_root / bundled_names.get(family, bundled_names["Sans-serif"])[style]
+    if bundled.is_file():
+        return str(bundled)
     if sys.platform == "win32":
         fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
         names = {

@@ -33,6 +33,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     revolution_stations,
     rotation_step_for_objects,
     snapped_rotation_delta,
+    text_style_at,
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
@@ -706,9 +707,21 @@ def test_rotation_handle_uses_shortest_delta_and_configured_step() -> None:
 
 
 def test_layout_rich_objects_use_quarter_turns_for_guided_rotation() -> None:
-    assert rotation_step_for_objects([PageObject("text", 0, 0, 0, 100, 40)], 15) == 90
+    assert rotation_step_for_objects([PageObject("text", 0, 0, 0, 100, 40)], 15) == 15
     assert rotation_step_for_objects([PageObject("table", 0, 0, 0, 100, 40)], 5) == 90
     assert rotation_step_for_objects([PageObject("polyline", 0, 0, 0, 100, 40)], 15) == 15
+
+
+def test_character_style_only_applies_inside_its_text_range() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 200, 50, text="bonjour monde", color="#000000",
+        text_styles=[{"start": 8, "end": 13, "bold": True, "color": "#CC0000"}],
+    )
+
+    assert text_style_at(item, 2)["bold"] is False
+    assert text_style_at(item, 2)["color"] == "#000000"
+    assert text_style_at(item, 10)["bold"] is True
+    assert text_style_at(item, 10)["color"] == "#CC0000"
 
 
 def test_rotation_handle_has_a_generous_but_bounded_hit_area() -> None:
