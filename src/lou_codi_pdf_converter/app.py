@@ -113,10 +113,6 @@ class Application(tk.Tk):
         self.geometry("1265x830")
         self.minsize(1050, 700)
         self.configure(bg=BACKGROUND)
-        self._active_workspace: tk.Toplevel | None = None
-        self._workspace_focus_redirect_pending = False
-        self.bind("<Map>", self._redirect_to_active_workspace, add="+")
-        self.bind("<FocusIn>", self._redirect_to_active_workspace, add="+")
         self.local_database = initialize_database()
         self.workshop_directory = initialize_workshop_directories()
         center_window(self, 1265, 830)
@@ -297,7 +293,6 @@ class Application(tk.Tk):
 
     def _open_module(self, module_id: str) -> None:
         if getattr(self, "_workspace_opening", False):
-            self._redirect_to_active_workspace()
             return
         self._workspace_opening = True
         try:
@@ -386,14 +381,7 @@ class Application(tk.Tk):
         try:
             factory = factories[module_id]
             window = factory(parent)
-            previous_active_workspace = self._active_workspace
-            self._active_workspace = window
-            try:
-                parent.wait_window(window)
-            finally:
-                self._active_workspace = (
-                    parent if parent.winfo_exists() else previous_active_workspace
-                )
+            parent.wait_window(window)
         finally:
             parent._child_workspace_open = False  # type: ignore[attr-defined]
 
@@ -405,8 +393,6 @@ class Application(tk.Tk):
         force_maximized: bool = False,
     ) -> None:
         """Show one workspace at a time and restore the previous one on close."""
-        previous_active_workspace = getattr(self, "_active_workspace", None)
-        self._active_workspace = window
         previous.update_idletasks()
         previous_geometry = previous.geometry()
         previous_state = previous.state()
@@ -433,21 +419,12 @@ class Application(tk.Tk):
             window.geometry(previous_geometry)
         window.deiconify()
         window.update_idletasks()
-        # Keep the root iconified (rather than withdrawn) while a large workspace is
-        # open. Some Linux docks only retain the running indicator for an iconified
-        # application leader; all Lou Còdi workspaces still share the same WM_CLASS.
-        if previous is self:
-            previous.iconify()
-        else:
-            previous.withdraw()
+        # Remove the previous workspace from the task switcher. Keeping the launcher
+        # iconified makes Linux restore it instead of the module actually in use.
+        previous.withdraw()
         window.lift()
         window.focus_force()
         previous.wait_window(window)
-        self._active_workspace = (
-            previous
-            if previous is not self and previous.winfo_exists()
-            else previous_active_workspace
-        )
         if previous.winfo_exists():
             previous.deiconify()
             if previous_state == "zoomed":
@@ -456,35 +433,6 @@ class Application(tk.Tk):
                 previous.geometry(previous_geometry)
             previous.lift()
             previous.focus_force()
-
-    def _redirect_to_active_workspace(self, _event: tk.Event[tk.Misc] | None = None) -> None:
-        """Bring the current module back when the desktop restores the launcher icon."""
-        target = getattr(self, "_active_workspace", None)
-        if target is None or target is self:
-            return
-        try:
-            if not target.winfo_exists():
-                return
-        except tk.TclError:
-            return
-        if getattr(self, "_workspace_focus_redirect_pending", False):
-            return
-        self._workspace_focus_redirect_pending = True
-
-        def restore_module() -> None:
-            self._workspace_focus_redirect_pending = False
-            current = getattr(self, "_active_workspace", None)
-            if current is None or current is self:
-                return
-            try:
-                self.iconify()
-                current.deiconify()
-                current.lift()
-                current.focus_force()
-            except tk.TclError:
-                pass
-
-        self.after_idle(restore_module)
 
     def _show_locked_module(self, module: WorkshopModule) -> None:
         messagebox.showinfo(
