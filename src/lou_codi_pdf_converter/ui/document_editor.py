@@ -5215,10 +5215,25 @@ class DocumentEditorWindow(tk.Toplevel):
                 if grabbed and self.winfo_exists():
                     self.grab_set()
             if completed.returncode != 0 or not output_path.is_file():
+                diagnostic = (completed.stderr or completed.stdout or "").strip()
+                if diagnostic:
+                    lines = [line.strip() for line in diagnostic.splitlines() if line.strip()]
+                    diagnostic = next(
+                        (
+                            line
+                            for line in lines
+                            if "Could not" in line
+                            or "not found" in line
+                            or "No module" in line
+                            or "Traceback" in line
+                        ),
+                        lines[-1],
+                    )[:260]
                 messagebox.showerror(
                     "Éditeur de texte indisponible",
                     "L’éditeur Qt n’a pas pu être lancé. "
-                    "Sous Linux, vérifiez que le paquet libxcb-cursor0 est installé.",
+                    "Sous Linux, vérifiez que le paquet libxcb-cursor0 est installé."
+                    + (f"\n\nDiagnostic : {diagnostic}" if diagnostic else ""),
                     parent=self,
                 )
                 return
