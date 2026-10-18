@@ -836,6 +836,16 @@ def test_character_style_only_applies_inside_its_text_range() -> None:
     assert text_style_at(item, 10)["color"] == "#CC0000"
 
 
+def test_text_highlight_only_applies_inside_its_text_range() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 200, 50, text="bonjour monde",
+        text_styles=[{"start": 8, "end": 13, "highlight": "#FFF176"}],
+    )
+
+    assert text_style_at(item, 2)["highlight"] == ""
+    assert text_style_at(item, 10)["highlight"] == "#FFF176"
+
+
 def test_text_alignment_uses_actual_rendered_width() -> None:
     assert aligned_text_x(300, 80, 10, "left") == 10
     assert aligned_text_x(300, 80, 10, "center") == 110

@@ -123,7 +123,7 @@ def rotation_step_for_objects(objects: list[PageObject], configured_step: float)
     return max(0.1, abs(configured_step))
 
 
-TEXT_STYLE_KEYS = {"bold", "italic", "underline", "strikethrough", "color", "font_family", "font_size"}
+TEXT_STYLE_KEYS = {"bold", "italic", "underline", "strikethrough", "color", "highlight", "font_family", "font_size"}
 
 
 def text_style_at(item: PageObject, position: int) -> dict[str, object]:
@@ -133,6 +133,7 @@ def text_style_at(item: PageObject, position: int) -> dict[str, object]:
         "underline": item.underline,
         "strikethrough": item.strikethrough,
         "color": item.color,
+        "highlight": "",
         "font_family": item.font_family,
         "font_size": item.font_size,
     }
@@ -601,10 +602,17 @@ class DocumentEditorWindow(tk.Toplevel):
             "segments": tk.BooleanVar(value=False),
         }
         self.palette_visible_vars = {
-            key: tk.BooleanVar(value=key == "shapes")
-            for key in ("shapes", "profile", "assembly", "hatches", "measurements", "table", "formatting")
+            key: tk.BooleanVar(value=key in {"shapes", "measurements"})
+            for key in ("shapes", "measurements", "table", "formatting", "media", "shape_style", "technical")
         }
         self.tool_palettes: dict[str, tk.Widget] = {}
+        self.palette_positions = {
+            "shapes": (10, 10), "measurements": (10, 125), "table": (175, 10),
+            "formatting": (175, 125), "media": (340, 10),
+            "shape_style": (340, 125), "technical": (505, 10),
+        }
+        self._palette_drag: tuple[str, int, int, int, int] | None = None
+        self._last_palette_context: str | None = None
         self._pending_right_triangle: tuple[int, int] | None = None
         self._triangle_property_originals: dict[str, float] = {}
         self._circle_property_originals: dict[str, float] = {}
@@ -829,7 +837,7 @@ class DocumentEditorWindow(tk.Toplevel):
         structure_button.pack(side="left", padx=4, pady=3)
         self._buttons(tools, (
             ("📏", self._start_measurement, "Mesurer librement deux points"),
-            ("↔", self._start_dimension_measurement, "Créer une cote avec lignes de rappel"),
+            ("┊↔┊", self._start_dimension_measurement, "Créer une cote avec lignes de rappel"),
             ("∠", self._start_angle_measurement, "Mesurer un angle intérieur avec trois points"),
         ), color="#DDF3E7")
         self._buttons(layout, (
@@ -1014,8 +1022,7 @@ class DocumentEditorWindow(tk.Toplevel):
         xbar.grid(row=1, column=0, sticky="ew")
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
-        self.palette_dock = tk.Frame(canvas_frame, bg="#C8D0DA")
-        self.palette_dock.place(x=10, y=10, anchor="nw")
+        self.palette_host = canvas_frame
         palette_definitions = {
             "shapes": ("FORMES", (
                 ("▭", lambda: self._start_rectangle(False), "Rectangle orienté"),
@@ -1029,36 +1036,24 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("／", self._add_line, "Trait libre"),
                 ("⌁", self._start_polyline, "Polyligne / profil"),
             )),
-            "profile": ("PROFIL", (
+            "technical": ("TECHNIQUE", (
                 ("╱", self._chamfer_selected, "Chanfrein entre deux traits"),
                 ("⌒", self._treat_shape_corner, "Traiter les coins de la forme"),
                 ("⌘", self._merge_rectangles_as_profile, "Fusionner deux rectangles"),
                 ("┄", self._add_axis, "Ajouter un axe"),
-                ("3D", self._show_revolution_preview, "Aperçu de révolution"),
-                ("⇋", self._mirror_copy_about_axis, "Symétrie autour de l’axe avec copie"),
-            )),
-            "assembly": ("ASSEMBLAGE", (
+                ("✂", self._split_selection_automatically, "Découper automatiquement"),
                 ("▣", self._group_selected, "Assembler la sélection"),
                 ("□", self._ungroup_selected, "Dissocier"),
                 ("≋", self._snap_selected_edges, "Rendre deux bords confondus"),
-                ("↔", self._start_driving_dimension, "Cote pilotante entre deux bords"),
-                ("⇤", lambda: self._align_objects("left"), "Aligner à gauche"),
-                ("↕", lambda: self._align_objects("middle"), "Aligner verticalement"),
-                ("−", lambda: self._scale_selected_assembly(0.9), "Réduire l’assemblage"),
-                ("+", lambda: self._scale_selected_assembly(1.1), "Agrandir l’assemblage"),
-            )),
-            "hatches": ("HACHURES", (
+                ("┊↔┊", self._start_driving_dimension, "Cote pilotante entre deux bords"),
                 ("×", self._remove_selected_hatches, "Enlever toutes les hachures"),
                 ("╱", lambda: self._hatch_selected("steel"), "Acier"),
                 ("〽", lambda: self._hatch_selected("aluminium"), "Aluminium"),
-                ("▨", lambda: self._hatch_selected("cast_iron"), "Fonte"),
                 ("▦", lambda: self._hatch_selected("cross"), "Hachures croisées"),
-                ("║", lambda: self._hatch_selected("vertical"), "Hachures verticales"),
-                ("…", lambda: self._hatch_selected("custom"), "Hachures personnalisées"),
             )),
             "measurements": ("MESURES", (
                 ("📏", self._start_measurement, "Distance et orientation"),
-                ("↔", self._start_dimension_measurement, "Cote avec lignes de rappel"),
+                ("┊↔┊", self._start_dimension_measurement, "Cote avec lignes de rappel"),
                 ("∠", self._start_angle_measurement, "Angle intérieur"),
                 ("Ø", self._dimension_selected_circle, "Coter le cercle"),
                 ("A", self._measure_selected_area, "Calculer l’aire"),
@@ -1075,7 +1070,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("▦", lambda: self._set_table_border_preset("standard"), "Quadrillage standard"),
                 ("▣", lambda: self._set_table_border_preset("outer"), "Contour extérieur épais"),
             )),
-            "formatting": ("MISE EN FORME", (
+            "formatting": ("MISE EN FORME TEXTE", (
                 ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
                 ("G", lambda: self._toggle("bold"), "Gras"),
                 ("I", lambda: self._toggle("italic"), "Italique"),
@@ -1086,11 +1081,33 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("⇥", lambda: self._align("right"), "Aligner à droite"),
                 ("🖌", self._copy_format, "Copier la mise en forme"),
                 ("✓", self._apply_format, "Appliquer la mise en forme"),
+                ("J", lambda: self._set_text_highlight("#FFF176"), "Surlignage jaune"),
+                ("V", lambda: self._set_text_highlight("#A7F3A1"), "Surlignage vert"),
+                ("Vi", lambda: self._set_text_highlight("#D8B4FE"), "Surlignage violet"),
+                ("Cy", lambda: self._set_text_highlight("#8BE9FD"), "Surlignage cyan"),
+                ("×Fl", lambda: self._set_text_highlight(""), "Retirer le surlignage"),
+            )),
+            "media": ("IMAGE · LIEN · MASQUE", (
+                ("▧", self._add_image, "Insérer une image"),
+                ("🔗", self._set_selected_hyperlink, "Ajouter ou modifier un hyperlien"),
+                ("▨", self._add_mask, "Insérer un masque blanc"),
+                ("✂", self._crop_selected_image, "Rogner l’image sélectionnée"),
+                ("↻", lambda: self._rotate_selected(1), "Faire pivoter"),
+            )),
+            "shape_style": ("APPARENCE FORME", (
+                ("Fond", lambda: self._choose_color("fill"), "Choisir la couleur de fond"),
+                ("ØF", lambda: self._set_object_color("fill", "transparent"), "Fond transparent"),
+                ("Bord", lambda: self._choose_color("border_color"), "Choisir la couleur de bordure"),
+                ("ØB", lambda: self._set_border_width_value(0), "Supprimer la bordure"),
+                ("0.5", lambda: self._set_border_width_value(0.5), "Bordure fine"),
+                ("1.5", lambda: self._set_border_width_value(1.5), "Bordure moyenne"),
+                ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
+                ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
+                ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
             )),
         }
         for key, (title, actions) in palette_definitions.items():
             self._create_tool_palette(key, title, actions)
-        self.palette_dock.lift()
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
@@ -1267,7 +1284,7 @@ class DocumentEditorWindow(tk.Toplevel):
             variable=self.show_measurement_length_var,
         ).pack(anchor="w", pady=(0, 5))
         ttk.Button(panel, text="📏 Distance / orientation", command=self._start_measurement).pack(fill="x", pady=2)
-        ttk.Button(panel, text="↔ Cote avec lignes de rappel", command=self._start_dimension_measurement).pack(fill="x", pady=2)
+        ttk.Button(panel, text="┊↔┊ Cote avec lignes de rappel", command=self._start_dimension_measurement).pack(fill="x", pady=2)
         ttk.Button(panel, text="◯ Coter le cercle sélectionné", command=self._dimension_selected_circle).pack(fill="x", pady=2)
         ttk.Button(panel, text="▧ Calculer l’aire du contour", command=self._measure_selected_area).pack(fill="x", pady=2)
         ttk.Button(panel, text="∠ Angle intérieur (3 points)", command=self._start_angle_measurement).pack(fill="x", pady=2)
@@ -1378,12 +1395,12 @@ class DocumentEditorWindow(tk.Toplevel):
         palettes_menu = tk.Menu(view_menu, tearoff=False)
         for key, label in (
             ("shapes", "Formes"),
-            ("profile", "Profil"),
-            ("assembly", "Assemblage"),
-            ("hatches", "Hachures"),
             ("measurements", "Mesures et cotations"),
             ("table", "Tableau"),
-            ("formatting", "Mise en forme"),
+            ("formatting", "Mise en forme du texte"),
+            ("media", "Image, lien et masque"),
+            ("shape_style", "Apparence des formes"),
+            ("technical", "Technique"),
         ):
             palettes_menu.add_checkbutton(
                 label=label,
@@ -1610,7 +1627,7 @@ class DocumentEditorWindow(tk.Toplevel):
         actions: tuple[tuple[str, object, str], ...],
     ) -> None:
         palette = tk.Frame(
-            self.palette_dock,
+            self.palette_host,
             bg="#EDF3F8",
             bd=1,
             relief="solid",
@@ -1619,10 +1636,11 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         header = tk.Frame(palette, bg="#193F6A")
         header.pack(fill="x", pady=(0, 3))
-        tk.Label(
+        title_label = tk.Label(
             header, text=title, bg="#193F6A", fg="white",
             font=("Sans", 8, "bold"), padx=5, pady=2,
-        ).pack(side="left", fill="x", expand=True)
+        )
+        title_label.pack(side="left", fill="x", expand=True)
         tk.Button(
             header, text="×", command=lambda: self._close_tool_palette(key),
             bg="#193F6A", fg="white", activebackground="#C74848",
@@ -1638,7 +1656,24 @@ class DocumentEditorWindow(tk.Toplevel):
             button.grid(row=index // 5, column=index % 5, padx=1, pady=1, sticky="ew")
             self._add_tooltip(button, help_text)
         self.tool_palettes[key] = palette
+        for handle in (header, title_label):
+            handle.bind("<ButtonPress-1>", lambda event, palette_key=key: self._start_palette_drag(event, palette_key))
+            handle.bind("<B1-Motion>", self._drag_tool_palette)
         self._set_palette_visibility(key)
+
+    def _start_palette_drag(self, event: tk.Event[tk.Widget], key: str) -> None:
+        palette = self.tool_palettes[key]
+        self._palette_drag = (key, event.x_root, event.y_root, palette.winfo_x(), palette.winfo_y())
+
+    def _drag_tool_palette(self, event: tk.Event[tk.Widget]) -> None:
+        if self._palette_drag is None:
+            return
+        key, start_x, start_y, origin_x, origin_y = self._palette_drag
+        palette = self.tool_palettes[key]
+        x = max(0, min(origin_x + event.x_root - start_x, self.palette_host.winfo_width() - palette.winfo_width()))
+        y = max(0, min(origin_y + event.y_root - start_y, self.palette_host.winfo_height() - palette.winfo_height()))
+        self.palette_positions[key] = (x, y)
+        palette.place(x=x, y=y, anchor="nw")
 
     def _close_tool_palette(self, key: str) -> None:
         self.palette_visible_vars[key].set(False)
@@ -1649,11 +1684,11 @@ class DocumentEditorWindow(tk.Toplevel):
         if palette is None:
             return
         if self.palette_visible_vars[key].get():
-            if not palette.winfo_manager():
-                palette.pack(anchor="nw", fill="x", pady=(0, 5))
+            x, y = self.palette_positions.get(key, (10, 10))
+            palette.place(x=x, y=y, anchor="nw")
+            palette.lift()
         elif palette.winfo_manager():
-            palette.pack_forget()
-        self.palette_dock.lift()
+            palette.place_forget()
 
     def _toggle_properties_panel(self) -> None:
         visible = self.properties_visible.get()
@@ -2218,6 +2253,25 @@ class DocumentEditorWindow(tk.Toplevel):
             if current_state == "hidden":
                 self.ribbon.select(0)
         self._last_context_kind = contextual_name
+        palette_context = (
+            "table" if kind == "table" else
+            "text" if kind == "text" else
+            "media" if kind in {"image", "mask"} else
+            "technical" if states["technical"] else
+            "general"
+        )
+        if palette_context != self._last_palette_context:
+            visible = {
+                "general": {"shapes", "measurements"},
+                "text": {"formatting"},
+                "table": {"table", "formatting"},
+                "media": {"media", "shape_style"},
+                "technical": {"measurements", "shape_style", "technical"},
+            }[palette_context]
+            for key, variable in self.palette_visible_vars.items():
+                variable.set(key in visible)
+                self._set_palette_visibility(key)
+            self._last_palette_context = palette_context
 
     def _draw_rulers(self, width: float, height: float) -> None:
         """Draw page rulers in millimetres around the current sheet."""
@@ -2689,6 +2743,12 @@ class DocumentEditorWindow(tk.Toplevel):
             for fragment, fragment_style, fragment_font, linked, fragment_width in fragments:
                 fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
                 color = "#1769AA" if linked else str(fragment_style["color"])
+                highlight = str(fragment_style.get("highlight", ""))
+                if highlight:
+                    draw.rectangle(
+                        (cursor_x, py, cursor_x + fragment_width, min(render_height - 1, py + line_height)),
+                        fill=highlight,
+                    )
                 draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
                 if linked or fragment_style["underline"]:
                     underline_y = min(render_height - 1, py + fragment_size + 2)
@@ -4792,6 +4852,7 @@ class DocumentEditorWindow(tk.Toplevel):
             foreground=str(style.get("color", item.color)),
             underline=bool(style.get("underline", item.underline)),
             overstrike=bool(style.get("strikethrough", item.strikethrough)),
+            background=str(style.get("highlight", "")),
         )
 
     def _selected_inline_text_range(self, item: PageObject) -> tuple[int, int] | None:
@@ -5757,6 +5818,19 @@ class DocumentEditorWindow(tk.Toplevel):
             if item.kind == "text" and self._apply_inline_text_style(item, {"color": normalized.upper()}):
                 return
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
+
+    def _set_text_highlight(self, color: str) -> None:
+        if self.selected is None:
+            return
+        item = self.document.objects[self.selected]
+        if item.kind != "text":
+            self.status.configure(text="Le surlignage s’applique à une zone de texte.")
+            return
+        if self._apply_inline_text_style(item, {"highlight": color}):
+            return
+        self.status.configure(
+            text="Double-cliquez dans la zone, sélectionnez le passage, puis choisissez la couleur de surlignage."
+        )
 
     def _set_border_width_value(self, value: float) -> None:
         self._mutate(lambda item: setattr(item, "border_width", value))
