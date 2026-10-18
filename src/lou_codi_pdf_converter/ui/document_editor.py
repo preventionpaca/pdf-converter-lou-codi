@@ -594,6 +594,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_original_align = "left"
         self._editing_original_fill = "#FFFFFF"
+        self._editing_original_border_color = "#000000"
+        self._editing_original_border_width = 1.0
+        self._editing_original_border_style = "solid"
         self._editing_original_paragraph_alignments: list[dict[str, object]] = []
         self._editing_alignment_tags: dict[str, str] = {}
         self._editing_selection_range: tuple[int, int] | None = None
@@ -5262,8 +5265,11 @@ class DocumentEditorWindow(tk.Toplevel):
             ),
             bg=item.fill if item.fill.lower() not in {"", "none", "transparent"} else "white",
             fg=item.color,
-            relief="solid",
-            borderwidth=2,
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=max(0, round(item.border_width * self.zoom)),
+            highlightbackground=item.border_color,
+            highlightcolor=item.border_color,
             undo=True,
             exportselection=False,
         )
@@ -5301,6 +5307,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_original_align = item.align
         self._editing_original_fill = item.fill
+        self._editing_original_border_color = item.border_color
+        self._editing_original_border_width = item.border_width
+        self._editing_original_border_style = item.border_style
         self._editing_original_paragraph_alignments = copy.deepcopy(item.paragraph_alignments)
         self._editing_alignment_tags = {}
         self._editing_selection_range = None
@@ -6513,6 +6522,9 @@ class DocumentEditorWindow(tk.Toplevel):
         original_styles = self._editing_original_styles
         original_align = self._editing_original_align
         original_fill = self._editing_original_fill
+        original_border_color = self._editing_original_border_color
+        original_border_width = self._editing_original_border_width
+        original_border_style = self._editing_original_border_style
         original_paragraph_alignments = self._editing_original_paragraph_alignments
         table_cell = self._editing_table_cell
         table_original = self._editing_table_original
@@ -6524,6 +6536,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_styles = []
         self._editing_original_align = "left"
         self._editing_original_fill = "#FFFFFF"
+        self._editing_original_border_color = "#000000"
+        self._editing_original_border_width = 1.0
+        self._editing_original_border_style = "solid"
         self._editing_original_paragraph_alignments = []
         self._editing_selection_range = None
         self._editing_drag_anchor = None
@@ -6577,6 +6592,9 @@ class DocumentEditorWindow(tk.Toplevel):
                     or styles != original_styles
                     or item.align != original_align
                     or item.fill != original_fill
+                    or item.border_color != original_border_color
+                    or item.border_width != original_border_width
+                    or item.border_style != original_border_style
                     or paragraph_alignments != original_paragraph_alignments
                 )
             if changed:
@@ -6593,6 +6611,9 @@ class DocumentEditorWindow(tk.Toplevel):
                     snapshot_item.text_styles = original_styles
                     snapshot_item.align = original_align
                     snapshot_item.fill = original_fill
+                    snapshot_item.border_color = original_border_color
+                    snapshot_item.border_width = original_border_width
+                    snapshot_item.border_style = original_border_style
                     snapshot_item.paragraph_alignments = original_paragraph_alignments
                 self.undo_stack.append(snapshot)
                 self.undo_stack = self.undo_stack[-80:]
@@ -6707,6 +6728,17 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.status.configure(text="Sélectionnez d’abord le texte à colorer.")
                     self._editing_widget.focus_set()
                 return
+        if attribute == "border_color" and self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and self._editing_widget is not None:
+                item.border_color = normalized.upper()
+                self._editing_widget.configure(
+                    highlightbackground=item.border_color,
+                    highlightcolor=item.border_color,
+                )
+                self._editing_widget.focus_set()
+                self.status.configure(text="Couleur de bordure appliquée à la zone.")
+                return
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
 
     def _set_text_highlight(self, color: str) -> None:
@@ -6751,9 +6783,28 @@ class DocumentEditorWindow(tk.Toplevel):
             self._set_inline_text_frame_fill(chosen)
 
     def _set_border_width_value(self, value: float) -> None:
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and self._editing_widget is not None:
+                item.border_width = value
+                self._editing_widget.configure(
+                    highlightthickness=max(0, round(value * self.zoom))
+                )
+                self._editing_widget.focus_set()
+                self.status.configure(text="Épaisseur de bordure appliquée à la zone.")
+                return
         self._mutate(lambda item: setattr(item, "border_width", value))
 
     def _set_border_style_value(self, value: str) -> None:
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            if item.kind == "text" and self._editing_widget is not None:
+                item.border_style = value
+                self._editing_widget.focus_set()
+                self.status.configure(
+                    text="Style de bordure enregistré ; le pointillé apparaît après Terminer."
+                )
+                return
         self._mutate(lambda item: setattr(item, "border_style", value))
 
     def _write_edited_image(
