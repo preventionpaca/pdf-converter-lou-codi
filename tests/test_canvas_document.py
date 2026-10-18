@@ -21,6 +21,8 @@ from lou_codi_pdf_converter.services.canvas_document import (
 from lou_codi_pdf_converter.services.geometry import Segment
 from lou_codi_pdf_converter.ui.document_editor import (
     DocumentEditorWindow,
+    aligned_text_x,
+    dimension_line_geometry,
     driving_dimension_translation,
     edge_coincidence_translation,
     expanded_group_indices,
@@ -29,15 +31,35 @@ from lou_codi_pdf_converter.ui.document_editor import (
     objects_bounds,
     parse_tabular_clipboard,
     point_hits_rotation_handle,
+    polygon_area,
     revolution_axis_target,
     revolution_stations,
     rotation_step_for_objects,
     snapped_rotation_delta,
     text_style_at,
-    aligned_text_x,
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
+
+
+def test_polygon_area_accepts_open_and_closed_contours() -> None:
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    assert polygon_area(square) == 100.0
+    assert polygon_area([*square, square[0]]) == 100.0
+    assert polygon_area(square[:2]) == 0.0
+
+
+def test_dimension_line_geometry_places_parallel_extension_line() -> None:
+    assert dimension_line_geometry((0.0, 0.0), (100.0, 0.0), (20.0, 30.0)) == (
+        (0.0, 30.0),
+        (100.0, 30.0),
+    )
+    inclined = dimension_line_geometry((0.0, 0.0), (30.0, 40.0), (10.0, 20.0))
+    assert inclined is not None
+    start, end = inclined
+    assert math.isclose(end[0] - start[0], 30.0)
+    assert math.isclose(end[1] - start[1], 40.0)
+    assert dimension_line_geometry((1.0, 1.0), (1.0, 1.0), (2.0, 3.0)) is None
 
 
 class _StatusRecorder:

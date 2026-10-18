@@ -153,6 +153,38 @@ def aligned_text_x(frame_width: float, text_width: float, padding: float, align:
     return frame_width - text_width - padding
 
 
+def polygon_area(points: list[tuple[float, float]]) -> float:
+    """Return the unsigned area of a closed or open polygon point sequence."""
+    if len(points) < 3:
+        return 0.0
+    closed = points if points[0] == points[-1] else [*points, points[0]]
+    return abs(sum(
+        first[0] * second[1] - second[0] * first[1]
+        for first, second in pairwise(closed)
+    )) / 2
+
+
+def dimension_line_geometry(
+    first: tuple[float, float],
+    second: tuple[float, float],
+    placement: tuple[float, float],
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Project a parallel dimension line through the requested placement point."""
+    dx, dy = second[0] - first[0], second[1] - first[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        return None
+    normal_x, normal_y = -dy / length, dx / length
+    offset = (
+        (placement[0] - first[0]) * normal_x
+        + (placement[1] - first[1]) * normal_y
+    )
+    return (
+        (first[0] + normal_x * offset, first[1] + normal_y * offset),
+        (second[0] + normal_x * offset, second[1] + normal_y * offset),
+    )
+
+
 def point_hits_rotation_handle(
     pointer: tuple[float, float], handle: tuple[float, float], radius: float = 15.0
 ) -> bool:
@@ -531,6 +563,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.show_measurement_length_var = tk.BooleanVar(value=False)
         self._pending_right_triangle: tuple[int, int] | None = None
         self._triangle_property_originals: dict[str, float] = {}
+        self._circle_property_originals: dict[str, float] = {}
         icon = getattr(self._root(), "app_icon", None)
         if icon is not None:
             self.iconphoto(False, icon)
@@ -713,6 +746,7 @@ class DocumentEditorWindow(tk.Toplevel):
         for label, command in (
             ("Rectangle orienté", lambda: self._start_rectangle(False)),
             ("Carré orienté", lambda: self._start_rectangle(True)),
+            ("Cercle paramétrique", lambda: self._add_shape("circle")),
             ("Ellipse", lambda: self._add_shape("ellipse")),
             ("Triangle quelconque", lambda: self._start_triangle(False)),
             ("Triangle rectangle", lambda: self._start_triangle(True)),
@@ -1028,6 +1062,24 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Button(self.triangle_frame, text="Appliquer au triangle", command=self._apply_triangle_properties).grid(
             row=6, column=0, columnspan=2, sticky="ew", pady=(5, 0)
         )
+        self.circle_frame = ttk.LabelFrame(panel, text="CERCLE PARAMÉTRIQUE", padding=6)
+        self.circle_vars: dict[str, tk.StringVar] = {}
+        for row, (key, label) in enumerate((
+            ("diameter", "Diamètre (mm)"),
+            ("radius", "Rayon (mm)"),
+            ("perimeter", "Périmètre (mm)"),
+            ("area", "Aire (mm²)"),
+        )):
+            ttk.Label(self.circle_frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 5), pady=1)
+            variable = tk.StringVar()
+            self.circle_vars[key] = variable
+            entry = ttk.Entry(self.circle_frame, textvariable=variable, width=12)
+            entry.grid(row=row, column=1, sticky="ew", pady=1)
+            entry.bind("<Return>", lambda _event: self._apply_circle_properties())
+        self.circle_frame.columnconfigure(1, weight=1)
+        ttk.Button(
+            self.circle_frame, text="Recalculer le cercle", command=self._apply_circle_properties
+        ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         assembly_actions = ttk.Frame(panel, style="Card.TFrame")
         self.assembly_actions = assembly_actions
         assembly_actions.pack(fill="x", pady=(0, 4))
@@ -1081,6 +1133,9 @@ class DocumentEditorWindow(tk.Toplevel):
             variable=self.show_measurement_length_var,
         ).pack(anchor="w", pady=(0, 5))
         ttk.Button(panel, text="📏 Distance / orientation", command=self._start_measurement).pack(fill="x", pady=2)
+        ttk.Button(panel, text="↔ Cote avec lignes de rappel", command=self._start_dimension_measurement).pack(fill="x", pady=2)
+        ttk.Button(panel, text="◯ Coter le cercle sélectionné", command=self._dimension_selected_circle).pack(fill="x", pady=2)
+        ttk.Button(panel, text="▧ Calculer l’aire du contour", command=self._measure_selected_area).pack(fill="x", pady=2)
         ttk.Button(panel, text="∠ Angle intérieur (3 points)", command=self._start_angle_measurement).pack(fill="x", pady=2)
         ttk.Button(panel, text="⊥ Construire un triangle rectangle", command=self._start_right_triangle).pack(fill="x", pady=2)
         ttk.Button(panel, text="Étalonner l’échelle du plan", command=self._start_scale_calibration).pack(fill="x", pady=2)
@@ -1120,7 +1175,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._properties_static_layout = [
             (widget, widget.pack_info())
             for widget in panel.pack_slaves()
-            if widget is not self.kind_label and widget is not self.triangle_frame
+            if widget not in {self.kind_label, self.triangle_frame, self.circle_frame}
         ]
         self._properties_details_visible = True
 
@@ -2111,7 +2166,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 "dash": dash,
                 "tags": tags,
             }
-            if item.shape == "ellipse":
+            if item.shape in {"ellipse", "circle"}:
                 self.canvas.create_oval(x, y, x + w, y + h, **options)
             elif item.shape == "triangle":
                 self.canvas.create_polygon(x + w / 2, y, x + w, y + h, x, y + h, **options)
@@ -2955,6 +3010,8 @@ class DocumentEditorWindow(tk.Toplevel):
             if 0 <= x <= width and 0 <= y <= height:
                 point, snap_label = self._snap_drawing_point(x, y)
                 self._draw_snap_marker(point, snap_label)
+                if self._measurement_mode == "dimension" and len(self._measurement_points) == 2:
+                    self._draw_dimension_placement_preview((x, y))
                 if snap_label:
                     self.status.configure(
                         text=f"Accrochage de mesure : {snap_label}. Cliquez pour mémoriser ce point exact."
@@ -3083,6 +3140,8 @@ class DocumentEditorWindow(tk.Toplevel):
         if self._measurement_mode:
             self._measurement_mode = ""
             self._measurement_points.clear()
+            self.canvas.delete("dimension-preview")
+            self.canvas.delete("snap-preview")
             self.canvas.configure(cursor="")
             self.status.configure(text="Mesure annulée.")
             return "break"
@@ -3154,7 +3213,11 @@ class DocumentEditorWindow(tk.Toplevel):
         return "break"
 
     def _add_shape(self, shape: str) -> None:
-        width, height = (180, 75) if shape == "arrow" else (150, 100)
+        width, height = (
+            (180, 75) if shape == "arrow"
+            else (110, 110) if shape == "circle"
+            else (150, 100)
+        )
         self._add_object(
             PageObject(
                 "shape",
@@ -5971,6 +6034,93 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.configure(cursor="crosshair")
         self.status.configure(text="Mesure : cliquez sur le premier point, puis sur le second. Échap annule.")
 
+    def _start_dimension_measurement(self) -> None:
+        self._measurement_mode = "dimension"
+        self._measurement_points.clear()
+        self.canvas.delete("dimension-preview")
+        self.canvas.configure(cursor="crosshair")
+        self.status.configure(
+            text="Cotation : cliquez deux points, arêtes ou sommets, puis placez la ligne de cote. Échap annule."
+        )
+
+    def _draw_dimension_placement_preview(self, placement: tuple[float, float]) -> None:
+        self.canvas.delete("dimension-preview")
+        if len(self._measurement_points) != 2:
+            return
+        first, second = self._measurement_points
+        geometry = dimension_line_geometry(first, second, placement)
+        if geometry is None:
+            return
+        start, end = geometry
+
+        def canvas_point(point: tuple[float, float]) -> tuple[float, float]:
+            return self.page_x + point[0] * self.zoom, self.page_y + point[1] * self.zoom
+
+        first_canvas, second_canvas = canvas_point(first), canvas_point(second)
+        start_canvas, end_canvas = canvas_point(start), canvas_point(end)
+        for anchor, endpoint in ((first_canvas, start_canvas), (second_canvas, end_canvas)):
+            self.canvas.create_line(
+                *anchor, *endpoint, fill="#E87524", dash=(4, 3),
+                tags=("dimension-preview",),
+            )
+        self.canvas.create_line(
+            *start_canvas, *end_canvas, fill="#1769AA", width=2,
+            arrow="both", tags=("dimension-preview",),
+        )
+        measured = math.dist(first, second) * 25.4 / 72 * self.document.measurement_scale
+        self.canvas.create_text(
+            (start_canvas[0] + end_canvas[0]) / 2,
+            (start_canvas[1] + end_canvas[1]) / 2 - 10,
+            text=f"{measured:.2f} mm", fill="#1769AA",
+            font=("Sans", 9, "bold"), tags=("dimension-preview",),
+        )
+
+    def _dimension_selected_circle(self) -> None:
+        if len(self.selected_indices) != 1:
+            messagebox.showinfo("Coter un cercle", "Sélectionnez un cercle.", parent=self)
+            return
+        item = self.document.objects[next(iter(self.selected_indices))]
+        if item.kind != "shape" or item.shape != "circle":
+            messagebox.showinfo(
+                "Coter un cercle", "L’objet sélectionné n’est pas un cercle paramétrique.", parent=self
+            )
+            return
+        left = (item.x, item.y + item.height / 2)
+        right = (item.x + item.width, item.y + item.height / 2)
+        offset = max(18.0, item.height * 0.18)
+        start, end = (left[0], left[1] - offset), (right[0], right[1] - offset)
+        diameter = abs(item.width) * 25.4 / 72 * self.document.measurement_scale
+        self._add_object(PageObject(
+            "dimension", self.current_page, start[0], start[1],
+            end[0] - start[0], end[1] - start[1], text=f"Ø {diameter:.2f}",
+            border_color="#1769AA", border_width=1,
+            points=[[left[0], left[1]], [right[0], right[1]]],
+        ))
+        self.status.configure(text=f"Cote de diamètre créée : Ø {diameter:.2f} mm.")
+
+    def _measure_selected_area(self) -> None:
+        if len(self.selected_indices) != 1:
+            messagebox.showinfo("Calculer l’aire", "Sélectionnez un contour fermé.", parent=self)
+            return
+        item = self.document.objects[next(iter(self.selected_indices))]
+        outline = self._closed_outline(item)
+        if not outline:
+            messagebox.showinfo(
+                "Calculer l’aire", "Le contour sélectionné n’est pas fermé.", parent=self
+            )
+            return
+        scale = 25.4 / 72 * self.document.measurement_scale
+        area = polygon_area(outline) * scale * scale
+        result = f"Aire du contour : {area:.2f} mm²"
+        self.measurement_result.configure(text=result)
+        self.status.configure(text=result)
+        if self.write_measurement_var.get():
+            self._write_measurement_label(
+                f"A = {area:.2f} mm²",
+                item.x + item.width / 2 + 8,
+                item.y + item.height / 2 - 22,
+            )
+
     def _start_angle_measurement(self) -> None:
         self._measurement_mode = "angle"
         self._measurement_points.clear()
@@ -6070,14 +6220,20 @@ class DocumentEditorWindow(tk.Toplevel):
                 f"Trait : {math.hypot(item.width, item.height) * scale:.2f} mm  •  "
                 f"angle {self._object_angle(item):.1f}°"
             )
-        if item.kind == "shape" and item.shape == "ellipse":
+        if item.kind == "shape" and item.shape in {"ellipse", "circle"}:
             width, height = abs(item.width) * scale, abs(item.height) * scale
             if abs(width - height) <= max(width, height) * 0.01:
-                return f"Cercle : Ø {width:.2f} mm  •  rayon {width / 2:.2f} mm  •  circonférence {math.pi * width:.2f} mm"
+                return (
+                    f"Cercle : Ø {width:.2f} mm  •  rayon {width / 2:.2f} mm"
+                    f"  •  circonférence {math.pi * width:.2f} mm"
+                    f"  •  aire {math.pi * (width / 2) ** 2:.2f} mm²"
+                )
             return f"Ellipse : {width:.2f} × {height:.2f} mm"
         if item.kind == "polyline" and len(item.points) >= 2:
             length = sum(math.dist(first, second) for first, second in pairwise(item.points)) * scale
-            return f"Polyligne : longueur cumulée {length:.2f} mm  •  {len(item.points) - 1} segment(s)"
+            outline = self._closed_outline(item)
+            area = f"  •  aire {polygon_area(outline) * scale * scale:.2f} mm²" if outline else ""
+            return f"Polyligne : longueur cumulée {length:.2f} mm  •  {len(item.points) - 1} segment(s){area}"
         if item.kind in {"shape", "image", "text", "table", "mask"}:
             return f"Dimensions : {abs(item.width) * scale:.2f} × {abs(item.height) * scale:.2f} mm"
         return ""
@@ -6107,6 +6263,31 @@ class DocumentEditorWindow(tk.Toplevel):
         width, height = self._page_size()
         if not (0 <= x <= width and 0 <= y <= height):
             return
+        if self._measurement_mode == "dimension" and len(self._measurement_points) == 2:
+            geometry = dimension_line_geometry(
+                self._measurement_points[0], self._measurement_points[1], (x, y)
+            )
+            if geometry is None:
+                self.status.configure(text="Les deux références doivent être différentes.")
+                return
+            first, second = self._measurement_points
+            start, end = geometry
+            measured = math.dist(first, second) * 25.4 / 72 * self.document.measurement_scale
+            self._measurement_mode = ""
+            self._measurement_points.clear()
+            self.canvas.delete("dimension-preview")
+            self.canvas.delete("snap-preview")
+            self.canvas.configure(cursor="")
+            self._add_object(PageObject(
+                "dimension", self.current_page, start[0], start[1],
+                end[0] - start[0], end[1] - start[1], text=f"{measured:.2f}",
+                border_color="#1769AA", border_width=1,
+                points=[[first[0], first[1]], [second[0], second[1]]],
+            ))
+            result = f"Cote créée : {measured:.2f} mm."
+            self.measurement_result.configure(text=result)
+            self.status.configure(text=result)
+            return
         snapped, snap_label = self._snap_drawing_point(x, y)
         self._measurement_points.append(snapped)
         if self._measurement_mode == "angle" and len(self._measurement_points) < 3:
@@ -6115,6 +6296,11 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if self._measurement_mode != "angle" and len(self._measurement_points) == 1:
             self.status.configure(text="Premier point mémorisé. Cliquez sur le second point.")
+            return
+        if self._measurement_mode == "dimension" and len(self._measurement_points) == 2:
+            self.status.configure(
+                text="Références mémorisées. Déplacez la souris puis cliquez pour placer la cote."
+            )
             return
         if self._measurement_mode == "angle":
             first, vertex, second = self._measurement_points[:3]
@@ -6209,7 +6395,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if item.kind != "shape" or item.shape == "arrow":
             return []
         x, y, width, height = item.x, item.y, item.width, item.height
-        if item.shape == "ellipse":
+        if item.shape in {"ellipse", "circle"}:
             center_x, center_y = x + width / 2, y + height / 2
             return [
                 (
@@ -7866,6 +8052,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     widget.pack_forget()
                 self._properties_details_visible = False
             self.triangle_frame.pack_forget()
+            self.circle_frame.pack_forget()
             self.kind_label.configure(text="Sélectionnez un objet pour afficher ses propriétés.")
             self.geometry_help.configure(text="")
             self.shape_geometry_label.configure(text="")
@@ -7903,6 +8090,12 @@ class DocumentEditorWindow(tk.Toplevel):
             self._update_triangle_property_fields(item)
         else:
             self.triangle_frame.pack_forget()
+        is_circle = item.kind == "shape" and item.shape == "circle"
+        if is_circle:
+            self.circle_frame.pack(fill="x", pady=(4, 8), before=self.assembly_actions)
+            self._update_circle_property_fields(item)
+        else:
+            self.circle_frame.pack_forget()
         selected_vertex = (
             self._selected_vertex
             if self._selected_vertex is not None
@@ -7912,6 +8105,8 @@ class DocumentEditorWindow(tk.Toplevel):
             else None
         )
         names = {"text": "Zone de texte", "image": "Image", "mask": "Masque", "table": "Tableau", "line": "Trait", "polyline": "Polyligne", "chart": "Graphique", "shape": "Forme"}
+        if is_circle:
+            names["shape"] = "Cercle paramétrique"
         if item.kind == "polyline" and item.shape in {"triangle_geometry", "right_triangle_geometry"}:
             names["polyline"] = (
                 "Triangle rectangle verrouillé"
@@ -8017,6 +8212,13 @@ class DocumentEditorWindow(tk.Toplevel):
                 f"{position}\nPérimètre : {metrics['ab'] + metrics['bc'] + metrics['ca']:.2f} mm"
                 "  •  détails modifiables ci-dessous"
             )
+        if item.kind == "shape" and item.shape == "circle":
+            diameter = abs(item.width) * scale
+            return (
+                f"{position}\nCercle : Ø {diameter:.2f} mm  •  rayon {diameter / 2:.2f} mm"
+                f"  •  périmètre {math.pi * diameter:.2f} mm"
+                f"  •  aire {math.pi * (diameter / 2) ** 2:.2f} mm²"
+            )
         if item.kind == "shape" and item.shape == "ellipse":
             horizontal = abs(item.width) * scale
             vertical = abs(item.height) * scale
@@ -8030,6 +8232,56 @@ class DocumentEditorWindow(tk.Toplevel):
                 f"{abs(item.height) * scale:.2f} mm  •  Rotation : {item.rotation:g}°"
             )
         return position
+
+    def _update_circle_property_fields(self, item: PageObject) -> None:
+        diameter = abs(item.width) * 25.4 / 72
+        values = {
+            "diameter": diameter,
+            "radius": diameter / 2,
+            "perimeter": math.pi * diameter,
+            "area": math.pi * (diameter / 2) ** 2,
+        }
+        self._circle_property_originals = values
+        for key, value in values.items():
+            self.circle_vars[key].set(f"{value:.2f}")
+
+    def _apply_circle_properties(self) -> None:
+        if self.selected is None:
+            return
+        item = self.document.objects[self.selected]
+        if item.kind != "shape" or item.shape != "circle":
+            return
+        try:
+            requested = {
+                key: float(variable.get().replace(",", "."))
+                for key, variable in self.circle_vars.items()
+            }
+        except ValueError:
+            messagebox.showerror("Cercle", "Utilisez uniquement des nombres.", parent=self)
+            return
+        changed = next(
+            (key for key, value in requested.items() if abs(value - self._circle_property_originals.get(key, value)) > 0.005),
+            None,
+        )
+        if changed is None:
+            return
+        value = requested[changed]
+        if value <= 0:
+            messagebox.showerror("Cercle", "La valeur doit être positive.", parent=self)
+            return
+        diameter = (
+            value if changed == "diameter"
+            else value * 2 if changed == "radius"
+            else value / math.pi if changed == "perimeter"
+            else 2 * math.sqrt(value / math.pi)
+        )
+        self._checkpoint()
+        center_x, center_y = item.x + item.width / 2, item.y + item.height / 2
+        size = diameter * 72 / 25.4
+        item.x, item.y = center_x - size / 2, center_y - size / 2
+        item.width = item.height = size
+        self.status.configure(text=f"Cercle recalculé : Ø {diameter:.2f} mm.")
+        self._render()
 
     @staticmethod
     def _triangle_absolute_points(item: PageObject) -> list[tuple[float, float]]:
@@ -8293,6 +8545,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 elif key in {"width", "height"} and item.kind != "line":
                     value = max(6, value)
                 setattr(item, key, value)
+            if item.kind == "shape" and item.shape == "circle":
+                item.height = item.width
             if item.kind == "polyline" and old_width and old_height:
                 item.points = [
                     [point[0] * item.width / old_width, point[1] * item.height / old_height]

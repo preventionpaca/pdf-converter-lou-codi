@@ -428,7 +428,7 @@ def _draw_object(
 def _draw_shape(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject) -> None:
     shape = page.new_shape()
     x0, y0, x1, y1 = rectangle.x0, rectangle.y0, rectangle.x1, rectangle.y1
-    if item.shape == "ellipse":
+    if item.shape in {"ellipse", "circle"}:
         shape.draw_oval(rectangle)
     elif item.shape == "triangle":
         shape.draw_polyline([(x0 + rectangle.width / 2, y0), (x1, y1), (x0, y1), (x0 + rectangle.width / 2, y0)])
