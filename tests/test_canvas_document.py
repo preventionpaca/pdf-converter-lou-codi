@@ -100,6 +100,30 @@ def test_associative_dimension_follows_its_referenced_objects() -> None:
     assert dimension.text == "52.92"
 
 
+def test_dimension_snap_detects_circle_center_midpoint_and_intersection() -> None:
+    circle = PageObject("shape", 0, 100, 100, 80, 80, shape="circle")
+    midpoint_line = PageObject("line", 0, 20, 250, 80, 0)
+    horizontal = PageObject("line", 0, 100, 320, 120, 0)
+    vertical = PageObject("line", 0, 160, 280, 0, 80)
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[circle, midpoint_line, horizontal, vertical])
+    editor.current_page = 0
+    editor.zoom = 1.0
+
+    point, label, reference = editor._dimension_reference_at(140, 140)
+    assert point == (140.0, 140.0)
+    assert label == "centre"
+    assert reference["kind"] == "center"
+
+    point, label, reference = editor._dimension_reference_at(60, 250)
+    assert point == (60.0, 250.0)
+    assert label == "milieu"
+    point, label, reference = editor._dimension_reference_at(160, 320)
+    assert point == (160.0, 320.0)
+    assert label == "intersection"
+    assert reference["kind"] == "intersection"
+
+
 class _StatusRecorder:
     def __init__(self) -> None:
         self.text = ""

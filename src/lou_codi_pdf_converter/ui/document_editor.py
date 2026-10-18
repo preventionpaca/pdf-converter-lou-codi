@@ -1009,6 +1009,28 @@ class DocumentEditorWindow(tk.Toplevel):
         xbar.grid(row=1, column=0, sticky="ew")
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
+        self.shapes_palette = ttk.LabelFrame(canvas_frame, text="FORMES", padding=5)
+        palette_actions = (
+            ("▭", lambda: self._start_rectangle(False), "Rectangle orienté"),
+            ("□", lambda: self._start_rectangle(True), "Carré orienté"),
+            ("○", lambda: self._add_shape("circle"), "Cercle paramétrique"),
+            ("⬭", lambda: self._add_shape("ellipse"), "Ellipse"),
+            ("△", lambda: self._start_triangle(False), "Triangle quelconque"),
+            ("◿", lambda: self._start_triangle(True), "Triangle rectangle"),
+            ("⌔", lambda: self._add_shape("trapezoid"), "Trapèze"),
+            ("➜", lambda: self._add_shape("arrow"), "Flèche"),
+            ("／", self._add_line, "Trait libre"),
+            ("⌁", self._start_polyline, "Polyligne / profil"),
+        )
+        for index, (symbol, command, help_text) in enumerate(palette_actions):
+            button = ttk.Button(
+                self.shapes_palette, text=symbol, command=command,
+                width=3, style="EditorTool.TButton",
+            )
+            button.grid(row=index // 2, column=index % 2, padx=2, pady=2, sticky="ew")
+            self._add_tooltip(button, help_text)
+        self.shapes_palette.place(x=10, y=10, anchor="nw")
+        self.shapes_palette.lift()
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
@@ -2952,13 +2974,23 @@ class DocumentEditorWindow(tk.Toplevel):
         self, x: float, y: float
     ) -> tuple[tuple[float, float], str, dict[str, object]]:
         threshold = max(4.0, 11.0 / self.zoom)
-        candidates: list[tuple[float, tuple[float, float], str, dict[str, object]]] = []
+        candidates: list[
+            tuple[float, int, tuple[float, float], str, dict[str, object]]
+        ] = []
+        edge_values: list[tuple[PageObject, int, Segment]] = []
         for item in self.document.objects:
             if item.kind == "dimension" or self.current_page not in pages_for_object(
                 item, self.document.page_count
             ):
                 continue
+            if item.kind == "shape" and item.shape in {"circle", "ellipse"}:
+                center = (item.x + item.width / 2, item.y + item.height / 2)
+                candidates.append((
+                    math.dist((x, y), center), 0, center, "centre",
+                    {"kind": "center", "object_id": item.object_id},
+                ))
             for edge_index, edge in enumerate(self._object_edges(item)):
+                edge_values.append((item, edge_index, edge))
                 dx, dy = edge.x2 - edge.x1, edge.y2 - edge.y1
                 squared_length = dx * dx + dy * dy
                 if squared_length <= 1e-12:
@@ -2966,23 +2998,92 @@ class DocumentEditorWindow(tk.Toplevel):
                 t = max(0.0, min(1.0, ((x - edge.x1) * dx + (y - edge.y1) * dy) / squared_length))
                 point = (edge.x1 + t * dx, edge.y1 + t * dy)
                 distance = math.dist((x, y), point)
-                label = "sommet" if t <= 0.02 or t >= 0.98 else "bord"
                 candidates.append((
-                    distance,
-                    point,
-                    label,
-                    {"object_id": item.object_id, "edge": edge_index, "t": t},
+                    distance, 4, point, "bord",
+                    {"kind": "edge", "object_id": item.object_id, "edge": edge_index, "t": t},
+                ))
+                for endpoint_t, endpoint in ((0.0, (edge.x1, edge.y1)), (1.0, (edge.x2, edge.y2))):
+                    candidates.append((
+                        math.dist((x, y), endpoint), 1, endpoint, "sommet",
+                        {"kind": "edge", "object_id": item.object_id, "edge": edge_index, "t": endpoint_t},
+                    ))
+                midpoint = ((edge.x1 + edge.x2) / 2, (edge.y1 + edge.y2) / 2)
+                candidates.append((
+                    math.dist((x, y), midpoint), 2, midpoint, "milieu",
+                    {"kind": "edge", "object_id": item.object_id, "edge": edge_index, "t": 0.5},
+                ))
+        for first_index, (first_item, first_edge_index, first_edge) in enumerate(edge_values):
+            for second_item, second_edge_index, second_edge in edge_values[first_index + 1 :]:
+                if first_item.object_id == second_item.object_id:
+                    continue
+                crossing = segment_intersection(first_edge, second_edge)
+                if crossing is None:
+                    continue
+                first_reference = {
+                    "kind": "edge", "object_id": first_item.object_id,
+                    "edge": first_edge_index, "t": self._segment_parameter(first_edge, crossing),
+                }
+                second_reference = {
+                    "kind": "edge", "object_id": second_item.object_id,
+                    "edge": second_edge_index, "t": self._segment_parameter(second_edge, crossing),
+                }
+                candidates.append((
+                    math.dist((x, y), crossing), 0, crossing, "intersection",
+                    {"kind": "intersection", "first": first_reference, "second": second_reference},
                 ))
         if not candidates:
             return (x, y), "", {}
-        distance, point, label, reference = min(candidates, key=lambda candidate: candidate[0])
+        distance, _priority, point, label, reference = min(
+            candidates, key=lambda candidate: (candidate[0], candidate[1])
+        )
         if distance <= threshold:
             return point, label, reference
         return (x, y), "", {}
 
+    @staticmethod
+    def _segment_parameter(edge: Segment, point: tuple[float, float]) -> float:
+        dx, dy = edge.x2 - edge.x1, edge.y2 - edge.y1
+        squared_length = dx * dx + dy * dy
+        if squared_length <= 1e-12:
+            return 0.0
+        return max(
+            0.0,
+            min(1.0, ((point[0] - edge.x1) * dx + (point[1] - edge.y1) * dy) / squared_length),
+        )
+
     def _resolve_dimension_reference(
         self, reference: dict[str, object]
     ) -> tuple[float, float] | None:
+        kind = str(reference.get("kind", "edge"))
+        if kind == "intersection":
+            first = reference.get("first")
+            second = reference.get("second")
+            if not isinstance(first, dict) or not isinstance(second, dict):
+                return None
+            first_edge = self._resolve_dimension_edge(first)
+            second_edge = self._resolve_dimension_edge(second)
+            if first_edge is None or second_edge is None:
+                return None
+            return segment_intersection(first_edge, second_edge)
+        object_id = str(reference.get("object_id", ""))
+        item = next(
+            (candidate for candidate in self.document.objects if candidate.object_id == object_id),
+            None,
+        )
+        if item is None:
+            return None
+        if kind == "center":
+            return item.x + item.width / 2, item.y + item.height / 2
+        edge = self._resolve_dimension_edge(reference)
+        if edge is None:
+            return None
+        t = max(0.0, min(1.0, float(reference.get("t", 0.0))))
+        return (
+            edge.x1 + (edge.x2 - edge.x1) * t,
+            edge.y1 + (edge.y2 - edge.y1) * t,
+        )
+
+    def _resolve_dimension_edge(self, reference: dict[str, object]) -> Segment | None:
         object_id = str(reference.get("object_id", ""))
         item = next(
             (candidate for candidate in self.document.objects if candidate.object_id == object_id),
@@ -2994,12 +3095,7 @@ class DocumentEditorWindow(tk.Toplevel):
         edge_index = int(reference.get("edge", -1))
         if not 0 <= edge_index < len(edges):
             return None
-        edge = edges[edge_index]
-        t = max(0.0, min(1.0, float(reference.get("t", 0.0))))
-        return (
-            edge.x1 + (edge.x2 - edge.x1) * t,
-            edge.y1 + (edge.y2 - edge.y1) * t,
-        )
+        return edges[edge_index]
 
     def _update_associative_dimensions(self) -> None:
         for item in self.document.objects:
@@ -3142,7 +3238,12 @@ class DocumentEditorWindow(tk.Toplevel):
             y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
             width, height = self._page_size()
             if 0 <= x <= width and 0 <= y <= height:
-                point, snap_label = self._snap_drawing_point(x, y)
+                if self._measurement_mode == "dimension" and len(self._measurement_points) < 2:
+                    point, snap_label, _reference = self._dimension_reference_at(x, y)
+                elif self._measurement_mode == "dimension":
+                    point, snap_label = (x, y), ""
+                else:
+                    point, snap_label = self._snap_drawing_point(x, y)
                 self._draw_snap_marker(point, snap_label)
                 if self._measurement_mode == "dimension" and len(self._measurement_points) == 2:
                     self._draw_dimension_placement_preview((x, y))
