@@ -533,7 +533,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.current_page = 0
         self.selected: int | None = None
         self.selected_indices: set[int] = set()
-        self.zoom = 0.85
+        self.zoom = 1.15
         self.undo_stack: list[CanvasDocument] = []
         self.redo_stack: list[CanvasDocument] = []
         self._background_image: ImageTk.PhotoImage | None = None
@@ -1052,6 +1052,11 @@ class DocumentEditorWindow(tk.Toplevel):
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
         self.palette_host = canvas_frame
+        canvas_frame.bind(
+            "<Configure>",
+            lambda _event: self.after_idle(self._redock_visible_contextual_palettes),
+            add="+",
+        )
         palette_definitions = {
             "shapes": ("FORMES", (
                 ("▭", lambda: self._start_rectangle(False), "Rectangle orienté"),
@@ -1375,9 +1380,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self.page_label.pack(side="left", padx=10)
         self._buttons(bottom, (("Page suivante ▶", lambda: self._change_page(1)), ("+ Page blanche", self._add_blank_page)))
         ttk.Button(bottom, text="−", command=lambda: self._set_zoom(-0.1)).pack(side="right")
-        self.zoom_label = ttk.Label(bottom, text="85 %", style="Body.TLabel")
+        self.zoom_label = ttk.Label(bottom, text="115 %", style="Body.TLabel")
         self.zoom_label.pack(side="right", padx=7)
         ttk.Button(bottom, text="+", command=lambda: self._set_zoom(0.1)).pack(side="right")
+        ttk.Button(bottom, text="Page entière", command=self._zoom_full_page).pack(side="right", padx=(8, 0))
+        ttk.Button(bottom, text="Largeur de page", command=self._zoom_page_width).pack(side="right", padx=(8, 0))
         ttk.Label(bottom, text="Zoom", style="Body.TLabel").pack(side="right", padx=5)
         self.status = ttk.Label(self, text="Nouvelle page A4", background=BACKGROUND)
         self.status.pack(fill="x", padx=18, pady=(2, 7))
@@ -1759,6 +1766,30 @@ class DocumentEditorWindow(tk.Toplevel):
             palette.lift()
         elif palette.winfo_manager():
             palette.place_forget()
+
+    def _dock_contextual_palettes(self, visible: set[str]) -> None:
+        """Stack contextual palettes against the right edge of the drawing area."""
+        self.palette_host.update_idletasks()
+        y = 10
+        for key in ("formatting", "shape_style", "technical"):
+            if key not in visible:
+                continue
+            palette = self.tool_palettes[key]
+            palette.update_idletasks()
+            x = max(10, self.palette_host.winfo_width() - palette.winfo_reqwidth() - 18)
+            self.palette_positions[key] = (x, y)
+            palette.place(x=x, y=y, anchor="nw")
+            palette.lift()
+            y += palette.winfo_reqheight() + 8
+
+    def _redock_visible_contextual_palettes(self) -> None:
+        visible = {
+            key
+            for key in ("formatting", "shape_style", "technical")
+            if self.palette_visible_vars[key].get()
+        }
+        if visible:
+            self._dock_contextual_palettes(visible)
 
     def _toggle_properties_panel(self) -> None:
         visible = self.properties_visible.get()
@@ -2342,6 +2373,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 variable = self.palette_visible_vars[key]
                 variable.set(key in contextual)
                 self._set_palette_visibility(key)
+            self._dock_contextual_palettes(contextual)
             self._last_palette_context = palette_context
 
     def _draw_rulers(self, width: float, height: float) -> None:
@@ -2374,7 +2406,16 @@ class DocumentEditorWindow(tk.Toplevel):
             outline = "#1769AA" if selected else "#72879C"
         tags = (tag, "object")
         if item.kind == "mask":
-            self.canvas.create_rectangle(x, y, x + w, y + h, fill=item.fill, outline=outline, width=3 if selected else 1, tags=tags)
+            fill = "" if item.fill.lower() == "transparent" else item.fill
+            border = item.border_color if item.border_width > 0 else outline if selected else ""
+            border_width = (
+                max(1, round(item.border_width * self.zoom))
+                if item.border_width > 0 else 3 if selected else 0
+            )
+            self.canvas.create_rectangle(
+                x, y, x + w, y + h, fill=fill, outline=border,
+                width=border_width, tags=tags,
+            )
         elif item.kind == "image":
             try:
                 with Image.open(item.image_path) as source:
@@ -5892,6 +5933,14 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _set_object_color(self, attribute: str, value: str) -> None:
         if attribute == "fill" and value.lower() == "transparent":
+            if (
+                self.selected is not None
+                and self.document.objects[self.selected].kind == "mask"
+            ):
+                self.status.configure(
+                    text="Un masque doit conserver un fond visible. Utilisez Supprimer pour l’enlever."
+                )
+                return
             self._mutate(lambda item: setattr(item, "fill", "transparent"))
             return
         normalized = value if value.startswith("#") else f"#{value}"
@@ -9266,6 +9315,31 @@ class DocumentEditorWindow(tk.Toplevel):
         self._commit_inline_editor(render=False)
         self.zoom = max(0.25, min(4.0, self.zoom + change))
         self._render()
+
+    def _zoom_page_width(self) -> None:
+        self._commit_inline_editor(render=False)
+        self.canvas.update_idletasks()
+        available = max(100, self.canvas.winfo_width() - 70)
+        self.zoom = max(0.25, min(4.0, available / self.document.page_width))
+        self._render()
+        self.canvas.xview_moveto(0)
+
+    def _zoom_full_page(self) -> None:
+        self._commit_inline_editor(render=False)
+        self.canvas.update_idletasks()
+        available_width = max(100, self.canvas.winfo_width() - 70)
+        available_height = max(100, self.canvas.winfo_height() - 70)
+        self.zoom = max(
+            0.25,
+            min(
+                4.0,
+                available_width / self.document.page_width,
+                available_height / self.document.page_height,
+            ),
+        )
+        self._render()
+        self.canvas.xview_moveto(0)
+        self.canvas.yview_moveto(0)
 
     def _mouse_zoom(
         self, event: tk.Event[tk.Misc], linux_direction: int | None = None

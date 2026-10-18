@@ -247,7 +247,14 @@ def _draw_object(
 ) -> None:
     rectangle = pymupdf.Rect(item.x, item.y, item.x + item.width, item.y + item.height)
     if item.kind == "mask":
-        page.draw_rect(rectangle, color=_rgb(item.fill), fill=_rgb(item.fill), overlay=True)
+        fill = "#FFFFFF" if item.fill.lower() in {"", "none", "transparent"} else item.fill
+        page.draw_rect(
+            rectangle,
+            color=_rgb(item.border_color) if item.border_width > 0 else _rgb(fill),
+            fill=_rgb(fill),
+            width=max(0.5, item.border_width) if item.border_width > 0 else 0.5,
+            overlay=True,
+        )
     elif item.kind == "origin":
         color = (0.78, 0.12, 0.12)
         page.draw_line(

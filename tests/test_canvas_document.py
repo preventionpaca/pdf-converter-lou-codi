@@ -297,6 +297,18 @@ def test_object_level_survives_project_roundtrip(tmp_path: Path) -> None:
     assert CanvasDocument.load(target).objects[0].level == 1000
 
 
+def test_legacy_transparent_mask_exports_as_visible_white_mask(tmp_path: Path) -> None:
+    target = tmp_path / "masque.pdf"
+    document = CanvasDocument(
+        objects=[PageObject("mask", 0, 10, 10, 80, 40, fill="transparent")]
+    )
+
+    export_canvas_pdf(document, target)
+
+    assert target.is_file()
+    assert target.stat().st_size > 0
+
+
 def test_table_cells_keep_multiline_text_links_and_images(tmp_path: Path) -> None:
     target = tmp_path / "tableau.loucodi-document"
     source_image = tmp_path / "exemple.png"
