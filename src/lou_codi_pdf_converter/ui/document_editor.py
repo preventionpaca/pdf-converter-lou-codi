@@ -608,8 +608,9 @@ class DocumentEditorWindow(tk.Toplevel):
         }
         self.tool_palettes: dict[str, tk.Widget] = {}
         self.palette_positions = {
-            "shapes": (10, 10), "media": (84, 10), "table": (158, 10),
-            "measurements": (232, 10), "formatting": (306, 10),
+            "shapes": (10, 10), "measurements": (10, 440),
+            "table": (108, 10), "media": (108, 530),
+            "formatting": (206, 10),
             "shape_style": (454, 10), "technical": (602, 10),
         }
         self._palette_drag: tuple[str, int, int, int, int] | None = None
@@ -662,6 +663,18 @@ class DocumentEditorWindow(tk.Toplevel):
             padx=12,
             pady=4,
         ).pack(side="right")
+        tk.Button(
+            header,
+            text="▤  Panneaux",
+            command=self._toggle_default_palettes,
+            bg="#285886",
+            fg="white",
+            activebackground="#3474AD",
+            activeforeground="white",
+            relief="flat",
+            padx=12,
+            pady=4,
+        ).pack(side="right", padx=(0, 8))
         tk.Button(
             header,
             text="▦  Ruban",
@@ -1110,7 +1123,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("👤", self._add_image, "Insérer une image"),
                 ("🔗", self._set_selected_hyperlink, "Ajouter ou modifier un hyperlien"),
                 ("▱", self._add_mask, "Insérer un masque blanc"),
-                ("✂", self._crop_selected_image, "Rogner l’image sélectionnée"),
+                ("┌┄", self._crop_selected_image, "Rogner l’image sélectionnée"),
                 ("↻", lambda: self._rotate_selected(1), "Faire pivoter"),
             )),
             "shape_style": ("APPARENCE FORME", (
@@ -1653,11 +1666,6 @@ class DocumentEditorWindow(tk.Toplevel):
             font=("Sans", 8, "bold"), padx=5, pady=2,
         )
         title_label.pack(side="left", fill="x", expand=True)
-        tk.Button(
-            header, text="×", command=lambda: self._close_tool_palette(key),
-            bg="#193F6A", fg="white", activebackground="#C74848",
-            activeforeground="white", relief="flat", padx=5, pady=0,
-        ).pack(side="right")
         tools = ttk.Frame(palette)
         tools.pack(fill="x")
         for index, (symbol, command, help_text) in enumerate(actions):
@@ -1730,6 +1738,16 @@ class DocumentEditorWindow(tk.Toplevel):
     def _close_tool_palette(self, key: str) -> None:
         self.palette_visible_vars[key].set(False)
         self._set_palette_visibility(key)
+
+    def _toggle_default_palettes(self) -> None:
+        keys = ("shapes", "measurements", "table", "media")
+        show = not any(self.palette_visible_vars[key].get() for key in keys)
+        for key in keys:
+            self.palette_visible_vars[key].set(show)
+            self._set_palette_visibility(key)
+        self.status.configure(
+            text="Panneaux principaux affichés." if show else "Panneaux principaux masqués."
+        )
 
     def _set_palette_visibility(self, key: str) -> None:
         palette = self.tool_palettes.get(key)
