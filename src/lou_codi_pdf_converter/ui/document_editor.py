@@ -3939,6 +3939,16 @@ class DocumentEditorWindow(tk.Toplevel):
             )
             self.status.configure(text=f"Rotation guidée : {self._rotation_drag_delta:g}°")
             return
+        if (
+            (self._drawing_rectangle and self._rectangle_points)
+            or (self._drawing_triangle and self._triangle_points)
+            or (self._drawing_line and self._line_points)
+            or (self._drawing_polyline and self._polyline_points)
+        ):
+            # A drawing gesture must preview identically whether the user moves the
+            # pointer after releasing the click or keeps the mouse button pressed.
+            self._polyline_motion(event)
+            return
         if self._drawing_text and self._text_draw_start is not None:
             start_x, start_y = self._text_draw_start
             page_width, page_height = self._page_size()
