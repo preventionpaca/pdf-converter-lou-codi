@@ -108,6 +108,20 @@ def objects_bounds(objects: list[PageObject]) -> tuple[float, float, float, floa
     return left, top, right - left, bottom - top
 
 
+def snapped_rotation_delta(start_angle: float, current_angle: float, step: float) -> float:
+    """Return the shortest signed rotation, snapped to the configured angular step."""
+    delta = (current_angle - start_angle + 180.0) % 360.0 - 180.0
+    increment = max(0.1, abs(step))
+    return round(delta / increment) * increment
+
+
+def rotation_step_for_objects(objects: list[PageObject], configured_step: float) -> float:
+    """Keep layout-rich objects on quarter turns while geometry remains freely stepped."""
+    if any(item.kind in {"text", "table", "chart", "mask"} for item in objects):
+        return 90.0
+    return max(0.1, abs(configured_step))
+
+
 def spreadsheet_column_name(index: int) -> str:
     name = ""
     index += 1
@@ -424,6 +438,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._drag_origin: tuple[float, float, float, float] | None = None
         self._resize_origin: tuple[str, float, float, float, float, float, float] | None = None
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
+        self._rotation_drag_origin: tuple[float, float, float] | None = None
+        self._rotation_drag_delta = 0.0
         self._vertex_drag_origin: tuple[int, int, list[list[float]]] | None = None
         self._selected_vertex: tuple[int, int] | None = None
         self._marquee_origin: tuple[float, float] | None = None
@@ -1813,6 +1829,28 @@ class DocumentEditorWindow(tk.Toplevel):
                 outline="white",
                 tags=("assembly-resize", "resize"),
             )
+        if self.selected_indices:
+            rotation_objects = [
+                self.document.objects[index]
+                for index in expanded_group_indices(self.document.objects, self.selected_indices)
+            ]
+            left, top, rotation_width, rotation_height = objects_bounds(rotation_objects)
+            center_x = self.page_x + (left + rotation_width / 2) * self.zoom
+            top_y = self.page_y + top * self.zoom
+            handle_y = top_y - 30
+            self.canvas.create_line(
+                center_x, top_y, center_x, handle_y + 8,
+                fill="#1769AA", width=2, tags=("rotation-decoration",),
+            )
+            self.canvas.create_oval(
+                center_x - 9, handle_y - 9, center_x + 9, handle_y + 9,
+                fill="#FFFFFF", outline="#1769AA", width=2,
+                tags=("rotation-handle",),
+            )
+            self.canvas.create_text(
+                center_x, handle_y, text="↻", fill="#1769AA",
+                font=("Sans", 11, "bold"), tags=("rotation-handle",),
+            )
         if self._pending_text_link_id:
             self.canvas.create_rectangle(
                 self.page_x,
@@ -2264,25 +2302,30 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
         """Render and clip a text frame exactly inside its visible rectangle."""
-        transparent = item.fill.lower() in {"", "none", "transparent"}
-        image = Image.new("RGBA", (width, height), (255, 255, 255, 0)) if transparent else Image.new("RGB", (width, height), item.fill)
+        quarter_turn = int(item.rotation) % 180 == 90
+        render_item = copy.copy(item)
+        render_width, render_height = (height, width) if quarter_turn else (width, height)
+        if quarter_turn:
+            render_item.width, render_item.height = item.height, item.width
+        transparent = render_item.fill.lower() in {"", "none", "transparent"}
+        image = Image.new("RGBA", (render_width, render_height), (255, 255, 255, 0)) if transparent else Image.new("RGB", (render_width, render_height), render_item.fill)
         draw = ImageDraw.Draw(image)
-        size = max(7, round(item.font_size * self.zoom))
-        suffix = "-BoldOblique" if item.bold and item.italic else "-Bold" if item.bold else "-Oblique" if item.italic else ""
-        family = "DejaVuSansMono" if item.font_family == "Monospace" else "DejaVuSerif" if item.font_family == "Serif" else "DejaVuSans"
+        size = max(7, round(render_item.font_size * self.zoom))
+        suffix = "-BoldOblique" if render_item.bold and render_item.italic else "-Bold" if render_item.bold else "-Oblique" if render_item.italic else ""
+        family = "DejaVuSansMono" if render_item.font_family == "Monospace" else "DejaVuSerif" if render_item.font_family == "Serif" else "DejaVuSans"
         try:
             font = ImageFont.truetype(f"{family}{suffix}.ttf", size)
         except OSError:
             font = ImageFont.load_default()
-        lines = wrapped_text_lines(text, item)
-        line_height = text_frame_line_height(item) * self.zoom
-        visible_lines = text_frame_line_capacity(item)
+        lines = wrapped_text_lines(text, render_item)
+        line_height = text_frame_line_height(render_item) * self.zoom
+        visible_lines = text_frame_line_capacity(render_item)
         search_from = 0
         for row, line in enumerate(lines[:visible_lines]):
             py = 4 * self.zoom + row * line_height
             length = draw.textlength(line, font=font)
             padding = TEXT_FRAME_HORIZONTAL_PADDING * self.zoom
-            px = padding if item.align in {"left", "justify"} else (width - length) / 2 if item.align == "center" else width - length - padding
+            px = padding if render_item.align in {"left", "justify"} else (render_width - length) / 2 if render_item.align == "center" else render_width - length - padding
             line_start = text.find(line, search_from) if line else search_from
             if line_start < 0:
                 line_start = search_from
@@ -2301,24 +2344,29 @@ class DocumentEditorWindow(tk.Toplevel):
                     and link.get("hyperlink")
                     for link in item.text_links
                 )
-                color = "#1769AA" if linked else item.color
+                color = "#1769AA" if linked else render_item.color
                 draw.text((cursor_x, py), fragment, font=font, fill=color)
                 fragment_width = draw.textlength(fragment, font=font)
-                if linked or item.underline:
-                    underline_y = min(height - 1, py + size + 2)
+                if linked or render_item.underline:
+                    underline_y = min(render_height - 1, py + size + 2)
                     draw.line(
                         (cursor_x, underline_y, cursor_x + fragment_width, underline_y),
-                        fill="#1769AA" if linked else item.color,
+                        fill="#1769AA" if linked else render_item.color,
                         width=max(1, round(self.zoom)),
                     )
-                if item.strikethrough:
-                    strike_y = min(height - 1, py + size * 0.55)
+                if render_item.strikethrough:
+                    strike_y = min(render_height - 1, py + size * 0.55)
                     draw.line(
                         (cursor_x, strike_y, cursor_x + fragment_width, strike_y),
-                        fill=item.color, width=max(1, round(self.zoom)),
+                        fill=render_item.color, width=max(1, round(self.zoom)),
                     )
                 cursor_x += fragment_width
             search_from = max(search_from, line_end)
+        rotation = int(render_item.rotation) % 360
+        if rotation:
+            image = image.rotate(-rotation, expand=True, resample=Image.Resampling.BICUBIC)
+            if image.size != (width, height):
+                image = image.resize((width, height), Image.Resampling.LANCZOS)
         return ImageTk.PhotoImage(image)
 
     def _add_object(self, item: PageObject) -> None:
@@ -3423,6 +3471,23 @@ class DocumentEditorWindow(tk.Toplevel):
     def _object_at_event(self, event: tk.Event[tk.Misc]) -> int | None:
         current = self.canvas.find_withtag("current")
         if current:
+            if "rotation-handle" in self.canvas.gettags(current[0]) and self.selected_indices:
+                indices = expanded_group_indices(self.document.objects, self.selected_indices)
+                objects = [self.document.objects[index] for index in indices]
+                left, top, width, height = objects_bounds(objects)
+                pivot_x, pivot_y = left + width / 2, top + height / 2
+                pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+                pointer_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+                start_angle = math.degrees(math.atan2(pointer_y - pivot_y, pointer_x - pivot_x))
+                self.selected_indices = indices
+                self.selected = min(indices)
+                self._rotation_drag_origin = (pivot_x, pivot_y, start_angle)
+                self._rotation_drag_delta = 0.0
+                self._drag_origin = None
+                self.status.configure(
+                    text="Rotation guidée : déplacez la poignée ; le pas est celui du champ Rotation."
+                )
+                return
             for tag in self.canvas.gettags(current[0]):
                 if tag.startswith("object:"):
                     return int(tag.split(":", 1)[1])
@@ -3730,6 +3795,45 @@ class DocumentEditorWindow(tk.Toplevel):
         return "break"
 
     def _drag(self, event: tk.Event[tk.Misc]) -> None:
+        if self._rotation_drag_origin is not None:
+            pivot_x, pivot_y, start_angle = self._rotation_drag_origin
+            pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+            pointer_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+            current_angle = math.degrees(math.atan2(pointer_y - pivot_y, pointer_x - pivot_x))
+            try:
+                step = float(self.rotation_step_var.get().replace(",", "."))
+            except ValueError:
+                step = 15.0
+            step = rotation_step_for_objects(
+                [self.document.objects[index] for index in self.selected_indices], step
+            )
+            self._rotation_drag_delta = snapped_rotation_delta(start_angle, current_angle, step)
+            self.canvas.delete("rotation-guide")
+            canvas_pivot_x = self.page_x + pivot_x * self.zoom
+            canvas_pivot_y = self.page_y + pivot_y * self.zoom
+            radius = max(42.0, min(90.0, math.dist(
+                (canvas_pivot_x, canvas_pivot_y),
+                (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)),
+            )))
+            self.canvas.create_oval(
+                canvas_pivot_x - radius, canvas_pivot_y - radius,
+                canvas_pivot_x + radius, canvas_pivot_y + radius,
+                outline="#78A9D1", dash=(4, 4), width=2, tags=("rotation-guide",),
+            )
+            angle = math.radians(start_angle + self._rotation_drag_delta)
+            self.canvas.create_line(
+                canvas_pivot_x, canvas_pivot_y,
+                canvas_pivot_x + radius * math.cos(angle),
+                canvas_pivot_y + radius * math.sin(angle),
+                fill="#E47D16", width=3, arrow="last", tags=("rotation-guide",),
+            )
+            self.canvas.create_text(
+                canvas_pivot_x, canvas_pivot_y - radius - 12,
+                text=f"{self._rotation_drag_delta:g}°", fill="#A34D00",
+                font=("Sans", 10, "bold"), tags=("rotation-guide",),
+            )
+            self.status.configure(text=f"Rotation guidée : {self._rotation_drag_delta:g}°")
+            return
         if self._drawing_text and self._text_draw_start is not None:
             start_x, start_y = self._text_draw_start
             page_width, page_height = self._page_size()
@@ -3902,6 +4006,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_geometry_fields(self.document.objects[self.selected])
 
     def _release(self, event: tk.Event[tk.Misc]) -> None:
+        if self._rotation_drag_origin is not None:
+            degrees = self._rotation_drag_delta
+            self._rotation_drag_origin = None
+            self._rotation_drag_delta = 0.0
+            self.canvas.delete("rotation-guide")
+            if abs(degrees) > 1e-8:
+                self._rotate_selected_degrees(degrees)
+                self.status.configure(text=f"Rotation guidée appliquée : {degrees:g}°.")
+            else:
+                self._render()
+            return
         if self._drawing_text and self._text_draw_start is not None:
             start_x, start_y = self._text_draw_start
             page_width, page_height = self._page_size()

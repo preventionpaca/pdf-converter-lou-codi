@@ -370,6 +370,7 @@ def _draw_object(
                 fontfile=font_file,
                 color=_rgb(item.color),
                 align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
+                rotate=int(item.rotation) % 360 if int(item.rotation) % 90 == 0 else 0,
                 overlay=True,
             )
             if item.underline or item.strikethrough:

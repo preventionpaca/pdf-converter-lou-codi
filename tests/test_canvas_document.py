@@ -30,6 +30,8 @@ from lou_codi_pdf_converter.ui.document_editor import (
     parse_tabular_clipboard,
     revolution_axis_target,
     revolution_stations,
+    rotation_step_for_objects,
+    snapped_rotation_delta,
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
@@ -694,6 +696,18 @@ def test_horizontal_mirror_moves_hatches_with_their_polyline() -> None:
     assert math.isclose(hatch.y, 30.0, abs_tol=1e-6)
     assert math.isclose(hatch.width, -40.0, abs_tol=1e-6)
     assert math.isclose(hatch.height, 20.0, abs_tol=1e-6)
+
+
+def test_rotation_handle_uses_shortest_delta_and_configured_step() -> None:
+    assert snapped_rotation_delta(-90, -52, 15) == 45
+    assert snapped_rotation_delta(170, -170, 5) == 20
+    assert snapped_rotation_delta(-170, 170, 10) == -20
+
+
+def test_layout_rich_objects_use_quarter_turns_for_guided_rotation() -> None:
+    assert rotation_step_for_objects([PageObject("text", 0, 0, 0, 100, 40)], 15) == 90
+    assert rotation_step_for_objects([PageObject("table", 0, 0, 0, 100, 40)], 5) == 90
+    assert rotation_step_for_objects([PageObject("polyline", 0, 0, 0, 100, 40)], 15) == 15
 
 
 def test_external_office_text_separators_become_line_breaks() -> None:
