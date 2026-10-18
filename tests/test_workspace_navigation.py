@@ -39,6 +39,9 @@ class _FakeWindow:
     def withdraw(self) -> None:
         self.log.append(f"{self.name}:hide")
 
+    def iconify(self) -> None:
+        self.log.append(f"{self.name}:iconify")
+
     def lift(self) -> None:
         self.log.append(f"{self.name}:lift")
 
@@ -66,3 +69,19 @@ def test_workspace_is_detached_and_shown_before_parent_is_hidden() -> None:
     assert detach < hide_parent
     assert show < hide_parent
     assert "studio:tk:group" in log
+
+
+def test_restoring_launcher_redirects_focus_to_active_workspace() -> None:
+    log: list[str] = []
+    workspace = _FakeWindow("studio", log)
+    workspace.winfo_viewable = lambda: True
+    application = SimpleNamespace(
+        _active_workspace=workspace,
+        _workspace_focus_redirect_pending=False,
+        iconify=lambda: log.append("home:iconify"),
+    )
+    application.after_idle = lambda callback: callback()
+
+    Application._redirect_to_active_workspace(application)
+
+    assert log == ["home:iconify", "studio:show", "studio:lift", "studio:focus"]
