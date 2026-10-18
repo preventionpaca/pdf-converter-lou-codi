@@ -581,7 +581,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
+        self._editing_original_align = "left"
         self._editing_selection_range: tuple[int, int] | None = None
+        self._editing_text_context_menu: tk.Menu | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -5207,9 +5209,10 @@ class DocumentEditorWindow(tk.Toplevel):
             undo=True,
             exportselection=False,
         )
-        # Keep native Text selection handling, but do not propagate pointer events
-        # to the Document Studio toplevel (palette/canvas drag handlers live there).
-        widget.bindtags((str(widget), "Text", "all"))
+        # Keep only the widget and native Text bindings.  The application-wide
+        # pointer bindings are deliberately excluded: they used to continue a
+        # selection after the mouse button had been released.
+        widget.bindtags((str(widget), "Text"))
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
         widget.bind(
@@ -5226,10 +5229,15 @@ class DocumentEditorWindow(tk.Toplevel):
             ),
             add="+",
         )
+        widget.bind("<Tab>", self._insert_inline_tab)
+        widget.bind("<Shift-Tab>", self._remove_inline_tab)
+        widget.bind("<ISO_Left_Tab>", self._remove_inline_tab)
+        widget.bind("<Button-3>", self._show_inline_text_context_menu)
         self._editing_widget = widget
         self._editing_object_id = item.object_id
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
+        self._editing_original_align = item.align
         self._editing_selection_range = None
         self._editing_word_range = None
         self.canvas.create_window(
@@ -5242,24 +5250,46 @@ class DocumentEditorWindow(tk.Toplevel):
             tags=("inline-editor",),
         )
         link_toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
-        for label, command in (
-            ("↶", widget.edit_undo),
-            ("↷", widget.edit_redo),
-            ("G", lambda: self._toggle("bold")),
-            ("I", lambda: self._toggle("italic")),
-            ("S̲", lambda: self._toggle("underline")),
-            ("B̶", lambda: self._toggle("strikethrough")),
-            ("⇤", lambda: self._align("left")),
-            ("↔", lambda: self._align("center")),
-            ("⇥", lambda: self._align("right")),
-            ("A−", lambda: self._change_font(-1)),
-            ("A+", lambda: self._change_font(1)),
-            ("Ω", self._insert_symbol),
-        ):
-            tk.Button(link_toolbar, text=label, relief="flat", command=command).pack(
-                side="left", padx=1, pady=2
-            )
-        highlight = tk.Menubutton(link_toolbar, text="Fluo ▾", relief="flat")
+        primary = tk.Frame(link_toolbar, bg="#E8EEF5")
+        primary.pack(fill="x")
+        secondary = tk.Frame(link_toolbar, bg="#E8EEF5")
+        secondary.pack(fill="x")
+
+        def tool(parent: tk.Misc, label: str, command: object, help_text: str) -> tk.Button:
+            button = tk.Button(parent, text=label, relief="flat", command=command, padx=6)
+            button.pack(side="left", padx=1, pady=2)
+            self._add_tooltip(button, help_text)
+            return button
+
+        tool(primary, "↶", widget.edit_undo, "Annuler")
+        tool(primary, "↷", widget.edit_redo, "Rétablir")
+        families = ttk.Combobox(
+            primary,
+            textvariable=self.font_family_var,
+            values=(
+                "Sans-serif", "Serif", "Monospace", "Cursive",
+                "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles",
+            ),
+            state="readonly",
+            width=14,
+        )
+        families.pack(side="left", padx=2, pady=2)
+        families.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
+        sizes = ttk.Combobox(
+            primary,
+            textvariable=self.font_size_var,
+            values=("8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36", "48", "60", "72"),
+            width=4,
+        )
+        sizes.pack(side="left", padx=2, pady=2)
+        sizes.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
+        sizes.bind("<Return>", lambda _event: self._apply_font_size())
+        tool(primary, "G", lambda: self._toggle("bold"), "Gras")
+        tool(primary, "I", lambda: self._toggle("italic"), "Italique")
+        tool(primary, "S̲", lambda: self._toggle("underline"), "Souligné")
+        tool(primary, "B̶", lambda: self._toggle("strikethrough"), "Barré")
+        tool(primary, "A▾", lambda: self._choose_color("color"), "Couleur du texte")
+        highlight = tk.Menubutton(primary, text="Fluo ▾", relief="flat", padx=6)
         highlight_menu = tk.Menu(highlight, tearoff=False)
         for label, color in (
             ("Jaune", "#FFF176"),
@@ -5274,29 +5304,27 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         highlight.configure(menu=highlight_menu)
         highlight.pack(side="left", padx=2, pady=2)
-        extras = tk.Menubutton(link_toolbar, text="Autres ▾", relief="flat")
-        extras_menu = tk.Menu(extras, tearoff=False)
-        extras_menu.add_command(label="Couleur du texte…", command=lambda: self._choose_color("color"))
-        extras_menu.add_command(label="Copier la mise en forme", command=self._copy_format)
-        extras_menu.add_command(label="Appliquer la mise en forme", command=self._apply_format)
-        extras_menu.add_separator()
-        extras_menu.add_command(label="Liste à puces", command=lambda: self._make_list(False))
-        extras_menu.add_command(label="Liste numérotée", command=lambda: self._make_list(True))
-        extras_menu.add_command(label="Caractères spéciaux…", command=self._insert_symbol)
-        extras_menu.add_separator()
-        extras_menu.add_command(label="Ajouter / modifier un hyperlien", command=self._set_selected_hyperlink)
-        extras_menu.add_command(label="Retirer l’hyperlien", command=self._remove_selected_hyperlink)
-        extras_menu.add_separator()
-        extras_menu.add_command(label="Ouvrir ChatGPT", command=self._open_chatgpt_for_selected)
-        extras_menu.add_command(label="Coller le résultat de ChatGPT", command=self._paste_chatgpt_result)
-        extras.configure(menu=extras_menu)
-        extras.pack(side="left", padx=2, pady=2)
-        tk.Button(
-            link_toolbar, text="✓ Terminer", relief="flat",
-            command=self._commit_inline_editor,
-        ).pack(side="left", padx=2, pady=2)
+        tool(primary, "≡←", lambda: self._align("left"), "Aligner à gauche")
+        tool(primary, "←≡→", lambda: self._align("center"), "Centrer")
+        tool(primary, "→≡", lambda: self._align("right"), "Aligner à droite")
+        tool(primary, "≡", lambda: self._align("justify"), "Justifier")
+
+        tool(secondary, "• Liste", lambda: self._make_list(False), "Liste à puces")
+        tool(secondary, "1. Liste", lambda: self._make_list(True), "Liste numérotée")
+        tool(secondary, "⇤", self._remove_inline_tab, "Diminuer le retrait")
+        tool(secondary, "⇥", self._insert_inline_tab, "Insérer une tabulation ou augmenter le retrait")
+        tool(secondary, "Ω", self._insert_symbol, "Caractères spéciaux")
+        tool(secondary, "🖌", self._copy_format, "Copier la mise en forme")
+        tool(secondary, "🖌✓", self._apply_format, "Appliquer la mise en forme")
+        tool(secondary, "🔗", self._set_selected_hyperlink, "Ajouter ou modifier un lien")
+        tool(secondary, "✕🔗", self._remove_selected_hyperlink, "Retirer le lien")
+        tool(secondary, "🤖", self._open_chatgpt_for_selected, "Ouvrir ChatGPT")
+        tool(secondary, "Coller IA", self._paste_chatgpt_result, "Coller le résultat de ChatGPT")
+        tool(secondary, "✓ Terminer", self._commit_inline_editor, "Terminer l’édition")
         self.canvas.create_window(
-            x, max(self.page_y, y - 36), window=link_toolbar,
+            max(self.page_x, min(x, self.page_x + self._page_size()[0] * self.zoom - 760)),
+            max(self.page_y, y - 72),
+            window=link_toolbar,
             anchor="nw", tags=("inline-editor",),
         )
 
@@ -5332,8 +5360,85 @@ class DocumentEditorWindow(tk.Toplevel):
             widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         widget.tag_raise("sel")
         self.status.configure(
-            text="Pour créer un hyperlien : sélectionnez un mot ou une phrase, puis cliquez sur « Hyperlien »."
+            text="Saisie directe : double-clic = mot, clic-glissé = passage, clic droit = mise en forme, Tab = retrait."
         )
+
+    def _insert_inline_tab(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        try:
+            start = widget.index("sel.first linestart")
+            end = widget.index("sel.last lineend")
+        except tk.TclError:
+            widget.insert("insert", "\t")
+        else:
+            lines = widget.get(start, end).split("\n")
+            widget.delete(start, end)
+            widget.insert(start, "\n".join(f"\t{line}" for line in lines))
+            widget.tag_add("sel", start, f"{start} + {sum(len(line) for line in lines) + len(lines) * 2 - 1} chars")
+            self._remember_inline_text_selection(widget)
+        widget.focus_set()
+        return "break"
+
+    def _remove_inline_tab(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        try:
+            start = widget.index("sel.first linestart")
+            end = widget.index("sel.last lineend")
+        except tk.TclError:
+            start = widget.index("insert linestart")
+            end = widget.index("insert lineend")
+        lines = widget.get(start, end).split("\n")
+        changed = [
+            line[1:] if line.startswith("\t") else line.removeprefix("    ")
+            for line in lines
+        ]
+        widget.delete(start, end)
+        widget.insert(start, "\n".join(changed))
+        widget.focus_set()
+        return "break"
+
+    def _show_inline_text_context_menu(self, event: tk.Event[tk.Text]) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        self._remember_inline_text_selection(widget)
+        menu = tk.Menu(self, tearoff=False)
+        menu.add_command(label="Gras", command=lambda: self._toggle("bold"))
+        menu.add_command(label="Italique", command=lambda: self._toggle("italic"))
+        menu.add_command(label="Souligné", command=lambda: self._toggle("underline"))
+        menu.add_command(label="Barré", command=lambda: self._toggle("strikethrough"))
+        highlight = tk.Menu(menu, tearoff=False)
+        for label, color in (("Jaune", "#FFF176"), ("Vert", "#A7F3A1"), ("Violet", "#D8B4FE"), ("Cyan", "#8BE9FD"), ("Retirer", "")):
+            highlight.add_command(label=label, command=lambda value=color: self._set_text_highlight(value))
+        menu.add_cascade(label="Surlignage", menu=highlight)
+        menu.add_command(label="Couleur du texte…", command=lambda: self._choose_color("color"))
+        alignment = tk.Menu(menu, tearoff=False)
+        for label, value in (("À gauche", "left"), ("Centré", "center"), ("À droite", "right"), ("Justifié", "justify")):
+            alignment.add_command(label=label, command=lambda selected=value: self._align(selected))
+        menu.add_cascade(label="Alignement", menu=alignment)
+        menu.add_separator()
+        menu.add_command(label="Tabulation / augmenter le retrait", command=self._insert_inline_tab)
+        menu.add_command(label="Diminuer le retrait", command=self._remove_inline_tab)
+        menu.add_command(label="Liste à puces", command=lambda: self._make_list(False))
+        menu.add_command(label="Liste numérotée", command=lambda: self._make_list(True))
+        menu.add_separator()
+        menu.add_command(label="Copier la mise en forme", command=self._copy_format)
+        menu.add_command(label="Appliquer la mise en forme", command=self._apply_format)
+        menu.add_command(label="Ajouter / modifier un hyperlien…", command=self._set_selected_hyperlink)
+        menu.add_command(label="Caractères spéciaux…", command=self._insert_symbol)
+        menu.add_separator()
+        menu.add_command(label="Terminer l’édition", command=self._commit_inline_editor)
+        self._editing_text_context_menu = menu
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+            widget.focus_set()
+        return "break"
 
     @staticmethod
     def _ensure_table_cells(item: PageObject) -> list[list[dict[str, str]]]:
@@ -6082,6 +6187,7 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         original_text = self._editing_original_text
         original_styles = self._editing_original_styles
+        original_align = self._editing_original_align
         table_cell = self._editing_table_cell
         table_original = self._editing_table_original
         self._editing_widget = None
@@ -6090,6 +6196,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_object_id = ""
         self._editing_original_text = ""
         self._editing_original_styles = []
+        self._editing_original_align = "left"
         self._editing_selection_range = None
         self._editing_table_cell = None
         self._editing_table_original = None
@@ -6118,7 +6225,11 @@ class DocumentEditorWindow(tk.Toplevel):
                         if end > start:
                             styles.append({"start": start, "end": end, **style})
                 item.text_styles = styles
-                changed = value != original_text or styles != original_styles
+                changed = (
+                    value != original_text
+                    or styles != original_styles
+                    or item.align != original_align
+                )
             if changed:
                 snapshot = copy.deepcopy(self.document)
                 snapshot_item = next(
@@ -6131,6 +6242,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 else:
                     snapshot_item.text = original_text
                     snapshot_item.text_styles = original_styles
+                    snapshot_item.align = original_align
                 self.undo_stack.append(snapshot)
                 self.undo_stack = self.undo_stack[-80:]
                 self.redo_stack.clear()
@@ -6162,6 +6274,27 @@ class DocumentEditorWindow(tk.Toplevel):
         self._mutate(lambda item: setattr(item, name, not getattr(item, name)))
 
     def _align(self, value: str) -> None:
+        if self.selected is not None:
+            item = self.document.objects[self.selected]
+            widget = self._editing_widget
+            if (
+                item.kind == "text"
+                and widget is not None
+                and self._editing_object_id == item.object_id
+            ):
+                item.align = value
+                # Tk has no full-justification mode.  Keep the requested value in
+                # the document model (PDF/DOCX exports honour it) while presenting
+                # a stable left-aligned editing surface.
+                widget.tag_configure("align", justify=value if value != "justify" else "left")
+                widget.tag_add("align", "1.0", "end")
+                widget.tag_lower("align")
+                widget.tag_raise("sel")
+                widget.focus_set()
+                self.status.configure(
+                    text=("Texte justifié à l’export." if value == "justify" else "Alignement appliqué à la zone de texte.")
+                )
+                return
         self._mutate(lambda item: setattr(item, "align", value))
 
     def _set_object_color(self, attribute: str, value: str) -> None:
