@@ -2202,21 +2202,25 @@ class DocumentEditorWindow(tk.Toplevel):
                 y,
                 x + w,
                 y + h,
-                fill="" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
+                fill=(
+                    ""
+                    if item.kind == "text" or item.fill.lower() in {"", "none", "transparent"}
+                    else item.fill
+                ),
                 outline=outline,
                 width=4 if emphasized else 1,
                 tags=tags,
             )
             picture = self._text_preview(item, displayed_text, max(1, round(w)), max(1, round(h)))
             self._overlay_images.append(picture)
-            self.canvas.create_image(x, y, image=picture, anchor="nw", tags=tags)
+            self.canvas.create_image(x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags)
             self.canvas.create_rectangle(
                 x,
                 y,
                 x + w,
                 y + h,
-                outline=outline if emphasized else item.border_color,
-                width=4 if emphasized else max(1, round(item.border_width * self.zoom)),
+                outline=outline if emphasized else "",
+                width=4 if emphasized else 0,
                 dash=None if emphasized or item.border_style == "solid" else (5, 3) if item.border_style == "dashed" else (1, 3),
                 tags=tags,
             )
@@ -2337,15 +2341,21 @@ class DocumentEditorWindow(tk.Toplevel):
         )
 
     def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
-        """Render and clip a text frame exactly inside its visible rectangle."""
-        quarter_turn = int(item.rotation) % 180 == 90
+        """Render a flat text frame, then rotate its transparent bitmap around its centre."""
         render_item = copy.copy(item)
-        render_width, render_height = (height, width) if quarter_turn else (width, height)
-        if quarter_turn:
-            render_item.width, render_item.height = item.height, item.width
+        render_width, render_height = width, height
         transparent = render_item.fill.lower() in {"", "none", "transparent"}
-        image = Image.new("RGBA", (render_width, render_height), (255, 255, 255, 0)) if transparent else Image.new("RGB", (render_width, render_height), render_item.fill)
+        image = Image.new("RGBA", (render_width, render_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
+        if not transparent:
+            draw.rectangle((0, 0, render_width - 1, render_height - 1), fill=render_item.fill)
+        if render_item.border_width > 0:
+            border_width = max(1, round(render_item.border_width * self.zoom))
+            draw.rectangle(
+                (border_width // 2, border_width // 2, render_width - 1 - border_width // 2, render_height - 1 - border_width // 2),
+                outline=render_item.border_color,
+                width=border_width,
+            )
         size = max(7, round(render_item.font_size * self.zoom))
         suffix = "-BoldOblique" if render_item.bold and render_item.italic else "-Bold" if render_item.bold else "-Oblique" if render_item.italic else ""
         family = "DejaVuSansMono" if render_item.font_family == "Monospace" else "DejaVuSerif" if render_item.font_family == "Serif" else "DejaVuSans"
@@ -2412,11 +2422,14 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                 cursor_x += fragment_width
             search_from = max(search_from, line_end)
-        rotation = int(render_item.rotation) % 360
+        rotation = float(render_item.rotation) % 360
         if rotation:
-            image = image.rotate(-rotation, expand=True, resample=Image.Resampling.BICUBIC)
-            if image.size != (width, height):
-                image = image.resize((width, height), Image.Resampling.LANCZOS)
+            image = image.rotate(
+                -rotation,
+                expand=True,
+                resample=Image.Resampling.BICUBIC,
+                fillcolor=(0, 0, 0, 0),
+            )
         return ImageTk.PhotoImage(image)
 
     def _add_object(self, item: PageObject) -> None:
