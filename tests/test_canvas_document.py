@@ -32,6 +32,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     merge_mirrored_outlines,
     normalize_external_text,
     objects_bounds,
+    paragraph_alignment_at,
     parse_tabular_clipboard,
     point_hits_rotation_handle,
     polygon_area,
@@ -45,6 +46,23 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
+
+
+def test_paragraph_alignment_uses_local_run_without_changing_other_text() -> None:
+    item = PageObject(
+        "text",
+        0,
+        0,
+        0,
+        200,
+        80,
+        text="Première ligne\nDeuxième ligne",
+        align="left",
+        paragraph_alignments=[{"start": 15, "end": 29, "align": "center"}],
+    )
+
+    assert paragraph_alignment_at(item, 3) == "left"
+    assert paragraph_alignment_at(item, 18) == "center"
 
 
 def test_polygon_area_accepts_open_and_closed_contours() -> None:

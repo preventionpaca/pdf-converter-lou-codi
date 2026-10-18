@@ -167,6 +167,16 @@ def text_style_at(item: PageObject, position: int) -> dict[str, object]:
     return style
 
 
+def paragraph_alignment_at(item: PageObject, position: int) -> str:
+    """Return the alignment applied to the paragraph containing a character."""
+    for run in reversed(item.paragraph_alignments):
+        if int(run.get("start", 0)) <= position < int(run.get("end", 0)):
+            value = str(run.get("align", item.align))
+            if value in {"left", "center", "right", "justify"}:
+                return value
+    return item.align
+
+
 def aligned_text_x(frame_width: float, text_width: float, padding: float, align: str) -> float:
     """Place a rendered line using its real glyph width, not an approximate font."""
     if align in {"left", "justify"}:
@@ -582,6 +592,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_original_align = "left"
+        self._editing_original_fill = "#FFFFFF"
+        self._editing_original_paragraph_alignments: list[dict[str, object]] = []
+        self._editing_alignment_tags: dict[str, str] = {}
         self._editing_selection_range: tuple[int, int] | None = None
         self._editing_drag_anchor: str | None = None
         self._editing_text_context_menu: tk.Menu | None = None
@@ -2901,33 +2914,54 @@ class DocumentEditorWindow(tk.Toplevel):
                 fragments.append((fragment, fragment_style, fragment_font, linked, fragment_width))
             actual_line_width = sum(fragment[4] for fragment in fragments)
             padding = TEXT_FRAME_HORIZONTAL_PADDING * self.zoom
+            line_alignment = paragraph_alignment_at(item, line_start)
+            justify_line = (
+                line_alignment == "justify"
+                and line_end < len(text)
+                and text[line_end : line_end + 1] != "\n"
+            )
+            spaces = sum(fragment[0].count(" ") for fragment in fragments)
+            extra_space = (
+                max(0.0, render_width - 2 * padding - actual_line_width) / spaces
+                if justify_line and spaces
+                else 0.0
+            )
             cursor_x = aligned_text_x(
-                render_width, actual_line_width, padding, render_item.align
+                render_width, actual_line_width, padding, line_alignment
             )
             for fragment, fragment_style, fragment_font, linked, fragment_width in fragments:
                 fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
                 color = "#1769AA" if linked else str(fragment_style["color"])
                 highlight = str(fragment_style.get("highlight", ""))
+                displayed_width = fragment_width + fragment.count(" ") * extra_space
                 if highlight:
                     draw.rectangle(
-                        (cursor_x, py, cursor_x + fragment_width, min(render_height - 1, py + line_height)),
+                        (cursor_x, py, cursor_x + displayed_width, min(render_height - 1, py + line_height)),
                         fill=highlight,
                     )
-                draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
+                if extra_space:
+                    character_x = cursor_x
+                    for character in fragment:
+                        draw.text((character_x, py), character, font=fragment_font, fill=color)
+                        character_x += float(draw.textlength(character, font=fragment_font))
+                        if character == " ":
+                            character_x += extra_space
+                else:
+                    draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
                 if linked or fragment_style["underline"]:
                     underline_y = min(render_height - 1, py + fragment_size + 2)
                     draw.line(
-                        (cursor_x, underline_y, cursor_x + fragment_width, underline_y),
+                        (cursor_x, underline_y, cursor_x + displayed_width, underline_y),
                         fill="#1769AA" if linked else str(fragment_style["color"]),
                         width=max(1, round(self.zoom)),
                     )
                 if fragment_style["strikethrough"]:
                     strike_y = min(render_height - 1, py + fragment_size * 0.55)
                     draw.line(
-                        (cursor_x, strike_y, cursor_x + fragment_width, strike_y),
+                        (cursor_x, strike_y, cursor_x + displayed_width, strike_y),
                         fill=str(fragment_style["color"]), width=max(1, round(self.zoom)),
                     )
-                cursor_x += fragment_width
+                cursor_x += displayed_width
             search_from = max(search_from, line_end)
         rotation = float(render_item.rotation) % 360
         if rotation:
@@ -2998,7 +3032,7 @@ class DocumentEditorWindow(tk.Toplevel):
             )
             return
         try:
-            value = self.clipboard_get().strip()
+            value = normalize_external_text(self.clipboard_get()).strip()
         except tk.TclError:
             value = ""
         if not value:
@@ -3091,6 +3125,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 else "Message relu et inséré dans la zone de texte."
             )
             self._render()
+            self.after_idle(lambda target=target: self._start_inline_text_editor(target))
 
         ttk.Button(actions, text="Annuler", command=dialog.destroy).pack(side="right")
         ttk.Button(actions, text="Insérer dans la zone", command=apply_message).pack(
@@ -5203,7 +5238,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 max(8, round(item.font_size * self.zoom)),
                 "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
             ),
-            bg="white",
+            bg=item.fill if item.fill.lower() not in {"", "none", "transparent"} else "white",
             fg=item.color,
             relief="solid",
             borderwidth=2,
@@ -5243,6 +5278,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_original_align = item.align
+        self._editing_original_fill = item.fill
+        self._editing_original_paragraph_alignments = copy.deepcopy(item.paragraph_alignments)
+        self._editing_alignment_tags = {}
         self._editing_selection_range = None
         self._editing_drag_anchor = None
         self._editing_word_range = None
@@ -5290,6 +5328,8 @@ class DocumentEditorWindow(tk.Toplevel):
         sizes.pack(side="left", padx=2, pady=2)
         sizes.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_size())
         sizes.bind("<Return>", lambda _event: self._apply_font_size())
+        tool(primary, "A−", lambda: self._change_font(-1), "Réduire la taille du texte")
+        tool(primary, "A+", lambda: self._change_font(1), "Agrandir la taille du texte")
         tool(primary, "G", lambda: self._toggle("bold"), "Gras")
         tool(primary, "I", lambda: self._toggle("italic"), "Italique")
         tool(primary, "S̲", lambda: self._toggle("underline"), "Souligné")
@@ -5310,6 +5350,25 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         highlight.configure(menu=highlight_menu)
         highlight.pack(side="left", padx=2, pady=2)
+        background = tk.Menubutton(primary, text="Fond ▾", relief="flat", padx=6)
+        background_menu = tk.Menu(background, tearoff=False)
+        background_menu.add_command(
+            label="Transparent", command=lambda: self._set_inline_text_frame_fill("transparent")
+        )
+        for label, color in (
+            ("Blanc", "#FFFFFF"),
+            ("Jaune pâle", "#FFF9C4"),
+            ("Vert pâle", "#DDF3E4"),
+            ("Bleu pâle", "#DCEBFA"),
+        ):
+            background_menu.add_command(
+                label=label,
+                command=lambda value=color: self._set_inline_text_frame_fill(value),
+            )
+        background_menu.add_separator()
+        background_menu.add_command(label="Autre couleur…", command=self._choose_inline_text_frame_fill)
+        background.configure(menu=background_menu)
+        background.pack(side="left", padx=2, pady=2)
         tool(primary, "≡←", lambda: self._align("left"), "Aligner à gauche")
         tool(primary, "←≡→", lambda: self._align("center"), "Centrer")
         tool(primary, "→≡", lambda: self._align("right"), "Aligner à droite")
@@ -5355,6 +5414,16 @@ class DocumentEditorWindow(tk.Toplevel):
             style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
             self._editing_style_tags[tag] = style
             self._configure_text_style_tag(widget, tag, item, style)
+            widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+        for number, run in enumerate(item.paragraph_alignments):
+            start = max(0, int(run.get("start", 0)))
+            end = max(start, int(run.get("end", 0)))
+            value = str(run.get("align", item.align))
+            if end <= start or value not in {"left", "center", "right", "justify"}:
+                continue
+            tag = f"paragraph_align_{number}"
+            self._editing_alignment_tags[tag] = value
+            widget.tag_configure(tag, justify=value if value != "justify" else "left")
             widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         widget.tag_raise("sel")
         self.status.configure(
@@ -5498,6 +5567,26 @@ class DocumentEditorWindow(tk.Toplevel):
         for label, value in (("À gauche", "left"), ("Centré", "center"), ("À droite", "right"), ("Justifié", "justify")):
             alignment.add_command(label=label, command=lambda selected=value: self._align(selected))
         menu.add_cascade(label="Alignement", menu=alignment)
+        frame_fill = tk.Menu(menu, tearoff=False)
+        frame_fill.add_command(
+            label="Transparent",
+            command=lambda: self._set_inline_text_frame_fill("transparent"),
+        )
+        for label, color in (
+            ("Blanc", "#FFFFFF"),
+            ("Jaune pâle", "#FFF9C4"),
+            ("Vert pâle", "#DDF3E4"),
+            ("Bleu pâle", "#DCEBFA"),
+        ):
+            frame_fill.add_command(
+                label=label,
+                command=lambda selected=color: self._set_inline_text_frame_fill(selected),
+            )
+        frame_fill.add_separator()
+        frame_fill.add_command(
+            label="Autre couleur…", command=self._choose_inline_text_frame_fill
+        )
+        menu.add_cascade(label="Fond de la zone", menu=frame_fill)
         menu.add_separator()
         menu.add_command(label="Tabulation / augmenter le retrait", command=self._insert_inline_tab)
         menu.add_command(label="Diminuer le retrait", command=self._remove_inline_tab)
@@ -6340,6 +6429,8 @@ class DocumentEditorWindow(tk.Toplevel):
         original_text = self._editing_original_text
         original_styles = self._editing_original_styles
         original_align = self._editing_original_align
+        original_fill = self._editing_original_fill
+        original_paragraph_alignments = self._editing_original_paragraph_alignments
         table_cell = self._editing_table_cell
         table_original = self._editing_table_original
         self._editing_widget = None
@@ -6349,6 +6440,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_original_styles = []
         self._editing_original_align = "left"
+        self._editing_original_fill = "#FFFFFF"
+        self._editing_original_paragraph_alignments = []
         self._editing_selection_range = None
         self._editing_drag_anchor = None
         self._editing_table_cell = None
@@ -6378,10 +6471,30 @@ class DocumentEditorWindow(tk.Toplevel):
                         if end > start:
                             styles.append({"start": start, "end": end, **style})
                 item.text_styles = styles
+                paragraph_alignments: list[dict[str, object]] = []
+                last_line = int(widget.index("end-1c").split(".", 1)[0])
+                for line_number in range(1, last_line + 1):
+                    start_index = f"{line_number}.0"
+                    end_index = widget.index(f"{start_index} lineend")
+                    start = self._text_character_offset(widget, start_index)
+                    end = self._text_character_offset(widget, end_index)
+                    if end <= start:
+                        continue
+                    alignment = item.align
+                    for tag in widget.tag_names(start_index):
+                        if tag in self._editing_alignment_tags:
+                            alignment = self._editing_alignment_tags[tag]
+                    if alignment != item.align:
+                        paragraph_alignments.append(
+                            {"start": start, "end": end, "align": alignment}
+                        )
+                item.paragraph_alignments = paragraph_alignments
                 changed = (
                     value != original_text
                     or styles != original_styles
                     or item.align != original_align
+                    or item.fill != original_fill
+                    or paragraph_alignments != original_paragraph_alignments
                 )
             if changed:
                 snapshot = copy.deepcopy(self.document)
@@ -6396,6 +6509,8 @@ class DocumentEditorWindow(tk.Toplevel):
                     snapshot_item.text = original_text
                     snapshot_item.text_styles = original_styles
                     snapshot_item.align = original_align
+                    snapshot_item.fill = original_fill
+                    snapshot_item.paragraph_alignments = original_paragraph_alignments
                 self.undo_stack.append(snapshot)
                 self.undo_stack = self.undo_stack[-80:]
                 self.redo_stack.clear()
@@ -6404,6 +6519,7 @@ class DocumentEditorWindow(tk.Toplevel):
         elif widget.winfo_exists():
             widget.destroy()
         self._editing_style_tags = {}
+        self._editing_alignment_tags = {}
         if render:
             self._render()
 
@@ -6435,17 +6551,35 @@ class DocumentEditorWindow(tk.Toplevel):
                 and widget is not None
                 and self._editing_object_id == item.object_id
             ):
-                item.align = value
-                # Tk has no full-justification mode.  Keep the requested value in
-                # the document model (PDF/DOCX exports honour it) while presenting
-                # a stable left-aligned editing surface.
-                widget.tag_configure("align", justify=value if value != "justify" else "left")
-                widget.tag_add("align", "1.0", "end")
-                widget.tag_lower("align")
+                selection = self._editing_selection_range
+                if selection is None:
+                    start_index = widget.index("insert linestart")
+                    end_index = widget.index("insert lineend")
+                else:
+                    start_offset, end_offset = selection
+                    start_index = widget.index(f"1.0 + {start_offset} chars linestart")
+                    raw_end = widget.index(f"1.0 + {end_offset} chars")
+                    if end_offset > start_offset and widget.compare(
+                        raw_end, "==", f"{raw_end} linestart"
+                    ):
+                        raw_end = widget.index(f"{raw_end} - 1 chars")
+                    end_index = widget.index(f"{raw_end} lineend")
+                for tag in self._editing_alignment_tags:
+                    widget.tag_remove(tag, start_index, end_index)
+                tag = f"paragraph_align_live_{uuid.uuid4().hex}"
+                self._editing_alignment_tags[tag] = value
+                # Tk ne fournit pas de justification pleine. L'aperçu final
+                # répartit réellement les espaces après validation.
+                widget.tag_configure(tag, justify=value if value != "justify" else "left")
+                widget.tag_add(tag, start_index, end_index)
                 widget.tag_raise("sel")
                 widget.focus_set()
                 self.status.configure(
-                    text=("Texte justifié à l’export." if value == "justify" else "Alignement appliqué à la zone de texte.")
+                    text=(
+                        "Paragraphe justifié : le résultat exact apparaît après Terminer."
+                        if value == "justify"
+                        else "Alignement appliqué au paragraphe ou aux paragraphes sélectionnés."
+                    )
                 )
                 return
         self._mutate(lambda item: setattr(item, "align", value))
@@ -6490,6 +6624,34 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(
             text="Double-cliquez dans la zone, sélectionnez le passage, puis choisissez la couleur de surlignage."
         )
+
+    def _set_inline_text_frame_fill(self, color: str) -> None:
+        if self.selected is None:
+            return
+        item = self.document.objects[self.selected]
+        if item.kind != "text":
+            return
+        item.fill = color
+        widget = self._editing_widget
+        if widget is not None and self._editing_object_id == item.object_id:
+            background = color if color.lower() not in {"", "none", "transparent"} else "white"
+            widget.configure(bg=background)
+            for tag, style in self._editing_style_tags.items():
+                self._configure_text_style_tag(widget, tag, item, style)
+            widget.tag_raise("sel")
+            widget.focus_set()
+        self.status.configure(
+            text=("Fond de la zone rendu transparent." if color == "transparent" else "Couleur de fond appliquée à la zone.")
+        )
+
+    def _choose_inline_text_frame_fill(self) -> None:
+        if self.selected is None:
+            return
+        item = self.document.objects[self.selected]
+        initial = item.fill if item.fill.startswith("#") else "#FFFFFF"
+        chosen = choose_color(self, "Couleur de fond de la zone", initial)
+        if chosen:
+            self._set_inline_text_frame_fill(chosen)
 
     def _set_border_width_value(self, value: float) -> None:
         self._mutate(lambda item: setattr(item, "border_width", value))

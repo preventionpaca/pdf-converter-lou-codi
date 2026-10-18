@@ -75,6 +75,7 @@ class PageObject:
     hyperlink: str = ""
     text_links: list[dict[str, object]] = field(default_factory=list)
     text_styles: list[dict[str, object]] = field(default_factory=list)
+    paragraph_alignments: list[dict[str, object]] = field(default_factory=list)
     table_cells: list[list[dict[str, str]]] = field(default_factory=list)
     table_style: str = "plain"
     table_outer_border_width: float = 1.5
