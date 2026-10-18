@@ -5215,7 +5215,13 @@ class DocumentEditorWindow(tk.Toplevel):
         # selection after the mouse button had been released.
         widget.bindtags((str(widget), "Text"))
         widget.insert("1.0", item.text)
+        widget.bind("<Control-a>", self._select_all_inline_text)
+        widget.bind("<Control-c>", self._copy_inline_text)
+        widget.bind("<Control-x>", self._cut_inline_text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
+        widget.bind("<Control-z>", self._undo_inline_text)
+        widget.bind("<Control-y>", self._redo_inline_text)
+        widget.bind("<Control-Shift-Z>", self._redo_inline_text)
         widget.bind("<Button-1>", self._inline_text_mouse_press)
         widget.bind("<B1-Motion>", self._inline_text_mouse_drag)
         widget.bind("<ButtonRelease-1>", self._inline_text_mouse_release)
@@ -5261,8 +5267,8 @@ class DocumentEditorWindow(tk.Toplevel):
             self._add_tooltip(button, help_text)
             return button
 
-        tool(primary, "↶", widget.edit_undo, "Annuler")
-        tool(primary, "↷", widget.edit_redo, "Rétablir")
+        tool(primary, "↶", self._undo_inline_text, "Annuler")
+        tool(primary, "↷", self._redo_inline_text, "Rétablir")
         families = ttk.Combobox(
             primary,
             textvariable=self.font_family_var,
@@ -5328,15 +5334,7 @@ class DocumentEditorWindow(tk.Toplevel):
             anchor="nw", tags=("inline-editor",),
         )
 
-        def preview_flow(_event: object = None) -> None:
-            if not widget.edit_modified():
-                return
-            item.text = widget.get("1.0", "end-1c")
-            widget.edit_modified(False)
-            self._redraw_text_chain(item)
-
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
-        widget.bind("<<Modified>>", preview_flow)
         widget.edit_modified(False)
         widget.focus_set()
         widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
@@ -5476,7 +5474,17 @@ class DocumentEditorWindow(tk.Toplevel):
         if widget is None:
             return "break"
         self._remember_inline_text_selection(widget)
+        if self._editing_selection_range is None:
+            widget.mark_set("insert", widget.index(f"@{event.x},{event.y}"))
         menu = tk.Menu(self, tearoff=False)
+        menu.add_command(label="Annuler    Ctrl+Z", command=self._undo_inline_text)
+        menu.add_command(label="Rétablir    Ctrl+Y", command=self._redo_inline_text)
+        menu.add_separator()
+        menu.add_command(label="Couper    Ctrl+X", command=self._cut_inline_text)
+        menu.add_command(label="Copier    Ctrl+C", command=self._copy_inline_text)
+        menu.add_command(label="Coller    Ctrl+V", command=self._paste_clean_text_widget)
+        menu.add_command(label="Tout sélectionner    Ctrl+A", command=self._select_all_inline_text)
+        menu.add_separator()
         menu.add_command(label="Gras", command=lambda: self._toggle("bold"))
         menu.add_command(label="Italique", command=lambda: self._toggle("italic"))
         menu.add_command(label="Souligné", command=lambda: self._toggle("underline"))
@@ -5508,6 +5516,72 @@ class DocumentEditorWindow(tk.Toplevel):
         finally:
             menu.grab_release()
             widget.focus_set()
+        return "break"
+
+    def _select_all_inline_text(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        widget.tag_remove("sel", "1.0", "end")
+        if widget.compare("end-1c", ">", "1.0"):
+            widget.tag_add("sel", "1.0", "end-1c")
+            widget.mark_set("insert", "end-1c")
+        self._remember_inline_text_selection(widget)
+        widget.focus_set()
+        return "break"
+
+    def _copy_inline_text(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        try:
+            value = widget.get("sel.first", "sel.last")
+        except tk.TclError:
+            return "break"
+        self.clipboard_clear()
+        self.clipboard_append(value)
+        widget.focus_set()
+        return "break"
+
+    def _cut_inline_text(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        try:
+            value = widget.get("sel.first", "sel.last")
+            widget.edit_separator()
+            widget.delete("sel.first", "sel.last")
+            widget.edit_separator()
+        except tk.TclError:
+            return "break"
+        self.clipboard_clear()
+        self.clipboard_append(value)
+        self._editing_selection_range = None
+        widget.focus_set()
+        return "break"
+
+    def _undo_inline_text(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        try:
+            widget.edit_undo()
+        except tk.TclError:
+            pass
+        self._editing_selection_range = None
+        widget.focus_set()
+        return "break"
+
+    def _redo_inline_text(self, _event: object = None) -> str:
+        widget = self._editing_widget
+        if widget is None:
+            return "break"
+        try:
+            widget.edit_redo()
+        except tk.TclError:
+            pass
+        self._editing_selection_range = None
+        widget.focus_set()
         return "break"
 
     @staticmethod
@@ -6202,7 +6276,9 @@ class DocumentEditorWindow(tk.Toplevel):
         dialog.lift()
         widget.focus_set()
 
-    def _paste_clean_text_widget(self, event: tk.Event[tk.Text]) -> str | None:
+    def _paste_clean_text_widget(
+        self, event: tk.Event[tk.Text] | None = None
+    ) -> str | None:
         """Paste office/PDF text without visible control-character squares."""
         try:
             value = normalize_external_text(self.clipboard_get())
@@ -6210,12 +6286,18 @@ class DocumentEditorWindow(tk.Toplevel):
             return None
         if not value or value == "LOUCODI_OBJECTS":
             return "break"
-        widget = event.widget
+        widget = event.widget if event is not None else self._editing_widget
+        if widget is None:
+            return "break"
+        widget.edit_separator()
         try:
             widget.delete("sel.first", "sel.last")
         except tk.TclError:
             pass
         widget.insert("insert", value)
+        widget.edit_separator()
+        self._editing_selection_range = None
+        widget.focus_set()
         return "break"
 
     def _redraw_text_chain(self, root: PageObject) -> None:
