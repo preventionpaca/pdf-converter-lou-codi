@@ -34,6 +34,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     rotation_step_for_objects,
     snapped_rotation_delta,
     text_style_at,
+    aligned_text_x,
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
@@ -722,6 +723,12 @@ def test_character_style_only_applies_inside_its_text_range() -> None:
     assert text_style_at(item, 2)["color"] == "#000000"
     assert text_style_at(item, 10)["bold"] is True
     assert text_style_at(item, 10)["color"] == "#CC0000"
+
+
+def test_text_alignment_uses_actual_rendered_width() -> None:
+    assert aligned_text_x(300, 80, 10, "left") == 10
+    assert aligned_text_x(300, 80, 10, "center") == 110
+    assert aligned_text_x(300, 80, 10, "right") == 210
 
 
 def test_zero_character_offset_from_tk_is_not_treated_as_an_error() -> None:

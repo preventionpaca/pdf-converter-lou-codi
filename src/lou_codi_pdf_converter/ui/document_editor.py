@@ -144,6 +144,15 @@ def text_style_at(item: PageObject, position: int) -> dict[str, object]:
     return style
 
 
+def aligned_text_x(frame_width: float, text_width: float, padding: float, align: str) -> float:
+    """Place a rendered line using its real glyph width, not an approximate font."""
+    if align in {"left", "justify"}:
+        return padding
+    if align == "center":
+        return (frame_width - text_width) / 2
+    return frame_width - text_width - padding
+
+
 def point_hits_rotation_handle(
     pointer: tuple[float, float], handle: tuple[float, float], radius: float = 15.0
 ) -> bool:
@@ -973,12 +982,26 @@ class DocumentEditorWindow(tk.Toplevel):
         self.kind_label = ttk.Label(panel, text="Aucun objet", style="Body.TLabel")
         self.kind_label.pack(anchor="w", pady=(0, 8))
         self.property_vars: dict[str, tk.StringVar] = {}
-        for key, label in (("x", "X (mm)"), ("y", "Y (mm)"), ("width", "Largeur (mm)"), ("height", "Hauteur (mm)"), ("font_size", "Taille du texte (pt)"), ("level", "Niveau (plan)")):
-            ttk.Label(panel, text=label, style="Body.TLabel").pack(anchor="w")
+        geometry_grid = ttk.Frame(panel, style="Card.TFrame")
+        geometry_grid.pack(fill="x", pady=(0, 5))
+        property_layout = (
+            ("x", "X (mm)", 0, 0, 1),
+            ("y", "Y (mm)", 0, 1, 1),
+            ("width", "Largeur (mm)", 0, 2, 1),
+            ("height", "Hauteur (mm)", 0, 3, 1),
+            ("font_size", "Taille texte (pt)", 1, 0, 2),
+            ("level", "Niveau (plan)", 1, 2, 2),
+        )
+        for column in range(4):
+            geometry_grid.columnconfigure(column, weight=1, uniform="properties")
+        for key, label, row, column, span in property_layout:
+            field = ttk.Frame(geometry_grid, style="Card.TFrame")
+            field.grid(row=row, column=column, columnspan=span, sticky="ew", padx=2, pady=2)
+            ttk.Label(field, text=label, style="Body.TLabel").pack(anchor="w")
             var = tk.StringVar()
             self.property_vars[key] = var
-            entry = ttk.Entry(panel, textvariable=var)
-            entry.pack(fill="x", pady=(0, 6))
+            entry = ttk.Entry(field, textvariable=var, width=7)
+            entry.pack(fill="x")
             entry.bind("<Return>", lambda _event: self._apply_properties())
             entry.bind("<Tab>", lambda _event: self._apply_properties(silent=True), add="+")
         self.geometry_help = ttk.Label(panel, text="", style="Body.TLabel", wraplength=260)
@@ -2369,9 +2392,6 @@ class DocumentEditorWindow(tk.Toplevel):
         search_from = 0
         for row, line in enumerate(lines[:visible_lines]):
             py = 4 * self.zoom + row * line_height
-            length = draw.textlength(line, font=font)
-            padding = TEXT_FRAME_HORIZONTAL_PADDING * self.zoom
-            px = padding if render_item.align in {"left", "justify"} else (render_width - length) / 2 if render_item.align == "center" else render_width - length - padding
             line_start = text.find(line, search_from) if line else search_from
             if line_start < 0:
                 line_start = search_from
@@ -2384,7 +2404,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 boundaries.add(max(line_start, min(line_end, int(style_run.get("start", 0)))))
                 boundaries.add(max(line_start, min(line_end, int(style_run.get("end", 0)))))
             ordered = sorted(boundaries)
-            cursor_x = px
+            fragments: list[tuple[str, dict[str, object], ImageFont.FreeTypeFont | ImageFont.ImageFont, bool, float]] = []
             for start, end in pairwise(ordered):
                 fragment = text[start:end]
                 fragment_style = text_style_at(item, start)
@@ -2404,9 +2424,17 @@ class DocumentEditorWindow(tk.Toplevel):
                     and link.get("hyperlink")
                     for link in item.text_links
                 )
+                fragment_width = float(draw.textlength(fragment, font=fragment_font))
+                fragments.append((fragment, fragment_style, fragment_font, linked, fragment_width))
+            actual_line_width = sum(fragment[4] for fragment in fragments)
+            padding = TEXT_FRAME_HORIZONTAL_PADDING * self.zoom
+            cursor_x = aligned_text_x(
+                render_width, actual_line_width, padding, render_item.align
+            )
+            for fragment, fragment_style, fragment_font, linked, fragment_width in fragments:
+                fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
                 color = "#1769AA" if linked else str(fragment_style["color"])
                 draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
-                fragment_width = draw.textlength(fragment, font=fragment_font)
                 if linked or fragment_style["underline"]:
                     underline_y = min(render_height - 1, py + fragment_size + 2)
                     draw.line(
