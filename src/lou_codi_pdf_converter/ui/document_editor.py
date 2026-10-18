@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import io
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -4273,14 +4274,31 @@ class DocumentEditorWindow(tk.Toplevel):
             except tk.TclError:
                 start = widget.index("insert linestart")
                 end = widget.index("insert lineend")
-            lines = widget.get(start, end).splitlines() or [""]
-            cleaned = [line.removeprefix("• ").strip() for line in lines]
-            value = "\n".join(
-                f"{index + 1}. {line}" if numbered else f"• {line}"
-                for index, line in enumerate(cleaned)
+            first_line = int(start.split(".", 1)[0])
+            last_line = int(end.split(".", 1)[0])
+            # Modifier seulement le préfixe de chaque paragraphe. Remplacer le
+            # bloc entier détruisait les tags Tk qui portent gras, taille,
+            # couleur, surlignage et liens.
+            for list_index, line_number in reversed(
+                list(enumerate(range(first_line, last_line + 1), start=1))
+            ):
+                line_start = f"{line_number}.0"
+                content = widget.get(line_start, f"{line_start} lineend")
+                prefix_length = 0
+                if content.startswith("• "):
+                    prefix_length = 2
+                else:
+                    match = re.match(r"\d+\.\s+", content)
+                    if match is not None:
+                        prefix_length = match.end()
+                if prefix_length:
+                    widget.delete(line_start, f"{line_start} + {prefix_length} chars")
+                prefix = f"{list_index}. " if numbered else "• "
+                widget.insert(line_start, prefix)
+            self._editing_selection_range = (
+                self._text_character_offset(widget, f"{first_line}.0"),
+                self._text_character_offset(widget, f"{last_line}.0 lineend"),
             )
-            widget.delete(start, end)
-            widget.insert(start, value)
             widget.focus_set()
             return
         self._checkpoint()
@@ -6548,6 +6566,13 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_alignment_tags = {}
         if render:
             self._render()
+            if item is not None and item.kind == "text":
+                # Les PhotoImage riches sont créées pendant le même événement
+                # que la destruction du widget d'édition. Sur certains bureaux
+                # Linux/Tk, cette première image peut ne jamais être peinte.
+                # Une reprise ciblée au cycle graphique suivant stabilise le
+                # cadre sans relancer le rendu de toute la page.
+                self.after_idle(lambda target=item: self._redraw_text_chain(target))
 
     def _mutate(self, mutation: object) -> None:
         if self.selected is not None:
