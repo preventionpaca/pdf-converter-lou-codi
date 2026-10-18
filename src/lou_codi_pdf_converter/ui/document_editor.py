@@ -583,6 +583,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_original_align = "left"
         self._editing_selection_range: tuple[int, int] | None = None
+        self._editing_drag_anchor: str | None = None
         self._editing_text_context_menu: tk.Menu | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
@@ -5215,13 +5216,11 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bindtags((str(widget), "Text"))
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
-        widget.bind(
-            "<ButtonRelease-1>",
-            lambda _event, current=widget: self.after_idle(
-                lambda current=current: self._remember_inline_text_selection(current)
-            ),
-            add="+",
-        )
+        widget.bind("<Button-1>", self._inline_text_mouse_press)
+        widget.bind("<B1-Motion>", self._inline_text_mouse_drag)
+        widget.bind("<ButtonRelease-1>", self._inline_text_mouse_release)
+        widget.bind("<Double-Button-1>", self._inline_text_select_word)
+        widget.bind("<Triple-Button-1>", self._inline_text_select_line)
         widget.bind(
             "<KeyRelease>",
             lambda _event: self.after_idle(
@@ -5239,6 +5238,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_original_align = item.align
         self._editing_selection_range = None
+        self._editing_drag_anchor = None
         self._editing_word_range = None
         self.canvas.create_window(
             x,
@@ -5362,6 +5362,76 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(
             text="Saisie directe : double-clic = mot, clic-glissé = passage, clic droit = mise en forme, Tab = retrait."
         )
+
+    def _inline_text_mouse_press(self, event: tk.Event[tk.Text]) -> str:
+        widget = event.widget
+        index = widget.index(f"@{event.x},{event.y}")
+        widget.focus_set()
+        widget.mark_set("insert", index)
+        widget.tag_remove("sel", "1.0", "end")
+        self._editing_drag_anchor = index
+        self._editing_selection_range = None
+        return "break"
+
+    def _inline_text_mouse_drag(self, event: tk.Event[tk.Text]) -> str:
+        widget = event.widget
+        if self._editing_drag_anchor is None:
+            return "break"
+        current = widget.index(f"@{event.x},{event.y}")
+        anchor = self._editing_drag_anchor
+        widget.tag_remove("sel", "1.0", "end")
+        if widget.compare(current, "<", anchor):
+            start, end = current, anchor
+        else:
+            start, end = anchor, current
+        if widget.compare(start, "!=", end):
+            widget.tag_add("sel", start, end)
+            widget.mark_set("insert", end)
+        return "break"
+
+    def _inline_text_mouse_release(self, event: tk.Event[tk.Text]) -> str:
+        widget = event.widget
+        self._editing_drag_anchor = None
+        self._remember_inline_text_selection(widget)
+        return "break"
+
+    def _inline_text_select_word(self, event: tk.Event[tk.Text]) -> str:
+        widget = event.widget
+        text = widget.get("1.0", "end-1c")
+        position = min(self._text_character_offset(widget, f"@{event.x},{event.y}"), len(text))
+        if not text:
+            return "break"
+        if position == len(text):
+            position -= 1
+
+        def same_word(character: str) -> bool:
+            return character.isalnum() or character in "_’-'‑-"
+
+        word_character = same_word(text[position])
+        start = position
+        end = position + 1
+        while start > 0 and same_word(text[start - 1]) == word_character and text[start - 1] != "\n":
+            start -= 1
+        while end < len(text) and same_word(text[end]) == word_character and text[end] != "\n":
+            end += 1
+        widget.tag_remove("sel", "1.0", "end")
+        widget.tag_add("sel", f"1.0 + {start} chars", f"1.0 + {end} chars")
+        widget.mark_set("insert", f"1.0 + {end} chars")
+        self._editing_drag_anchor = None
+        self._remember_inline_text_selection(widget)
+        return "break"
+
+    def _inline_text_select_line(self, event: tk.Event[tk.Text]) -> str:
+        widget = event.widget
+        index = widget.index(f"@{event.x},{event.y}")
+        start = widget.index(f"{index} linestart")
+        end = widget.index(f"{index} lineend")
+        widget.tag_remove("sel", "1.0", "end")
+        widget.tag_add("sel", start, end)
+        widget.mark_set("insert", end)
+        self._editing_drag_anchor = None
+        self._remember_inline_text_selection(widget)
+        return "break"
 
     def _insert_inline_tab(self, _event: object = None) -> str:
         widget = self._editing_widget
@@ -6198,6 +6268,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_styles = []
         self._editing_original_align = "left"
         self._editing_selection_range = None
+        self._editing_drag_anchor = None
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
