@@ -2396,6 +2396,16 @@ class DocumentEditorWindow(tk.Toplevel):
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
         self._show_properties()
         self._update_contextual_ribbon()
+        if self.selected is not None and self.selected < len(self.document.objects):
+            selected_item = self.document.objects[self.selected]
+            if selected_item.kind == "text":
+                # Tk peut différer la création du bitmap riche d'une zone de
+                # texte quand plusieurs commandes s'enchaînent. Repeindre
+                # uniquement cette zone au cycle suivant évite le cadre blanc
+                # sans recalculer toute la page.
+                self.after_idle(
+                    lambda target=selected_item: self._redraw_text_chain(target)
+                )
 
     def _update_contextual_ribbon(self) -> None:
         """Only expose commands that apply to the selected object."""
@@ -6626,13 +6636,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_alignment_tags = {}
         if render:
             self._render()
-            if item is not None and item.kind == "text":
-                # Les PhotoImage riches sont créées pendant le même événement
-                # que la destruction du widget d'édition. Sur certains bureaux
-                # Linux/Tk, cette première image peut ne jamais être peinte.
-                # Une reprise ciblée au cycle graphique suivant stabilise le
-                # cadre sans relancer le rendu de toute la page.
-                self.after_idle(lambda target=item: self._redraw_text_chain(target))
 
     def _mutate(self, mutation: object) -> None:
         if self.selected is not None:
