@@ -600,6 +600,11 @@ class DocumentEditorWindow(tk.Toplevel):
             "area": tk.BooleanVar(value=False),
             "segments": tk.BooleanVar(value=False),
         }
+        self.palette_visible_vars = {
+            key: tk.BooleanVar(value=key == "shapes")
+            for key in ("shapes", "profile", "assembly", "hatches", "measurements", "table", "formatting")
+        }
+        self.tool_palettes: dict[str, tk.Widget] = {}
         self._pending_right_triangle: tuple[int, int] | None = None
         self._triangle_property_originals: dict[str, float] = {}
         self._circle_property_originals: dict[str, float] = {}
@@ -1009,28 +1014,83 @@ class DocumentEditorWindow(tk.Toplevel):
         xbar.grid(row=1, column=0, sticky="ew")
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
-        self.shapes_palette = ttk.LabelFrame(canvas_frame, text="FORMES", padding=5)
-        palette_actions = (
-            ("▭", lambda: self._start_rectangle(False), "Rectangle orienté"),
-            ("□", lambda: self._start_rectangle(True), "Carré orienté"),
-            ("○", lambda: self._add_shape("circle"), "Cercle paramétrique"),
-            ("⬭", lambda: self._add_shape("ellipse"), "Ellipse"),
-            ("△", lambda: self._start_triangle(False), "Triangle quelconque"),
-            ("◿", lambda: self._start_triangle(True), "Triangle rectangle"),
-            ("⌔", lambda: self._add_shape("trapezoid"), "Trapèze"),
-            ("➜", lambda: self._add_shape("arrow"), "Flèche"),
-            ("／", self._add_line, "Trait libre"),
-            ("⌁", self._start_polyline, "Polyligne / profil"),
-        )
-        for index, (symbol, command, help_text) in enumerate(palette_actions):
-            button = ttk.Button(
-                self.shapes_palette, text=symbol, command=command,
-                width=3, style="EditorTool.TButton",
-            )
-            button.grid(row=index // 2, column=index % 2, padx=2, pady=2, sticky="ew")
-            self._add_tooltip(button, help_text)
-        self.shapes_palette.place(x=10, y=10, anchor="nw")
-        self.shapes_palette.lift()
+        self.palette_dock = tk.Frame(canvas_frame, bg="#C8D0DA")
+        self.palette_dock.place(x=10, y=10, anchor="nw")
+        palette_definitions = {
+            "shapes": ("FORMES", (
+                ("▭", lambda: self._start_rectangle(False), "Rectangle orienté"),
+                ("□", lambda: self._start_rectangle(True), "Carré orienté"),
+                ("○", lambda: self._add_shape("circle"), "Cercle paramétrique"),
+                ("⬭", lambda: self._add_shape("ellipse"), "Ellipse"),
+                ("△", lambda: self._start_triangle(False), "Triangle quelconque"),
+                ("◿", lambda: self._start_triangle(True), "Triangle rectangle"),
+                ("⌔", lambda: self._add_shape("trapezoid"), "Trapèze"),
+                ("➜", lambda: self._add_shape("arrow"), "Flèche"),
+                ("／", self._add_line, "Trait libre"),
+                ("⌁", self._start_polyline, "Polyligne / profil"),
+            )),
+            "profile": ("PROFIL", (
+                ("╱", self._chamfer_selected, "Chanfrein entre deux traits"),
+                ("⌒", self._treat_shape_corner, "Traiter les coins de la forme"),
+                ("⌘", self._merge_rectangles_as_profile, "Fusionner deux rectangles"),
+                ("┄", self._add_axis, "Ajouter un axe"),
+                ("3D", self._show_revolution_preview, "Aperçu de révolution"),
+                ("⇋", self._mirror_copy_about_axis, "Symétrie autour de l’axe avec copie"),
+            )),
+            "assembly": ("ASSEMBLAGE", (
+                ("▣", self._group_selected, "Assembler la sélection"),
+                ("□", self._ungroup_selected, "Dissocier"),
+                ("≋", self._snap_selected_edges, "Rendre deux bords confondus"),
+                ("↔", self._start_driving_dimension, "Cote pilotante entre deux bords"),
+                ("⇤", lambda: self._align_objects("left"), "Aligner à gauche"),
+                ("↕", lambda: self._align_objects("middle"), "Aligner verticalement"),
+                ("−", lambda: self._scale_selected_assembly(0.9), "Réduire l’assemblage"),
+                ("+", lambda: self._scale_selected_assembly(1.1), "Agrandir l’assemblage"),
+            )),
+            "hatches": ("HACHURES", (
+                ("×", self._remove_selected_hatches, "Enlever toutes les hachures"),
+                ("╱", lambda: self._hatch_selected("steel"), "Acier"),
+                ("〽", lambda: self._hatch_selected("aluminium"), "Aluminium"),
+                ("▨", lambda: self._hatch_selected("cast_iron"), "Fonte"),
+                ("▦", lambda: self._hatch_selected("cross"), "Hachures croisées"),
+                ("║", lambda: self._hatch_selected("vertical"), "Hachures verticales"),
+                ("…", lambda: self._hatch_selected("custom"), "Hachures personnalisées"),
+            )),
+            "measurements": ("MESURES", (
+                ("📏", self._start_measurement, "Distance et orientation"),
+                ("↔", self._start_dimension_measurement, "Cote avec lignes de rappel"),
+                ("∠", self._start_angle_measurement, "Angle intérieur"),
+                ("Ø", self._dimension_selected_circle, "Coter le cercle"),
+                ("A", self._measure_selected_area, "Calculer l’aire"),
+                ("Éch", self._start_scale_calibration, "Étalonner l’échelle"),
+            )),
+            "table": ("TABLEAU", (
+                ("▦", self._add_table, "Insérer un tableau"),
+                ("▥", lambda: self._add_chart("bar"), "Graphique en barres"),
+                ("◔", lambda: self._add_chart("pie"), "Camembert"),
+                ("R+", lambda: self._change_table_structure("insert_row_after"), "Ajouter une ligne"),
+                ("R−", lambda: self._change_table_structure("delete_row"), "Supprimer la ligne"),
+                ("C+", lambda: self._change_table_structure("insert_column_after"), "Ajouter une colonne"),
+                ("C−", lambda: self._change_table_structure("delete_column"), "Supprimer la colonne"),
+                ("▦", lambda: self._set_table_border_preset("standard"), "Quadrillage standard"),
+                ("▣", lambda: self._set_table_border_preset("outer"), "Contour extérieur épais"),
+            )),
+            "formatting": ("MISE EN FORME", (
+                ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
+                ("G", lambda: self._toggle("bold"), "Gras"),
+                ("I", lambda: self._toggle("italic"), "Italique"),
+                ("S̲", lambda: self._toggle("underline"), "Souligné"),
+                ("B̶", lambda: self._toggle("strikethrough"), "Barré"),
+                ("⇤", lambda: self._align("left"), "Aligner à gauche"),
+                ("↔", lambda: self._align("center"), "Centrer"),
+                ("⇥", lambda: self._align("right"), "Aligner à droite"),
+                ("🖌", self._copy_format, "Copier la mise en forme"),
+                ("✓", self._apply_format, "Appliquer la mise en forme"),
+            )),
+        }
+        for key, (title, actions) in palette_definitions.items():
+            self._create_tool_palette(key, title, actions)
+        self.palette_dock.lift()
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
@@ -1315,6 +1375,23 @@ class DocumentEditorWindow(tk.Toplevel):
             command=self._toggle_ribbon,
         )
         view_menu.add_separator()
+        palettes_menu = tk.Menu(view_menu, tearoff=False)
+        for key, label in (
+            ("shapes", "Formes"),
+            ("profile", "Profil"),
+            ("assembly", "Assemblage"),
+            ("hatches", "Hachures"),
+            ("measurements", "Mesures et cotations"),
+            ("table", "Tableau"),
+            ("formatting", "Mise en forme"),
+        ):
+            palettes_menu.add_checkbutton(
+                label=label,
+                variable=self.palette_visible_vars[key],
+                command=lambda palette_key=key: self._set_palette_visibility(palette_key),
+            )
+        view_menu.add_cascade(label="Panneaux d’outils", menu=palettes_menu)
+        view_menu.add_separator()
         size_menu = tk.Menu(view_menu, tearoff=False)
         size_menu.add_radiobutton(
             label="Petites icônes",
@@ -1525,6 +1602,58 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Enter>", enter, add="+")
         widget.bind("<Leave>", hide, add="+")
         widget.bind("<ButtonPress>", hide, add="+")
+
+    def _create_tool_palette(
+        self,
+        key: str,
+        title: str,
+        actions: tuple[tuple[str, object, str], ...],
+    ) -> None:
+        palette = tk.Frame(
+            self.palette_dock,
+            bg="#EDF3F8",
+            bd=1,
+            relief="solid",
+            padx=4,
+            pady=3,
+        )
+        header = tk.Frame(palette, bg="#193F6A")
+        header.pack(fill="x", pady=(0, 3))
+        tk.Label(
+            header, text=title, bg="#193F6A", fg="white",
+            font=("Sans", 8, "bold"), padx=5, pady=2,
+        ).pack(side="left", fill="x", expand=True)
+        tk.Button(
+            header, text="×", command=lambda: self._close_tool_palette(key),
+            bg="#193F6A", fg="white", activebackground="#C74848",
+            activeforeground="white", relief="flat", padx=5, pady=0,
+        ).pack(side="right")
+        tools = ttk.Frame(palette)
+        tools.pack(fill="x")
+        for index, (symbol, command, help_text) in enumerate(actions):
+            button = ttk.Button(
+                tools, text=symbol, command=command, width=4,
+                style="EditorTool.TButton",
+            )
+            button.grid(row=index // 5, column=index % 5, padx=1, pady=1, sticky="ew")
+            self._add_tooltip(button, help_text)
+        self.tool_palettes[key] = palette
+        self._set_palette_visibility(key)
+
+    def _close_tool_palette(self, key: str) -> None:
+        self.palette_visible_vars[key].set(False)
+        self._set_palette_visibility(key)
+
+    def _set_palette_visibility(self, key: str) -> None:
+        palette = self.tool_palettes.get(key)
+        if palette is None:
+            return
+        if self.palette_visible_vars[key].get():
+            if not palette.winfo_manager():
+                palette.pack(anchor="nw", fill="x", pady=(0, 5))
+        elif palette.winfo_manager():
+            palette.pack_forget()
+        self.palette_dock.lift()
 
     def _toggle_properties_panel(self) -> None:
         visible = self.properties_visible.get()
@@ -3135,8 +3264,27 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         px = self.page_x + point[0] * self.zoom
         py = self.page_y + point[1] * self.zoom
-        self.canvas.create_oval(px - 6, py - 6, px + 6, py + 6, outline="#14804A", width=2, tags=("snap-preview",))
+        self.canvas.create_oval(
+            px - 6, py - 6, px + 6, py + 6,
+            fill="#D9F5E5", outline="#14804A", width=2,
+            tags=("snap-preview",),
+        )
         self.canvas.create_text(px + 9, py - 9, text=f"Accroché : {label}", anchor="sw", fill="#14804A", font=("Sans", 8, "bold"), tags=("snap-preview",))
+
+    def _draw_measurement_anchor_markers(self) -> None:
+        self.canvas.delete("measurement-anchor")
+        for number, point in enumerate(self._measurement_points, start=1):
+            px = self.page_x + point[0] * self.zoom
+            py = self.page_y + point[1] * self.zoom
+            self.canvas.create_oval(
+                px - 7, py - 7, px + 7, py + 7,
+                fill="#21A366", outline="white", width=2,
+                tags=("measurement-anchor",),
+            )
+            self.canvas.create_text(
+                px, py, text=str(number), fill="white",
+                font=("Sans", 8, "bold"), tags=("measurement-anchor",),
+            )
 
     def _draw_line_preview(self, cursor: tuple[float, float], snap_label: str = "") -> None:
         self.canvas.delete("line-preview")
@@ -3378,6 +3526,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self._measurement_refs.clear()
             self.canvas.delete("dimension-preview")
             self.canvas.delete("snap-preview")
+            self.canvas.delete("measurement-anchor")
             self.canvas.configure(cursor="")
             self.status.configure(text="Mesure annulée.")
             return "break"
@@ -6294,6 +6443,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 return
         self._measurement_mode = "measure"
         self._measurement_points.clear()
+        self.canvas.delete("measurement-anchor")
         self.canvas.configure(cursor="crosshair")
         self.status.configure(text="Mesure : cliquez sur le premier point, puis sur le second. Échap annule.")
 
@@ -6302,6 +6452,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._measurement_points.clear()
         self._measurement_refs.clear()
         self.canvas.delete("dimension-preview")
+        self.canvas.delete("measurement-anchor")
         self.canvas.configure(cursor="crosshair")
         self.status.configure(
             text="Cotation : cliquez deux points, arêtes ou sommets, puis placez la ligne de cote. Échap annule."
@@ -6392,6 +6543,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_angle_measurement(self) -> None:
         self._measurement_mode = "angle"
         self._measurement_points.clear()
+        self.canvas.delete("measurement-anchor")
         self.canvas.configure(cursor="crosshair")
         self.status.configure(
             text="Angle : cliquez un point du premier côté, le sommet, puis un point du second côté."
@@ -6566,6 +6718,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_scale_calibration(self) -> None:
         self._measurement_mode = "calibrate"
         self._measurement_points.clear()
+        self.canvas.delete("measurement-anchor")
         self.canvas.configure(cursor="crosshair")
         self.status.configure(
             text="Étalonnage : cliquez sur les deux extrémités d’une longueur connue du plan."
@@ -6591,6 +6744,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self._measurement_refs.clear()
             self.canvas.delete("dimension-preview")
             self.canvas.delete("snap-preview")
+            self.canvas.delete("measurement-anchor")
             self.canvas.configure(cursor="")
             self._add_object(PageObject(
                 "dimension", self.current_page, start[0], start[1],
@@ -6609,6 +6763,7 @@ class DocumentEditorWindow(tk.Toplevel):
         else:
             snapped, snap_label = self._snap_drawing_point(x, y)
         self._measurement_points.append(snapped)
+        self._draw_measurement_anchor_markers()
         if self._measurement_mode == "angle" and len(self._measurement_points) < 3:
             instruction = "Cliquez maintenant le sommet." if len(self._measurement_points) == 1 else "Cliquez un point du second côté."
             self.status.configure(text=(f"Point accroché sur une {snap_label}. " if snap_label else "Point mémorisé. ") + instruction)
@@ -6625,6 +6780,7 @@ class DocumentEditorWindow(tk.Toplevel):
             first, vertex, second = self._measurement_points[:3]
             self._measurement_mode = ""
             self._measurement_points.clear()
+            self.canvas.delete("measurement-anchor")
             self.canvas.configure(cursor="")
             self.canvas.delete("snap-preview")
             try:
@@ -6651,6 +6807,7 @@ class DocumentEditorWindow(tk.Toplevel):
         mode = self._measurement_mode
         self._measurement_mode = ""
         self._measurement_points.clear()
+        self.canvas.delete("measurement-anchor")
         self.canvas.configure(cursor="")
         self.canvas.delete("snap-preview")
         if raw_mm <= 1e-9:
