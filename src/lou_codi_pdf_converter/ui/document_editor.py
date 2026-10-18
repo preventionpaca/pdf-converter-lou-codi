@@ -544,6 +544,8 @@ class DocumentEditorWindow(tk.Toplevel):
         project_path: Path | None = None,
     ) -> None:
         super().__init__(parent, class_="Loucodiworkshop")
+        # Build the complete editor off-screen so palettes never appear half-painted.
+        self.withdraw()
         self.template_mode = template_mode
         self.title(("Créer un modèle" if template_mode else "Créer un document") + " — Lou Còdi Workshop")
         self.configure(bg=BACKGROUND)
@@ -667,9 +669,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self._toggle_properties_panel()
         translate_widget_tree(self)
+        self.update_idletasks()
+        self._render()
+        self.deiconify()
         maximize_window(self)
         make_modal(self, parent)
-        self.after_idle(self._render)
 
     def _build(self) -> None:
         self._build_menu()
@@ -6076,6 +6080,10 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags = {}
         if render:
             self._render()
+        elif item is not None and item.kind == "text":
+            # The canvas copy below the live editor may still contain the initial
+            # blank text. Refresh it immediately before another tool takes over.
+            self._redraw_text_chain(item)
 
     def _mutate(self, mutation: object) -> None:
         if self.selected is not None:
