@@ -70,6 +70,33 @@ class _StatusRecorder:
         self.text = text
 
 
+class _BooleanValue:
+    def __init__(self, value: bool) -> None:
+        self.value = value
+
+    def get(self) -> bool:
+        return self.value
+
+
+def test_measurement_label_contains_only_requested_fields() -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument()
+    editor.measurement_label_vars = {
+        key: _BooleanValue(key == "area")
+        for key in ("distance", "angle", "perimeter", "area", "segments")
+    }
+    rectangle = PageObject(
+        "polyline", 0, 0, 0, 100, 50,
+        points=[[0, 0], [100, 0], [100, 50], [0, 50], [0, 0]],
+    )
+
+    label = editor._measurement_label_for_item(rectangle)
+
+    assert label.startswith("A = ")
+    assert "segment" not in label
+    assert "P =" not in label
+
+
 def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
     project = tmp_path / "modele.loucodi-document"
     target = tmp_path / "resultat.pdf"

@@ -561,6 +561,13 @@ class DocumentEditorWindow(tk.Toplevel):
         self._measurement_points: list[tuple[float, float]] = []
         self.write_measurement_var = tk.BooleanVar(value=False)
         self.show_measurement_length_var = tk.BooleanVar(value=False)
+        self.measurement_label_vars = {
+            "distance": tk.BooleanVar(value=True),
+            "angle": tk.BooleanVar(value=False),
+            "perimeter": tk.BooleanVar(value=False),
+            "area": tk.BooleanVar(value=False),
+            "segments": tk.BooleanVar(value=False),
+        }
         self._pending_right_triangle: tuple[int, int] | None = None
         self._triangle_property_originals: dict[str, float] = {}
         self._circle_property_originals: dict[str, float] = {}
@@ -785,6 +792,7 @@ class DocumentEditorWindow(tk.Toplevel):
         structure_button.pack(side="left", padx=4, pady=3)
         self._buttons(tools, (
             ("📏", self._start_measurement, "Mesurer librement deux points"),
+            ("↔", self._start_dimension_measurement, "Créer une cote avec lignes de rappel"),
             ("∠", self._start_angle_measurement, "Mesurer un angle intérieur avec trois points"),
         ), color="#DDF3E7")
         self._buttons(layout, (
@@ -1126,7 +1134,19 @@ class DocumentEditorWindow(tk.Toplevel):
             panel,
             text="Inscrire la mesure sur le plan",
             variable=self.write_measurement_var,
-        ).pack(anchor="w", pady=(0, 5))
+        ).pack(anchor="w", pady=(0, 2))
+        measurement_choices = ttk.LabelFrame(panel, text="Informations à inscrire", padding=5)
+        measurement_choices.pack(fill="x", pady=(0, 5))
+        for column, (key, label) in enumerate((
+            ("distance", "Distance / longueur"),
+            ("angle", "Angle"),
+            ("perimeter", "Périmètre"),
+            ("area", "Aire"),
+            ("segments", "Nombre de segments"),
+        )):
+            ttk.Checkbutton(
+                measurement_choices, text=label, variable=self.measurement_label_vars[key]
+            ).grid(row=column // 2, column=column % 2, sticky="w", padx=(0, 8))
         ttk.Checkbutton(
             panel,
             text="Afficher aussi la longueur de prise de cote",
@@ -3668,6 +3688,11 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._commit_inline_editor(render=False)
         self.canvas.focus_set()
+        if self._measurement_mode:
+            page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+            page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+            self._capture_measurement_point(page_x, page_y)
+            return
         if self._start_rotation_drag_if_hit(event):
             return
         if self._drawing_text:
@@ -3677,11 +3702,6 @@ class DocumentEditorWindow(tk.Toplevel):
             if 0 <= page_x <= width and 0 <= page_y <= height:
                 self._text_draw_start = (page_x, page_y)
                 self.canvas.delete("text-frame-preview")
-            return
-        if self._measurement_mode:
-            page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
-            page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
-            self._capture_measurement_point(page_x, page_y)
             return
         if self._pending_right_triangle is not None:
             page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
@@ -6010,7 +6030,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 summary = f"Angle entre les deux traits : {angle:.1f}°"
                 self.measurement_result.configure(text=summary)
                 self.status.configure(text=summary)
-                if self.write_measurement_var.get():
+                if self.write_measurement_var.get() and self.measurement_label_vars["angle"].get():
                     center_x = (first.x + first.width / 2 + second.x + second.width / 2) / 2
                     center_y = (first.y + first.height / 2 + second.y + second.height / 2) / 2
                     self._write_measurement_label(f"∠ {angle:.1f}°", center_x + 10, center_y - 24)
@@ -6022,12 +6042,13 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.measurement_result.configure(text=summary)
                 self.status.configure(text=summary)
                 if self.write_measurement_var.get():
-                    if item.kind == "line":
-                        scale = 25.4 / 72 * self.document.measurement_scale
-                        label = f"{math.hypot(item.width, item.height) * scale:.2f} mm  ∠ {self._object_angle(item):.1f}°"
-                    else:
-                        label = summary
-                    self._write_measurement_label(label, item.x + item.width / 2 + 8, item.y + item.height / 2 - 22)
+                    label = self._measurement_label_for_item(item)
+                    if label:
+                        self._write_measurement_label(
+                            label,
+                            item.x + item.width / 2 + 8,
+                            item.y + item.height / 2 - 22,
+                        )
                 return
         self._measurement_mode = "measure"
         self._measurement_points.clear()
@@ -6114,7 +6135,7 @@ class DocumentEditorWindow(tk.Toplevel):
         result = f"Aire du contour : {area:.2f} mm²"
         self.measurement_result.configure(text=result)
         self.status.configure(text=result)
-        if self.write_measurement_var.get():
+        if self.write_measurement_var.get() and self.measurement_label_vars["area"].get():
             self._write_measurement_label(
                 f"A = {area:.2f} mm²",
                 item.x + item.width / 2 + 8,
@@ -6238,6 +6259,50 @@ class DocumentEditorWindow(tk.Toplevel):
             return f"Dimensions : {abs(item.width) * scale:.2f} × {abs(item.height) * scale:.2f} mm"
         return ""
 
+    def _measurement_label_for_item(self, item: PageObject) -> str:
+        """Build only the measurement fields explicitly requested for the drawing."""
+        scale = 25.4 / 72 * self.document.measurement_scale
+        fields: list[str] = []
+        if item.kind == "line":
+            if self.measurement_label_vars["distance"].get():
+                fields.append(f"L = {math.hypot(item.width, item.height) * scale:.2f} mm")
+            if self.measurement_label_vars["angle"].get():
+                fields.append(f"∠ {self._object_angle(item):.1f}°")
+            return "  •  ".join(fields)
+
+        outline = self._closed_outline(item)
+        if item.kind == "shape" and item.shape == "circle":
+            diameter = abs(item.width) * scale
+            if self.measurement_label_vars["distance"].get():
+                fields.append(f"Ø {diameter:.2f} mm")
+            if self.measurement_label_vars["perimeter"].get():
+                fields.append(f"P = {math.pi * diameter:.2f} mm")
+            if self.measurement_label_vars["area"].get():
+                fields.append(f"A = {math.pi * (diameter / 2) ** 2:.2f} mm²")
+            return "  •  ".join(fields)
+
+        if item.kind == "polyline" and len(item.points) >= 2:
+            length = sum(math.dist(first, second) for first, second in pairwise(item.points)) * scale
+            if self.measurement_label_vars["distance"].get() and not outline:
+                fields.append(f"L = {length:.2f} mm")
+            if self.measurement_label_vars["perimeter"].get() and outline:
+                fields.append(f"P = {length:.2f} mm")
+            if self.measurement_label_vars["area"].get() and outline:
+                fields.append(f"A = {polygon_area(outline) * scale * scale:.2f} mm²")
+            if self.measurement_label_vars["segments"].get():
+                fields.append(f"{len(item.points) - 1} segment(s)")
+            return "  •  ".join(fields)
+
+        if self.measurement_label_vars["distance"].get():
+            fields.append(f"{abs(item.width) * scale:.2f} × {abs(item.height) * scale:.2f} mm")
+        if self.measurement_label_vars["perimeter"].get() and outline:
+            fields.append(
+                f"P = {sum(math.dist(first, second) for first, second in pairwise(outline)) * scale:.2f} mm"
+            )
+        if self.measurement_label_vars["area"].get() and outline:
+            fields.append(f"A = {polygon_area(outline) * scale * scale:.2f} mm²")
+        return "  •  ".join(fields)
+
     def _write_measurement_label(self, text: str, x: float, y: float) -> None:
         self._checkpoint()
         self.document.objects.append(
@@ -6319,7 +6384,7 @@ class DocumentEditorWindow(tk.Toplevel):
             result = f"Angle intérieur : {angle:.1f}°{length_detail}"
             self.measurement_result.configure(text=result)
             self.status.configure(text=result)
-            if self.write_measurement_var.get():
+            if self.write_measurement_var.get() and self.measurement_label_vars["angle"].get():
                 label = f"∠ {angle:.1f}°"
                 if self.show_measurement_length_var.get():
                     label += f"  ({first_length:.1f} / {second_length:.1f} mm)"
@@ -6358,30 +6423,32 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text=result)
         if self.write_measurement_var.get():
             self._checkpoint()
-            self.document.objects.append(
-                PageObject(
-                    "dimension",
-                    self.current_page,
-                    start[0],
-                    start[1],
-                    end[0] - start[0],
-                    end[1] - start[1],
-                    text=f"{measured_mm:.2f}",
-                    border_color="#1769AA",
-                    border_width=1,
-                    points=[[start[0], start[1]], [end[0], end[1]]],
+            if self.measurement_label_vars["distance"].get():
+                self.document.objects.append(
+                    PageObject(
+                        "dimension",
+                        self.current_page,
+                        start[0],
+                        start[1],
+                        end[0] - start[0],
+                        end[1] - start[1],
+                        text=f"{measured_mm:.2f}",
+                        border_color="#1769AA",
+                        border_width=1,
+                        points=[[start[0], start[1]], [end[0], end[1]]],
+                    )
                 )
-            )
-            self.document.objects.append(
-                PageObject(
-                    "text", self.current_page,
-                    (start[0] + end[0]) / 2 + 8,
-                    (start[1] + end[1]) / 2 - 26,
-                    85, 24, text=f"∠ {angle:.1f}°", font_size=10, bold=True,
-                    color="#1769AA", fill="transparent", border_color="transparent",
-                    source_id="measurement",
+            if self.measurement_label_vars["angle"].get():
+                self.document.objects.append(
+                    PageObject(
+                        "text", self.current_page,
+                        (start[0] + end[0]) / 2 + 8,
+                        (start[1] + end[1]) / 2 - 26,
+                        85, 24, text=f"∠ {angle:.1f}°", font_size=10, bold=True,
+                        color="#1769AA", fill="transparent", border_color="transparent",
+                        source_id="measurement",
+                    )
                 )
-            )
             self._render()
             self.canvas.update_idletasks()
 
