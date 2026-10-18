@@ -972,8 +972,10 @@ def test_qt_text_editor_result_updates_the_document(monkeypatch) -> None:
     rendered = []
     editor._render = lambda: rendered.append(True)
 
-    def run(command, check):
+    def run(command, check, **kwargs):
         assert check is False
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
         assert "lou_codi_pdf_converter.ui.qt_text_editor" in command
         Path(command[-1]).write_text(
             '{"text":"Texte Qt","text_styles":[{"start":0,"end":5,"bold":true}],'

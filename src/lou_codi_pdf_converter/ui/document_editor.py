@@ -4,6 +4,7 @@ import copy
 import io
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -5196,14 +5197,28 @@ class DocumentEditorWindow(tk.Toplevel):
                         str(output_path),
                     ]
                 )
-                completed = subprocess.run(command, check=False)
+                environment = os.environ.copy()
+                qt_runtime = Path(sys.prefix) / "lib" / "qt-runtime"
+                if qt_runtime.is_dir():
+                    existing = environment.get("LD_LIBRARY_PATH", "")
+                    environment["LD_LIBRARY_PATH"] = str(qt_runtime) + (
+                        f":{existing}" if existing else ""
+                    )
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                )
             finally:
                 if grabbed and self.winfo_exists():
                     self.grab_set()
             if completed.returncode != 0 or not output_path.is_file():
                 messagebox.showerror(
                     "Éditeur de texte indisponible",
-                    "L’éditeur Qt n’a pas pu être lancé. Réinstallez Lou Còdi avec ses dépendances.",
+                    "L’éditeur Qt n’a pas pu être lancé. "
+                    "Sous Linux, vérifiez que le paquet libxcb-cursor0 est installé.",
                     parent=self,
                 )
                 return

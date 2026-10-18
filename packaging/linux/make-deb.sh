@@ -68,6 +68,7 @@ Architecture: amd64
 Depends: libc6
 Installed-Size: $installed_size
 Maintainer: Lou Còdi <contact@lou-codi.fr>
+Depends: libxcb-cursor0
 Homepage: https://github.com/preventionpaca/pdf-converter-lou-codi
 Description: Outils locaux pour les PDF, documents et travaux d'atelier
  Lou Còdi Workshop rassemble PDF Studio, Document Studio et les outils
