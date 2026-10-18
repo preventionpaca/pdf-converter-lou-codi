@@ -582,7 +582,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags: dict[str, dict[str, object]] = {}
         self._editing_original_styles: list[dict[str, object]] = []
         self._editing_selection_range: tuple[int, int] | None = None
-        self._editing_word_range: tuple[str, str] | None = None
+        self._editing_selection_locked = False
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -5134,27 +5134,32 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._editing_selection_range = (start, end) if end > start else None
 
-    def _prepare_inline_word_selection(self, event: tk.Event[tk.Text]) -> None:
-        """Remember the exact word under a double-click without replacing Tk bindings."""
+    def _select_inline_word(self, event: tk.Event[tk.Text]) -> str:
+        """Select one word and stop Tk from promoting it to a line selection."""
         widget = event.widget
         index = widget.index(f"@{event.x},{event.y}")
-        self._editing_word_range = (
-            widget.index(f"{index} wordstart"),
-            widget.index(f"{index} wordend"),
+        start = widget.index(f"{index} wordstart")
+        end = widget.index(f"{index} wordend")
+        widget.tag_remove("sel", "1.0", "end")
+        widget.tag_add("sel", start, end)
+        widget.mark_set("insert", end)
+        widget.tag_raise("sel")
+        self._editing_selection_range = (
+            self._text_character_offset(widget, start),
+            self._text_character_offset(widget, end),
         )
+        self._editing_selection_locked = True
+        return "break"
+
+    def _drag_inline_text_selection(self, _event: tk.Event[tk.Text]) -> str | None:
+        """Keep a double-clicked word fixed until the mouse button is released."""
+        return "break" if self._editing_selection_locked else None
 
     def _finish_inline_text_selection(self, widget: tk.Text) -> None:
-        """Stabilise a double-clicked word after Tk has completed its native selection."""
+        """Freeze the deliberate selection and end the double-click lock."""
         if widget is not self._editing_widget:
             return
-        word_range = self._editing_word_range
-        self._editing_word_range = None
-        if word_range is not None:
-            start, end = word_range
-            widget.tag_remove("sel", "1.0", "end")
-            widget.tag_add("sel", start, end)
-            widget.mark_set("insert", end)
-            widget.tag_raise("sel")
+        self._editing_selection_locked = False
         self.after_idle(lambda: self._remember_inline_text_selection(widget))
 
     @staticmethod
@@ -5215,7 +5220,9 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         widget.insert("1.0", item.text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
-        widget.bind("<Double-Button-1>", self._prepare_inline_word_selection, add="+")
+        widget.bind("<Double-Button-1>", self._select_inline_word)
+        widget.bind("<Triple-Button-1>", self._select_inline_word)
+        widget.bind("<B1-Motion>", self._drag_inline_text_selection, add="+")
         widget.bind(
             "<ButtonRelease-1>",
             lambda _event, current=widget: self.after_idle(
@@ -5235,7 +5242,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = item.text
         self._editing_original_styles = copy.deepcopy(item.text_styles)
         self._editing_selection_range = None
-        self._editing_word_range = None
+        self._editing_selection_locked = False
         self.canvas.create_window(
             x,
             y,
@@ -6054,7 +6061,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_text = ""
         self._editing_original_styles = []
         self._editing_selection_range = None
-        self._editing_word_range = None
+        self._editing_selection_locked = False
         self._editing_table_cell = None
         self._editing_table_original = None
         if item is not None:
