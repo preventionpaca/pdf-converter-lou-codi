@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import tkinter as tk
+import unicodedata
 import uuid
 import webbrowser
 from itertools import pairwise
@@ -82,7 +83,12 @@ def normalize_external_text(value: str) -> str:
     value = value.replace("\v", "\n").replace("\f", "\n")
     value = value.replace("\u2028", "\n").replace("\u2029", "\n")
     value = value.replace("\u00a0", " ")
-    return "".join(character for character in value if character in "\n\t" or ord(character) >= 32)
+    value = unicodedata.normalize("NFC", value)
+    return "".join(
+        character
+        for character in value
+        if character in "\n\t" or not unicodedata.category(character).startswith("C")
+    )
 
 
 def parse_tabular_clipboard(value: str) -> list[list[dict[str, str]]]:
@@ -2396,16 +2402,6 @@ class DocumentEditorWindow(tk.Toplevel):
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
         self._show_properties()
         self._update_contextual_ribbon()
-        if self.selected is not None and self.selected < len(self.document.objects):
-            selected_item = self.document.objects[self.selected]
-            if selected_item.kind == "text":
-                # Tk peut différer la création du bitmap riche d'une zone de
-                # texte quand plusieurs commandes s'enchaînent. Repeindre
-                # uniquement cette zone au cycle suivant évite le cadre blanc
-                # sans recalculer toute la page.
-                self.after_idle(
-                    lambda target=selected_item: self._redraw_text_chain(target)
-                )
 
     def _update_contextual_ribbon(self) -> None:
         """Only expose commands that apply to the selected object."""
@@ -2734,9 +2730,52 @@ class DocumentEditorWindow(tk.Toplevel):
                     fill="" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
                     outline=outline, width=4 if emphasized else 1, tags=tags,
                 )
-            picture = self._text_preview(item, displayed_text, max(1, round(w)), max(1, round(h)))
-            self._overlay_images.append(picture)
-            self.canvas.create_image(x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags)
+            try:
+                picture = self._text_preview(
+                    item, displayed_text, max(1, round(w)), max(1, round(h))
+                )
+                self._overlay_images.append(picture)
+                self.canvas.create_image(
+                    x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags
+                )
+            except Exception as exc:
+                # Une police ou un caractère exotique ne doit jamais faire
+                # disparaître l'objet ni interrompre le rendu de la page.
+                print(
+                    f"Lou Còdi: aperçu texte simplifié ({type(exc).__name__})",
+                    file=sys.stderr,
+                )
+                dash = (
+                    (5, 3)
+                    if item.border_style == "dashed"
+                    else (1, 3) if item.border_style == "dotted" else None
+                )
+                self.canvas.create_rectangle(
+                    x,
+                    y,
+                    x + w,
+                    y + h,
+                    fill="" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
+                    outline=item.border_color if item.border_width > 0 else "",
+                    width=max(1, round(item.border_width * self.zoom)),
+                    dash=dash,
+                    tags=tags,
+                )
+                self.canvas.create_text(
+                    x + 4,
+                    y + 4,
+                    text=displayed_text,
+                    anchor="nw",
+                    width=max(5, w - 8),
+                    justify=item.align if item.align != "justify" else "left",
+                    fill=item.color,
+                    font=(
+                        self._tk_font_family(item.font_family),
+                        max(7, round(item.font_size * self.zoom)),
+                        "bold" if item.bold else "normal",
+                    ),
+                    tags=tags,
+                )
             if item.kind == "text" and emphasized:
                 selection_points = [
                     coordinate
@@ -5292,6 +5331,8 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Control-c>", self._copy_inline_text)
         widget.bind("<Control-x>", self._cut_inline_text)
         widget.bind("<Control-v>", self._paste_clean_text_widget)
+        widget.bind("<Control-V>", self._paste_clean_text_widget)
+        widget.bind("<Shift-Insert>", self._paste_clean_text_widget)
         widget.bind("<Control-z>", self._undo_inline_text)
         widget.bind("<Control-y>", self._redo_inline_text)
         widget.bind("<Control-Shift-Z>", self._redo_inline_text)
@@ -6519,7 +6560,7 @@ class DocumentEditorWindow(tk.Toplevel):
         widget = self._editing_widget
         if widget is None:
             return
-        value = widget.get("1.0", "end-1c")
+        value = normalize_external_text(widget.get("1.0", "end-1c"))
         item = next(
             (
                 candidate

@@ -925,7 +925,7 @@ def test_rotation_handle_has_a_generous_but_bounded_hit_area() -> None:
 
 
 def test_external_office_text_separators_become_line_breaks() -> None:
-    assert normalize_external_text("un\vdeux\ftrois\u2028quatre\x00") == (
+    assert normalize_external_text("un\vdeux\ftrois\u2028quatre\x00\u200b\u202e") == (
         "un\ndeux\ntrois\nquatre"
     )
 
