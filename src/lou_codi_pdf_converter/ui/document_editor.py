@@ -185,6 +185,29 @@ def dimension_line_geometry(
     )
 
 
+def dimension_label_layout(
+    start: tuple[float, float], end: tuple[float, float], gap: float = 12.0
+) -> tuple[float, float, float]:
+    """Return a readable label position and angle above a dimension line."""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        return start[0], start[1] - gap, 0.0
+    normal_x, normal_y = -dy / length, dx / length
+    if normal_y > 0:
+        normal_x, normal_y = -normal_x, -normal_y
+    angle = -math.degrees(math.atan2(dy, dx))
+    if angle > 90:
+        angle -= 180
+    elif angle < -90:
+        angle += 180
+    return (
+        (start[0] + end[0]) / 2 + normal_x * gap,
+        (start[1] + end[1]) / 2 + normal_y * gap,
+        angle,
+    )
+
+
 def point_hits_rotation_handle(
     pointer: tuple[float, float], handle: tuple[float, float], radius: float = 15.0
 ) -> bool:
@@ -559,6 +582,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.toolbar_size_var = tk.StringVar(value=toolbar_size())
         self._measurement_mode = ""
         self._measurement_points: list[tuple[float, float]] = []
+        self._measurement_refs: list[dict[str, object]] = []
         self.write_measurement_var = tk.BooleanVar(value=False)
         self.show_measurement_length_var = tk.BooleanVar(value=False)
         self.measurement_label_vars = {
@@ -1859,6 +1883,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _render(self) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
+        self._update_associative_dimensions()
         self.canvas.delete("all")
         self._overlay_images.clear()
         width, height = self._page_size()
@@ -2420,21 +2445,17 @@ class DocumentEditorWindow(tk.Toplevel):
                     width=line_width,
                     tags=tags,
                 )
-        compact = length < 75
-        label_x = x + width / 2
-        label_y = y + height / 2 - 10
-        anchor = "center"
-        if compact and length > 1:
-            label_x = x + width + width / length * 12
-            label_y = y + height + height / length * 12
-            anchor = "w" if width >= 0 else "e"
+        label_x, label_y, label_angle = dimension_label_layout(
+            (x, y), (x + width, y + height), gap=13.0
+        )
         self.canvas.create_text(
             label_x,
             label_y,
             text=f"{item.text} mm",
             fill=color,
             font=("Sans", 9, "bold"),
-            anchor=anchor,
+            anchor="center",
+            angle=label_angle,
             tags=tags,
         )
 
@@ -2919,6 +2940,91 @@ class DocumentEditorWindow(tk.Toplevel):
                 return point, label
         return (x, y), ""
 
+    def _dimension_reference_at(
+        self, x: float, y: float
+    ) -> tuple[tuple[float, float], str, dict[str, object]]:
+        threshold = max(4.0, 11.0 / self.zoom)
+        candidates: list[tuple[float, tuple[float, float], str, dict[str, object]]] = []
+        for item in self.document.objects:
+            if item.kind == "dimension" or self.current_page not in pages_for_object(
+                item, self.document.page_count
+            ):
+                continue
+            for edge_index, edge in enumerate(self._object_edges(item)):
+                dx, dy = edge.x2 - edge.x1, edge.y2 - edge.y1
+                squared_length = dx * dx + dy * dy
+                if squared_length <= 1e-12:
+                    continue
+                t = max(0.0, min(1.0, ((x - edge.x1) * dx + (y - edge.y1) * dy) / squared_length))
+                point = (edge.x1 + t * dx, edge.y1 + t * dy)
+                distance = math.dist((x, y), point)
+                label = "sommet" if t <= 0.02 or t >= 0.98 else "bord"
+                candidates.append((
+                    distance,
+                    point,
+                    label,
+                    {"object_id": item.object_id, "edge": edge_index, "t": t},
+                ))
+        if not candidates:
+            return (x, y), "", {}
+        distance, point, label, reference = min(candidates, key=lambda candidate: candidate[0])
+        if distance <= threshold:
+            return point, label, reference
+        return (x, y), "", {}
+
+    def _resolve_dimension_reference(
+        self, reference: dict[str, object]
+    ) -> tuple[float, float] | None:
+        object_id = str(reference.get("object_id", ""))
+        item = next(
+            (candidate for candidate in self.document.objects if candidate.object_id == object_id),
+            None,
+        )
+        if item is None:
+            return None
+        edges = self._object_edges(item)
+        edge_index = int(reference.get("edge", -1))
+        if not 0 <= edge_index < len(edges):
+            return None
+        edge = edges[edge_index]
+        t = max(0.0, min(1.0, float(reference.get("t", 0.0))))
+        return (
+            edge.x1 + (edge.x2 - edge.x1) * t,
+            edge.y1 + (edge.y2 - edge.y1) * t,
+        )
+
+    def _update_associative_dimensions(self) -> None:
+        for item in self.document.objects:
+            if item.kind != "dimension" or len(item.dimension_refs) != 2 or len(item.points) != 2:
+                continue
+            resolved = [self._resolve_dimension_reference(reference) for reference in item.dimension_refs]
+            if any(point is None for point in resolved):
+                continue
+            old_first = (float(item.points[0][0]), float(item.points[0][1]))
+            old_second = (float(item.points[1][0]), float(item.points[1][1]))
+            old_dx, old_dy = old_second[0] - old_first[0], old_second[1] - old_first[1]
+            old_length = math.hypot(old_dx, old_dy)
+            if old_length <= 1e-9:
+                continue
+            old_normal = (-old_dy / old_length, old_dx / old_length)
+            offset = (
+                (item.x - old_first[0]) * old_normal[0]
+                + (item.y - old_first[1]) * old_normal[1]
+            )
+            first, second = resolved
+            assert first is not None and second is not None
+            dx, dy = second[0] - first[0], second[1] - first[1]
+            length = math.hypot(dx, dy)
+            if length <= 1e-9:
+                continue
+            normal = (-dy / length, dx / length)
+            start = (first[0] + normal[0] * offset, first[1] + normal[1] * offset)
+            end = (second[0] + normal[0] * offset, second[1] + normal[1] * offset)
+            item.x, item.y = start
+            item.width, item.height = end[0] - start[0], end[1] - start[1]
+            item.points = [[first[0], first[1]], [second[0], second[1]]]
+            item.text = f"{length * 25.4 / 72 * self.document.measurement_scale:.2f}"
+
     def _draw_snap_marker(self, point: tuple[float, float], label: str) -> None:
         self.canvas.delete("snap-preview")
         if not label:
@@ -3160,6 +3266,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if self._measurement_mode:
             self._measurement_mode = ""
             self._measurement_points.clear()
+            self._measurement_refs.clear()
             self.canvas.delete("dimension-preview")
             self.canvas.delete("snap-preview")
             self.canvas.configure(cursor="")
@@ -4197,6 +4304,15 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas.move(f"object:{index}", move_x, move_y)
             self.canvas.move(f"resize-start:{index}", move_x, move_y)
             self.canvas.move(f"resize-end:{index}", move_x, move_y)
+        moved_ids = {
+            self.document.objects[index].object_id for index in self._drag_positions
+        }
+        if any(
+            item.kind == "dimension"
+            and any(str(reference.get("object_id", "")) in moved_ids for reference in item.dimension_refs)
+            for item in self.document.objects
+        ):
+            self._render()
         if self.selected is not None:
             if len(self.selected_indices) > 1:
                 self._update_assembly_geometry_fields()
@@ -5825,6 +5941,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.group = group_map[item.group]
             item.source_id = id_map.get(item.source_id, "")
             item.flow_next_id = id_map.get(item.flow_next_id, "")
+            for reference in item.dimension_refs:
+                reference["object_id"] = id_map.get(
+                    str(reference.get("object_id", "")),
+                    str(reference.get("object_id", "")),
+                )
             self.document.objects.append(item)
             pasted.append(len(self.document.objects) - 1)
         self.selected_indices = set(pasted)
@@ -6058,6 +6179,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_dimension_measurement(self) -> None:
         self._measurement_mode = "dimension"
         self._measurement_points.clear()
+        self._measurement_refs.clear()
         self.canvas.delete("dimension-preview")
         self.canvas.configure(cursor="crosshair")
         self.status.configure(
@@ -6089,11 +6211,15 @@ class DocumentEditorWindow(tk.Toplevel):
             arrow="both", tags=("dimension-preview",),
         )
         measured = math.dist(first, second) * 25.4 / 72 * self.document.measurement_scale
+        label_x, label_y, label_angle = dimension_label_layout(
+            start_canvas, end_canvas, gap=13.0
+        )
         self.canvas.create_text(
-            (start_canvas[0] + end_canvas[0]) / 2,
-            (start_canvas[1] + end_canvas[1]) / 2 - 10,
+            label_x,
+            label_y,
             text=f"{measured:.2f} mm", fill="#1769AA",
-            font=("Sans", 9, "bold"), tags=("dimension-preview",),
+            font=("Sans", 9, "bold"), angle=label_angle,
+            tags=("dimension-preview",),
         )
 
     def _dimension_selected_circle(self) -> None:
@@ -6336,10 +6462,12 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.status.configure(text="Les deux références doivent être différentes.")
                 return
             first, second = self._measurement_points
+            references = copy.deepcopy(self._measurement_refs)
             start, end = geometry
             measured = math.dist(first, second) * 25.4 / 72 * self.document.measurement_scale
             self._measurement_mode = ""
             self._measurement_points.clear()
+            self._measurement_refs.clear()
             self.canvas.delete("dimension-preview")
             self.canvas.delete("snap-preview")
             self.canvas.configure(cursor="")
@@ -6348,12 +6476,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 end[0] - start[0], end[1] - start[1], text=f"{measured:.2f}",
                 border_color="#1769AA", border_width=1,
                 points=[[first[0], first[1]], [second[0], second[1]]],
+                dimension_refs=references,
             ))
             result = f"Cote créée : {measured:.2f} mm."
             self.measurement_result.configure(text=result)
             self.status.configure(text=result)
             return
-        snapped, snap_label = self._snap_drawing_point(x, y)
+        if self._measurement_mode == "dimension":
+            snapped, snap_label, reference = self._dimension_reference_at(x, y)
+            self._measurement_refs.append(reference)
+        else:
+            snapped, snap_label = self._snap_drawing_point(x, y)
         self._measurement_points.append(snapped)
         if self._measurement_mode == "angle" and len(self._measurement_points) < 3:
             instruction = "Cliquez maintenant le sommet." if len(self._measurement_points) == 1 else "Cliquez un point du second côté."

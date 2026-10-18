@@ -22,6 +22,7 @@ from lou_codi_pdf_converter.services.geometry import Segment
 from lou_codi_pdf_converter.ui.document_editor import (
     DocumentEditorWindow,
     aligned_text_x,
+    dimension_label_layout,
     dimension_line_geometry,
     driving_dimension_translation,
     edge_coincidence_translation,
@@ -60,6 +61,36 @@ def test_dimension_line_geometry_places_parallel_extension_line() -> None:
     assert math.isclose(end[0] - start[0], 30.0)
     assert math.isclose(end[1] - start[1], 40.0)
     assert dimension_line_geometry((1.0, 1.0), (1.0, 1.0), (2.0, 3.0)) is None
+
+
+def test_dimension_label_follows_line_and_stays_above_it() -> None:
+    x, y, angle = dimension_label_layout((0.0, 50.0), (100.0, 50.0))
+    assert (x, y, angle) == (50.0, 38.0, 0.0)
+    x, y, angle = dimension_label_layout((0.0, 0.0), (100.0, 100.0))
+    assert y < 50.0
+    assert math.isclose(angle, -45.0)
+
+
+def test_associative_dimension_follows_its_referenced_objects() -> None:
+    first = PageObject("line", 0, 10, 20, 0, 100)
+    second = PageObject("line", 0, 110, 20, 0, 100)
+    dimension = PageObject(
+        "dimension", 0, 10, 0, 100, 0, text="35.28",
+        points=[[10, 20], [110, 20]],
+        dimension_refs=[
+            {"object_id": first.object_id, "edge": 0, "t": 0.0},
+            {"object_id": second.object_id, "edge": 0, "t": 0.0},
+        ],
+    )
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[first, second, dimension])
+
+    second.x = 160
+    editor._update_associative_dimensions()
+
+    assert dimension.points == [[10.0, 20.0], [160.0, 20.0]]
+    assert (dimension.x, dimension.y, dimension.width, dimension.height) == (10.0, 0.0, 150.0, 0.0)
+    assert dimension.text == "52.92"
 
 
 class _StatusRecorder:

@@ -66,6 +66,7 @@ class PageObject:
     table_merges: list[list[int]] = field(default_factory=list)
     table_border_ranges: list[dict[str, float]] = field(default_factory=list)
     points: list[list[float]] = field(default_factory=list)
+    dimension_refs: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass
@@ -293,20 +294,34 @@ def _draw_object(
                     width=max(0.5, item.border_width),
                     overlay=True,
                 )
-        compact = length < 55
+        text = f"{item.text} mm"
+        unit_x, unit_y = (item.width / length, item.height / length) if length else (1.0, 0.0)
+        normal_x, normal_y = -unit_y, unit_x
+        if normal_y > 0:
+            normal_x, normal_y = -normal_x, -normal_y
+        angle = -math.degrees(math.atan2(item.height, item.width)) if length else 0.0
+        reversed_text = False
+        if angle > 90:
+            angle -= 180
+            reversed_text = True
+        elif angle < -90:
+            angle += 180
+            reversed_text = True
+        if reversed_text:
+            unit_x, unit_y = -unit_x, -unit_y
+        center_x = item.x + item.width / 2 + normal_x * 11
+        center_y = item.y + item.height / 2 + normal_y * 11
+        text_width = pymupdf.get_text_length(text, fontsize=8)
         label_position = pymupdf.Point(
-            item.x + item.width + (item.width / length * 8 if compact and length else 0)
-            if compact
-            else item.x + item.width / 2 + 3,
-            item.y + item.height + (item.height / length * 8 if compact and length else 0)
-            if compact
-            else item.y + item.height / 2 - 3,
+            center_x - unit_x * text_width / 2,
+            center_y - unit_y * text_width / 2,
         )
         page.insert_text(
             label_position,
-            f"{item.text} mm",
+            text,
             fontsize=8,
             color=_rgb(item.border_color),
+            morph=(label_position, pymupdf.Matrix(angle)),
             overlay=True,
         )
     elif item.kind == "polyline" and len(item.points) >= 2:
