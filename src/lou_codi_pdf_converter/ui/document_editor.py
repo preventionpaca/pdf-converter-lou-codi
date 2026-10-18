@@ -543,6 +543,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
         self._rotation_drag_origin: tuple[float, float, float] | None = None
         self._rotation_drag_delta = 0.0
+        self._crop_mode_index: int | None = None
+        self._crop_box: list[float] | None = None
+        self._crop_drag_edge: str | None = None
         self._vertex_drag_origin: tuple[int, int, list[list[float]]] | None = None
         self._selected_vertex: tuple[int, int] | None = None
         self._marquee_origin: tuple[float, float] | None = None
@@ -1123,6 +1126,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("Vi", lambda: self._set_text_highlight("#D8B4FE"), "Surlignage violet"),
                 ("Cy", lambda: self._set_text_highlight("#8BE9FD"), "Surlignage cyan"),
                 ("×Fl", lambda: self._set_text_highlight(""), "Retirer le surlignage"),
+                ("0°", lambda: self._set_absolute_angle_value(0), "Remettre l’objet à 0 degré"),
+                ("1°", lambda: self._set_absolute_angle_value(1), "Orienter précisément à 1 degré"),
+                ("∠°", self._ask_absolute_angle, "Saisir un angle exact"),
             )),
             "media": ("IMAGE", (
                 ("👤", self._add_image, "Insérer une image"),
@@ -1141,6 +1147,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
                 ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
                 ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
+                ("0°", lambda: self._set_absolute_angle_value(0), "Remettre l’objet à 0 degré"),
+                ("1°", lambda: self._set_absolute_angle_value(1), "Orienter précisément à 1 degré"),
+                ("∠°", self._ask_absolute_angle, "Saisir un angle exact"),
             )),
         }
         vertical_palettes = {"shapes", "media", "table", "measurements"}
@@ -2207,6 +2216,7 @@ class DocumentEditorWindow(tk.Toplevel):
         for index, item in render_order:
             if self.current_page in pages_for_object(item, self.document.page_count):
                 self._draw_object(index, item)
+        self._draw_crop_overlay()
         if self._coincident_edge_highlight is not None:
             edge = self._coincident_edge_highlight
             self.canvas.create_line(
@@ -3689,6 +3699,11 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _cancel_current_action(self, _event: object = None) -> str:
         self._dismiss_context_menu()
+        if self._crop_mode_index is not None:
+            self._cancel_visual_crop()
+            self.status.configure(text="Rognage annulé.")
+            self._render()
+            return "break"
         if self._drawing_text:
             self._drawing_text = False
             self._text_draw_start = None
@@ -4225,6 +4240,9 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._dismiss_context_menu()
+        if self._crop_mode_index is not None:
+            self._start_crop_drag(event)
+            return
         if self._insert_table_formula_reference(event):
             return
         self._commit_inline_editor(render=False)
@@ -4524,6 +4542,9 @@ class DocumentEditorWindow(tk.Toplevel):
         return "break"
 
     def _drag(self, event: tk.Event[tk.Misc]) -> None:
+        if self._crop_drag_edge is not None:
+            self._drag_crop_edge(event)
+            return
         if self._rotation_drag_origin is not None:
             pivot_x, pivot_y, start_angle = self._rotation_drag_origin
             pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
@@ -4764,6 +4785,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_geometry_fields(self.document.objects[self.selected])
 
     def _release(self, event: tk.Event[tk.Misc]) -> None:
+        if self._crop_drag_edge is not None:
+            self._drag_crop_edge(event)
+            self._apply_visual_crop()
+            return
         if self._rotation_drag_origin is not None:
             degrees = self._rotation_drag_delta
             self._rotation_drag_origin = None
@@ -5993,36 +6018,123 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _crop_selected_image(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "image":
+            self.status.configure(text="Sélectionnez d’abord une image à rogner.")
             return
         item = self.document.objects[self.selected]
-        values: list[float] = []
-        for label in ("gauche", "haut", "droite", "bas"):
-            value = ask_number(self, "Rogner l’image", f"Retirer à {label} (%) :", 0.0, minimum=0, maximum=95)
-            if value is None:
-                return
-            values.append(value)
-        left, top, right, bottom = values
-        if left + right >= 100 or top + bottom >= 100:
-            messagebox.showerror("Rognage impossible", "Les marges retireraient toute l’image.", parent=self)
+        self._crop_mode_index = self.selected
+        self._crop_box = [item.x, item.y, item.x + item.width, item.y + item.height]
+        self._crop_drag_edge = None
+        self.canvas.configure(cursor="crosshair")
+        self.status.configure(
+            text="Rognage visuel : faites glisser le bord gauche, droit, haut ou bas de l’image."
+        )
+        self._render()
+
+    def _draw_crop_overlay(self) -> None:
+        if self._crop_mode_index is None or self._crop_box is None:
             return
+        if self._crop_mode_index >= len(self.document.objects):
+            self._cancel_visual_crop()
+            return
+        left, top, right, bottom = self._crop_box
+        x1, y1 = self.page_x + left * self.zoom, self.page_y + top * self.zoom
+        x2, y2 = self.page_x + right * self.zoom, self.page_y + bottom * self.zoom
+        self.canvas.create_rectangle(
+            x1, y1, x2, y2, outline="#E47D16", width=3, dash=(7, 4),
+            tags=("crop-overlay",),
+        )
+        for x, y in (
+            ((x1 + x2) / 2, y1), (x2, (y1 + y2) / 2),
+            ((x1 + x2) / 2, y2), (x1, (y1 + y2) / 2),
+        ):
+            self.canvas.create_rectangle(
+                x - 6, y - 6, x + 6, y + 6,
+                fill="white", outline="#E47D16", width=2, tags=("crop-overlay",),
+            )
+
+    def _start_crop_drag(self, event: tk.Event[tk.Misc]) -> None:
+        if self._crop_box is None:
+            return
+        pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+        pointer_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+        left, top, right, bottom = self._crop_box
+        tolerance = 14 / self.zoom
+        candidates = {
+            "left": abs(pointer_x - left), "right": abs(pointer_x - right),
+            "top": abs(pointer_y - top), "bottom": abs(pointer_y - bottom),
+        }
+        edge = min(candidates, key=candidates.get)
+        within = (
+            top - tolerance <= pointer_y <= bottom + tolerance
+            if edge in {"left", "right"}
+            else left - tolerance <= pointer_x <= right + tolerance
+        )
+        if candidates[edge] <= tolerance and within:
+            self._crop_drag_edge = edge
+            self.canvas.configure(cursor="sb_h_double_arrow" if edge in {"left", "right"} else "sb_v_double_arrow")
+        else:
+            self.status.configure(text="Attrapez une poignée orange placée au milieu d’un bord.")
+
+    def _drag_crop_edge(self, event: tk.Event[tk.Misc]) -> None:
+        if self._crop_box is None or self._crop_drag_edge is None:
+            return
+        pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+        pointer_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+        left, top, right, bottom = self._crop_box
+        item = self.document.objects[self._crop_mode_index]  # type: ignore[index]
+        original_left, original_top = item.x, item.y
+        original_right, original_bottom = item.x + item.width, item.y + item.height
+        minimum = max(8.0, 12.0 / self.zoom)
+        if self._crop_drag_edge == "left":
+            left = min(right - minimum, max(original_left, pointer_x))
+        elif self._crop_drag_edge == "right":
+            right = max(left + minimum, min(original_right, pointer_x))
+        elif self._crop_drag_edge == "top":
+            top = min(bottom - minimum, max(original_top, pointer_y))
+        else:
+            bottom = max(top + minimum, min(original_bottom, pointer_y))
+        self._crop_box[:] = [left, top, right, bottom]
+        self._render()
+
+    def _apply_visual_crop(self) -> None:
+        if self._crop_mode_index is None or self._crop_box is None:
+            return
+        item = self.document.objects[self._crop_mode_index]
         try:
             with Image.open(item.image_path) as source:
                 image = source.copy()
         except OSError as exc:
             messagebox.showerror("Image illisible", str(exc), parent=self)
+            self._cancel_visual_crop()
             return
         width, height = image.size
+        left, top, right, bottom = self._crop_box
+        relative_left = (left - item.x) / max(1e-9, item.width)
+        relative_top = (top - item.y) / max(1e-9, item.height)
+        relative_right = (right - item.x) / max(1e-9, item.width)
+        relative_bottom = (bottom - item.y) / max(1e-9, item.height)
         box = (
-            round(width * left / 100), round(height * top / 100),
-            round(width * (1 - right / 100)), round(height * (1 - bottom / 100)),
+            round(width * relative_left), round(height * relative_top),
+            round(width * relative_right), round(height * relative_bottom),
         )
         self._checkpoint()
         cropped = image.crop(box)
-        item.width *= cropped.width / max(1, width)
-        item.height *= cropped.height / max(1, height)
+        item.x, item.y = left, top
+        item.width, item.height = right - left, bottom - top
         self._replace_image_pixels(item, cropped)
+        self._crop_mode_index = None
+        self._crop_box = None
+        self._crop_drag_edge = None
+        self.canvas.configure(cursor="")
         self.status.configure(text=f"Image rognée : {cropped.width} × {cropped.height} pixels.")
         self._render()
+
+    def _cancel_visual_crop(self) -> None:
+        self._crop_mode_index = None
+        self._crop_box = None
+        self._crop_drag_edge = None
+        self.canvas.configure(cursor="")
+        self.canvas.delete("crop-overlay")
 
     def _resize_selected_image_pixels(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "image":
@@ -8523,6 +8635,20 @@ class DocumentEditorWindow(tk.Toplevel):
                 item.rotation = round(target % 360)
         self._render()
 
+    def _set_absolute_angle_value(self, degrees: float) -> None:
+        self.angle_var.set(f"{degrees:g}")
+        self._apply_absolute_angle()
+
+    def _ask_absolute_angle(self) -> None:
+        current = 0.0
+        if self.selected is not None:
+            current = self._object_angle(self.document.objects[self.selected])
+        degrees = ask_number(
+            self, "Orientation exacte", "Angle absolu en degrés :", current,
+        )
+        if degrees is not None:
+            self._set_absolute_angle_value(degrees)
+
     @staticmethod
     def _object_angle(item: PageObject) -> float:
         if item.kind == "line":
@@ -8725,15 +8851,18 @@ class DocumentEditorWindow(tk.Toplevel):
         self._render()
 
     def _scale_selected_assembly(self, factor: float) -> None:
-        if len(self.selected_indices) < 2:
-            self.status.configure(text="Sélectionnez ou assemblez au moins deux objets.")
+        indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        if not indices:
+            self.status.configure(text="Sélectionnez d’abord un objet ou un assemblage.")
             return
-        objects = [self.document.objects[index] for index in self.selected_indices]
+        objects = [self.document.objects[index] for index in indices]
         left, top, width, height = objects_bounds(objects)
         self._checkpoint()
         transform_object_assembly(objects, left, top, width * factor, height * factor)
+        self.selected_indices = indices
+        self.selected = min(indices)
         self.status.configure(
-            text=("Assemblage agrandi de 10 %." if factor > 1 else "Assemblage réduit de 10 %.")
+            text=("Sélection agrandie de 10 %." if factor > 1 else "Sélection réduite de 10 %.")
         )
         self._render()
 
