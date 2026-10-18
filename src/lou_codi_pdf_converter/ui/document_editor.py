@@ -208,6 +208,14 @@ def dimension_label_layout(
     )
 
 
+def resized_circle_diameter(
+    old_diameter: float, delta_x: float, delta_y: float
+) -> float:
+    """Resize a circle from the pointer axis carrying the clearest user intent."""
+    delta = delta_x if abs(delta_x) >= abs(delta_y) else delta_y
+    return max(20.0, old_diameter + delta)
+
+
 def point_hits_rotation_handle(
     pointer: tuple[float, float], handle: tuple[float, float], radius: float = 15.0
 ) -> bool:
@@ -4229,6 +4237,16 @@ class DocumentEditorWindow(tk.Toplevel):
             else:
                 new_width = max(20, old_width + delta_x)
                 new_height = max(20, old_height + delta_y)
+            if item.kind == "shape" and item.shape == "circle":
+                control = bool(event.state & 0x0004) or "control" in self._modifier_keys
+                if control:
+                    item.shape = "ellipse"
+                    self.status.configure(
+                        text="Cercle converti en ellipse : largeur et hauteur sont maintenant indépendantes."
+                    )
+                else:
+                    diameter = resized_circle_diameter(old_width, delta_x, delta_y)
+                    new_width = new_height = diameter
             if item.kind == "polyline" and item.width and item.height:
                 item.points = [
                     [point[0] * new_width / item.width, point[1] * new_height / item.height]
@@ -4418,6 +4436,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 snapshot.objects[self.selected].y = old_y
                 snapshot.objects[self.selected].width = old_width
                 snapshot.objects[self.selected].height = old_height
+                if self._drag_before is not None:
+                    snapshot.objects[self.selected].shape = self._drag_before.objects[self.selected].shape
                 self.undo_stack.append(snapshot)
                 self.redo_stack.clear()
         self._resize_origin = None

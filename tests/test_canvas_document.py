@@ -35,6 +35,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     polygon_area,
     revolution_axis_target,
     revolution_stations,
+    resized_circle_diameter,
     rotation_step_for_objects,
     snapped_rotation_delta,
     text_style_at,
@@ -69,6 +70,12 @@ def test_dimension_label_follows_line_and_stays_above_it() -> None:
     x, y, angle = dimension_label_layout((0.0, 0.0), (100.0, 100.0))
     assert y < 50.0
     assert math.isclose(angle, -45.0)
+
+
+def test_circle_resize_uses_the_dominant_pointer_axis() -> None:
+    assert resized_circle_diameter(100.0, 30.0, 5.0) == 130.0
+    assert resized_circle_diameter(100.0, 3.0, -25.0) == 75.0
+    assert resized_circle_diameter(25.0, -40.0, 0.0) == 20.0
 
 
 def test_associative_dimension_follows_its_referenced_objects() -> None:
