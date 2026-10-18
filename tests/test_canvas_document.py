@@ -15,6 +15,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
+    table_cell_colors,
     text_frame_line_capacity,
     wrapped_text_lines,
 )
@@ -340,6 +341,20 @@ def test_table_border_settings_survive_project_roundtrip(tmp_path: Path) -> None
     assert restored.table_border_ranges == [
         {"top": 0.0, "left": 0.0, "bottom": 1.0, "right": 2.0, "width": 3.0}
     ]
+
+
+def test_table_visual_style_survives_roundtrip_and_alternates_rows(tmp_path: Path) -> None:
+    target = tmp_path / "tableau-style.cod"
+    table = PageObject("table", 0, 10, 10, 200, 100, table_style="blue")
+
+    CanvasDocument(objects=[table]).save(target)
+    restored = CanvasDocument.load(target).objects[0]
+
+    assert restored.table_style == "blue"
+    assert table_cell_colors("blue", 0) == ("#193F6A", "#FFFFFF")
+    assert table_cell_colors("blue", 1)[0] != table_cell_colors("blue", 2)[0]
+    assert table_cell_colors("green", 0) == ("#087F6A", "#FFFFFF")
+    assert table_cell_colors("plain", 3) == ("#FFFFFF", "#000000")
 
 
 def test_merged_table_cells_and_alignment_survive_roundtrip_and_pdf_export(tmp_path: Path) -> None:

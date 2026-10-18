@@ -32,6 +32,7 @@ from ..services.canvas_document import (
     flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
+    table_cell_colors,
     text_frame_line_capacity,
     text_frame_line_height,
     wrapped_text_lines,
@@ -607,9 +608,9 @@ class DocumentEditorWindow(tk.Toplevel):
         }
         self.tool_palettes: dict[str, tk.Widget] = {}
         self.palette_positions = {
-            "shapes": (10, 10), "table": (340, 10), "media": (670, 10),
-            "measurements": (10, 125), "formatting": (340, 125),
-            "shape_style": (340, 125), "technical": (670, 125),
+            "shapes": (10, 10), "media": (84, 10), "table": (158, 10),
+            "measurements": (232, 10), "formatting": (306, 10),
+            "shape_style": (454, 10), "technical": (602, 10),
         }
         self._palette_drag: tuple[str, int, int, int, int] | None = None
         self._last_palette_context: str | None = None
@@ -645,6 +646,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _build(self) -> None:
         self._build_menu()
         ttk.Style(self).configure("EditorTool.TButton", padding=(3, 2), font=("Sans", 10))
+        ttk.Style(self).configure("PaletteTool.TButton", padding=(5, 5), font=("Sans", 14, "bold"))
         header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
@@ -1075,7 +1077,7 @@ class DocumentEditorWindow(tk.Toplevel):
             )),
             "table": ("TABLEAU", (
                 ("▦", self._add_table, "Insérer un tableau"),
-                ("▥", lambda: self._add_chart("bar"), "Graphique en barres"),
+                ("▂▅█", lambda: self._add_chart("bar"), "Graphique en barres / histogramme"),
                 ("◔", lambda: self._add_chart("pie"), "Camembert"),
                 ("R+", lambda: self._change_table_structure("insert_row_after"), "Ajouter une ligne"),
                 ("R−", lambda: self._change_table_structure("delete_row"), "Supprimer la ligne"),
@@ -1083,6 +1085,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("C−", lambda: self._change_table_structure("delete_column"), "Supprimer la colonne"),
                 ("▦", lambda: self._set_table_border_preset("standard"), "Quadrillage standard"),
                 ("▣", lambda: self._set_table_border_preset("outer"), "Contour extérieur épais"),
+                ("H▦", lambda: self._set_table_style("blue"), "En-tête bleu et lignes bleues alternées"),
+                ("H▤", lambda: self._set_table_style("green"), "En-tête vert et lignes vertes alternées"),
+                ("H×", lambda: self._set_table_style("plain"), "Retirer le style d’en-tête et les lignes alternées"),
             )),
             "formatting": ("MISE EN FORME TEXTE", (
                 ("↶", self._undo, "Annuler"), ("↷", self._redo, "Rétablir"),
@@ -1101,10 +1106,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("Cy", lambda: self._set_text_highlight("#8BE9FD"), "Surlignage cyan"),
                 ("×Fl", lambda: self._set_text_highlight(""), "Retirer le surlignage"),
             )),
-            "media": ("IMAGE · LIEN · MASQUE", (
-                ("▧", self._add_image, "Insérer une image"),
+            "media": ("IMAGE", (
+                ("👤", self._add_image, "Insérer une image"),
                 ("🔗", self._set_selected_hyperlink, "Ajouter ou modifier un hyperlien"),
-                ("▨", self._add_mask, "Insérer un masque blanc"),
+                ("▱", self._add_mask, "Insérer un masque blanc"),
                 ("✂", self._crop_selected_image, "Rogner l’image sélectionnée"),
                 ("↻", lambda: self._rotate_selected(1), "Faire pivoter"),
             )),
@@ -1120,8 +1125,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
             )),
         }
+        vertical_palettes = {"shapes", "media", "table", "measurements"}
         for key, (title, actions) in palette_definitions.items():
-            self._create_tool_palette(key, title, actions)
+            self._create_tool_palette(key, title, actions, columns=1 if key in vertical_palettes else 2)
         self.canvas.bind("<Button-1>", self._press)
         self.canvas.bind("<B1-Motion>", self._drag)
         self.canvas.bind("<ButtonRelease-1>", self._release)
@@ -1135,6 +1141,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.bind("<Control-Button-5>", lambda event: self._mouse_zoom(event, -1))
         self.bind("<KeyPress>", self._modifier_key_event, add="+")
         self.bind("<KeyRelease>", self._modifier_key_event, add="+")
+        # A palette keeps following the pointer even after it leaves its narrow title bar.
+        self.bind("<B1-Motion>", self._drag_tool_palette, add="+")
+        self.bind("<ButtonRelease-1>", self._finish_palette_drag, add="+")
 
         panel_container = ttk.Frame(self.body, style="Card.TFrame")
         self.properties_panel = panel_container
@@ -1626,6 +1635,8 @@ class DocumentEditorWindow(tk.Toplevel):
         key: str,
         title: str,
         actions: tuple[tuple[str, object, str], ...],
+        *,
+        columns: int = 2,
     ) -> None:
         palette = tk.Frame(
             self.palette_host,
@@ -1652,11 +1663,12 @@ class DocumentEditorWindow(tk.Toplevel):
         for index, (symbol, command, help_text) in enumerate(actions):
             button = ttk.Button(
                 tools, text=symbol, command=command, width=4,
-                style="EditorTool.TButton",
+                style="PaletteTool.TButton",
             )
-            button.grid(row=index // 5, column=index % 5, padx=1, pady=1, sticky="ew")
+            button.grid(row=index // columns, column=index % columns, padx=1, pady=1, sticky="ew")
             self._add_tooltip(button, help_text)
         self.tool_palettes[key] = palette
+        palette.bind("<B1-Motion>", self._drag_tool_palette)
         palette.bind("<ButtonRelease-1>", self._finish_palette_drag)
         for handle in (header, title_label):
             handle.bind("<ButtonPress-1>", lambda event, palette_key=key: self._start_palette_drag(event, palette_key))
@@ -2372,7 +2384,11 @@ class DocumentEditorWindow(tk.Toplevel):
                     row_span, column_span = (merge[2], merge[3]) if merge else (1, 1)
                     cx, cy = x + column_index * cw, y + row_index * rh
                     cell_w, cell_h = cw * column_span, rh * row_span
-                    self.canvas.create_rectangle(cx, cy, cx + cell_w, cy + cell_h, fill="white", outline="", tags=tags)
+                    cell_fill, cell_text_color = table_cell_colors(item.table_style, row_index)
+                    self.canvas.create_rectangle(
+                        cx, cy, cx + cell_w, cy + cell_h,
+                        fill=cell_fill, outline="", tags=tags,
+                    )
                     value = row[column_index] if column_index < len(row) else ""
                     metadata = cells[row_index][column_index]
                     image_path = metadata.get("image_path", "")
@@ -2399,7 +2415,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     hyperlink = metadata.get("hyperlink", "")
                     self.canvas.create_text(
                         text_x, text_y, text=value, anchor=text_anchor, width=max(5, cell_w - 8), justify=horizontal_align,
-                        fill="#1769AA" if hyperlink else "#000000",
+                        fill="#7FDBFF" if hyperlink and row_index == 0 and item.table_style != "plain" else "#1769AA" if hyperlink else cell_text_color,
                         font=("Sans", max(7, round(item.font_size * self.zoom)), "underline" if hyperlink else "normal"),
                         tags=tags,
                     )
@@ -5332,6 +5348,22 @@ class DocumentEditorWindow(tk.Toplevel):
         if preset == "none":
             item.table_row_border_widths.clear()
         self.status.configure(text="Bordures du tableau mises à jour.")
+        self._render()
+
+    def _set_table_style(self, style: str) -> None:
+        item = self._selected_table()
+        if item is None:
+            return
+        if style not in {"plain", "blue", "green"}:
+            return
+        self._checkpoint()
+        item.table_style = style
+        messages = {
+            "plain": "Style de tableau neutre appliqué.",
+            "blue": "En-tête bleu et lignes bleues alternées appliqués.",
+            "green": "En-tête vert et lignes vertes alternées appliqués.",
+        }
+        self.status.configure(text=messages[style])
         self._render()
 
     def _set_table_inner_border(self, width: float) -> None:

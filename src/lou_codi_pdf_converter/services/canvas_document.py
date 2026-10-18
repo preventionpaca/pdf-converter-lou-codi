@@ -22,6 +22,22 @@ A4_HEIGHT = 841.89
 FLOW_BREAK_TOKEN = "{{CADRE_SUIVANT}}"
 TEXT_FRAME_HORIZONTAL_PADDING = 8.0
 
+TABLE_STYLE_PALETTES: dict[str, tuple[str, str, str, str]] = {
+    "blue": ("#193F6A", "#FFFFFF", "#EAF3FC", "#D5E7F7"),
+    "green": ("#087F6A", "#FFFFFF", "#E9F7F2", "#D2EEE5"),
+}
+
+
+def table_cell_colors(style: str, row: int) -> tuple[str, str]:
+    """Return the background and text colours for a table row preset."""
+    palette = TABLE_STYLE_PALETTES.get(style)
+    if palette is None:
+        return "#FFFFFF", "#000000"
+    header_fill, header_text, odd_fill, even_fill = palette
+    if row == 0:
+        return header_fill, header_text
+    return (odd_fill if row % 2 else even_fill), "#000000"
+
 
 @dataclass
 class PageObject:
@@ -60,6 +76,7 @@ class PageObject:
     text_links: list[dict[str, object]] = field(default_factory=list)
     text_styles: list[dict[str, object]] = field(default_factory=list)
     table_cells: list[list[dict[str, str]]] = field(default_factory=list)
+    table_style: str = "plain"
     table_outer_border_width: float = 1.5
     table_inner_border_width: float = 0.6
     table_row_border_widths: dict[str, float] = field(default_factory=dict)
@@ -735,6 +752,8 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                 rectangle.x0 + (column_index + column_span) * column_width,
                 rectangle.y0 + (row_index + row_span) * row_height,
             )
+            cell_fill, text_color = table_cell_colors(item.table_style, row_index)
+            page.draw_rect(cell, color=None, fill=_rgb(cell_fill), overlay=True)
             value = row[column_index] if column_index < len(row) else ""
             metadata = (
                 item.table_cells[row_index][column_index]
@@ -764,6 +783,7 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
             page.insert_textbox(
                 text_cell, value, fontsize=item.font_size,
                 align={"left": 0, "center": 1, "right": 2}.get(horizontal_align, 0),
+                color=_rgb(text_color),
                 overlay=True,
             )
             hyperlink = metadata.get("hyperlink", "").strip()
