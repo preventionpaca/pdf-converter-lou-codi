@@ -602,14 +602,14 @@ class DocumentEditorWindow(tk.Toplevel):
             "segments": tk.BooleanVar(value=False),
         }
         self.palette_visible_vars = {
-            key: tk.BooleanVar(value=key in {"shapes", "measurements"})
+            key: tk.BooleanVar(value=key in {"shapes", "measurements", "table", "media"})
             for key in ("shapes", "measurements", "table", "formatting", "media", "shape_style", "technical")
         }
         self.tool_palettes: dict[str, tk.Widget] = {}
         self.palette_positions = {
-            "shapes": (10, 10), "measurements": (10, 125), "table": (175, 10),
-            "formatting": (175, 125), "media": (340, 10),
-            "shape_style": (340, 125), "technical": (505, 10),
+            "shapes": (10, 10), "table": (340, 10), "media": (670, 10),
+            "measurements": (10, 125), "formatting": (340, 125),
+            "shape_style": (340, 125), "technical": (670, 125),
         }
         self._palette_drag: tuple[str, int, int, int, int] | None = None
         self._last_palette_context: str | None = None
@@ -812,6 +812,20 @@ class DocumentEditorWindow(tk.Toplevel):
         shapes_button.configure(menu=shapes_menu)
         shapes_button.pack(side="left", padx=4)
         self._tool_buttons.append(shapes_button)
+        panels_button = tk.Menubutton(
+            insertion,
+            text="▤  Panneaux ▾",
+            bg="#DDF3E7",
+            activebackground="#B8DFC9",
+            relief="flat",
+            padx=10,
+            pady=5,
+        )
+        panels_menu = tk.Menu(panels_button, tearoff=False)
+        self._populate_panels_menu(panels_menu)
+        panels_button.configure(menu=panels_menu)
+        panels_button.pack(side="left", padx=4)
+        self._tool_buttons.append(panels_button)
         self._buttons(formatting, (
             ("🤖", self._open_chatgpt_for_selected, "Ouvrir ChatGPT pour dicter, corriger ou reformuler le texte"),
             ("📋", self._paste_chatgpt_result, "Coller le résultat de ChatGPT dans la zone de texte"),
@@ -1393,20 +1407,7 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         view_menu.add_separator()
         palettes_menu = tk.Menu(view_menu, tearoff=False)
-        for key, label in (
-            ("shapes", "Formes"),
-            ("measurements", "Mesures et cotations"),
-            ("table", "Tableau"),
-            ("formatting", "Mise en forme du texte"),
-            ("media", "Image, lien et masque"),
-            ("shape_style", "Apparence des formes"),
-            ("technical", "Technique"),
-        ):
-            palettes_menu.add_checkbutton(
-                label=label,
-                variable=self.palette_visible_vars[key],
-                command=lambda palette_key=key: self._set_palette_visibility(palette_key),
-            )
+        self._populate_panels_menu(palettes_menu)
         view_menu.add_cascade(label="Panneaux d’outils", menu=palettes_menu)
         view_menu.add_separator()
         size_menu = tk.Menu(view_menu, tearoff=False)
@@ -1656,14 +1657,44 @@ class DocumentEditorWindow(tk.Toplevel):
             button.grid(row=index // 5, column=index % 5, padx=1, pady=1, sticky="ew")
             self._add_tooltip(button, help_text)
         self.tool_palettes[key] = palette
+        palette.bind("<ButtonRelease-1>", self._finish_palette_drag)
         for handle in (header, title_label):
             handle.bind("<ButtonPress-1>", lambda event, palette_key=key: self._start_palette_drag(event, palette_key))
             handle.bind("<B1-Motion>", self._drag_tool_palette)
+            handle.bind("<ButtonRelease-1>", self._finish_palette_drag)
         self._set_palette_visibility(key)
+
+    def _populate_panels_menu(self, menu: tk.Menu) -> None:
+        menu.add_checkbutton(
+            label="Ruban d’outils",
+            variable=self.ribbon_visible,
+            command=self._toggle_ribbon,
+        )
+        menu.add_checkbutton(
+            label="Volet des propriétés",
+            variable=self.properties_visible,
+            command=self._toggle_properties_panel,
+        )
+        menu.add_separator()
+        for key, label in (
+            ("shapes", "Formes"),
+            ("measurements", "Mesures et cotations"),
+            ("table", "Tableau"),
+            ("media", "Image, lien et masque"),
+            ("formatting", "Mise en forme du texte"),
+            ("shape_style", "Apparence des formes"),
+            ("technical", "Technique"),
+        ):
+            menu.add_checkbutton(
+                label=label,
+                variable=self.palette_visible_vars[key],
+                command=lambda palette_key=key: self._set_palette_visibility(palette_key),
+            )
 
     def _start_palette_drag(self, event: tk.Event[tk.Widget], key: str) -> None:
         palette = self.tool_palettes[key]
         self._palette_drag = (key, event.x_root, event.y_root, palette.winfo_x(), palette.winfo_y())
+        palette.grab_set()
 
     def _drag_tool_palette(self, event: tk.Event[tk.Widget]) -> None:
         if self._palette_drag is None:
@@ -1674,6 +1705,15 @@ class DocumentEditorWindow(tk.Toplevel):
         y = max(0, min(origin_y + event.y_root - start_y, self.palette_host.winfo_height() - palette.winfo_height()))
         self.palette_positions[key] = (x, y)
         palette.place(x=x, y=y, anchor="nw")
+
+    def _finish_palette_drag(self, _event: tk.Event[tk.Widget] | None = None) -> None:
+        if self._palette_drag is None:
+            return
+        key = self._palette_drag[0]
+        palette = self.tool_palettes.get(key)
+        self._palette_drag = None
+        if palette is not None and palette.grab_current() is palette:
+            palette.grab_release()
 
     def _close_tool_palette(self, key: str) -> None:
         self.palette_visible_vars[key].set(False)
@@ -2261,15 +2301,16 @@ class DocumentEditorWindow(tk.Toplevel):
             "general"
         )
         if palette_context != self._last_palette_context:
-            visible = {
-                "general": {"shapes", "measurements"},
+            contextual = {
+                "general": set(),
                 "text": {"formatting"},
-                "table": {"table", "formatting"},
-                "media": {"media", "shape_style"},
-                "technical": {"measurements", "shape_style", "technical"},
+                "table": {"formatting"},
+                "media": {"shape_style"},
+                "technical": {"shape_style", "technical"},
             }[palette_context]
-            for key, variable in self.palette_visible_vars.items():
-                variable.set(key in visible)
+            for key in {"formatting", "shape_style", "technical"}:
+                variable = self.palette_visible_vars[key]
+                variable.set(key in contextual)
                 self._set_palette_visibility(key)
             self._last_palette_context = palette_context
 
