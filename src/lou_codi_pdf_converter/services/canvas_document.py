@@ -657,6 +657,11 @@ def wrapped_text_ranges(
 ) -> list[tuple[str, int, int]]:
     """Return wrapped lines with their exact offsets in the rich source text."""
     available_width = max(4.0, abs(frame.width) - 2 * TEXT_FRAME_HORIZONTAL_PADDING)
+    style_lookup = _text_flow_style_lookup(frame, len(text))
+
+    def styled_width(value: str, start: int) -> float:
+        return _styled_text_flow_width(frame, value, start, style_lookup)
+
     lines: list[tuple[str, int, int]] = []
     paragraph_start = 0
     for paragraph in text.split("\n"):
@@ -677,11 +682,9 @@ def wrapped_text_ranges(
             word = match.group(0)
             word_start = paragraph_start + match.start()
             word_end = paragraph_start + match.end()
-            word_width = _styled_text_flow_width(frame, word, word_start)
+            word_width = styled_width(word, word_start)
             separator = paragraph[previous_end : match.start()] if line_start is not None else ""
-            separator_width = _styled_text_flow_width(
-                frame, separator, paragraph_start + previous_end
-            )
+            separator_width = styled_width(separator, paragraph_start + previous_end)
             previous_end = match.end()
             candidate_width = current_width + separator_width + word_width
             if line_start is not None and candidate_width > available_width:
@@ -703,9 +706,7 @@ def wrapped_text_ranges(
             fragment_start = word_start
             fragment_width = 0.0
             for character_index, character in enumerate(word):
-                character_width = _styled_text_flow_width(
-                    frame, character, word_start + character_index
-                )
+                character_width = styled_width(character, word_start + character_index)
                 character_position = word_start + character_index
                 if character_position > fragment_start and fragment_width + character_width > available_width:
                     lines.append((text[fragment_start:character_position], fragment_start, character_position))
@@ -723,29 +724,45 @@ def wrapped_text_ranges(
     return lines
 
 
-def _styled_text_flow_width(frame: PageObject, text: str, start: int) -> float:
+def _text_flow_style_lookup(
+    frame: PageObject, text_length: int
+) -> list[tuple[str, float, bool, bool]]:
+    """Resolve rich-text metrics once instead of scanning every run per glyph."""
+    default = (frame.font_family, frame.font_size, frame.bold, frame.italic)
+    lookup = [default] * max(0, text_length)
+    for run in frame.text_styles:
+        try:
+            run_start = max(0, min(text_length, int(run.get("start", 0))))
+            run_end = max(run_start, min(text_length, int(run.get("end", 0))))
+            family = str(run.get("font_family", frame.font_family))
+            size = float(run.get("font_size", frame.font_size))
+        except (TypeError, ValueError):
+            continue
+        for position in range(run_start, run_end):
+            previous = lookup[position]
+            lookup[position] = (
+                family if "font_family" in run else previous[0],
+                size if "font_size" in run else previous[1],
+                bool(run["bold"]) if "bold" in run else previous[2],
+                bool(run["italic"]) if "italic" in run else previous[3],
+            )
+    return lookup
+
+
+def _styled_text_flow_width(
+    frame: PageObject,
+    text: str,
+    start: int,
+    style_lookup: list[tuple[str, float, bool, bool]] | None = None,
+) -> float:
     """Measure text with the effective rich style of every character."""
     width = 0.0
     for offset, character in enumerate(text):
-        family = frame.font_family
-        size = frame.font_size
-        bold = frame.bold
-        italic = frame.italic
         position = start + offset
-        for run in frame.text_styles:
-            try:
-                run_start = int(run.get("start", 0))
-                run_end = int(run.get("end", 0))
-            except (TypeError, ValueError):
-                continue
-            if run_start <= position < run_end:
-                family = str(run.get("font_family", family))
-                try:
-                    size = float(run.get("font_size", size))
-                except (TypeError, ValueError):
-                    pass
-                bold = bool(run.get("bold", bold))
-                italic = bool(run.get("italic", italic))
+        if style_lookup is not None and 0 <= position < len(style_lookup):
+            family, size, bold, italic = style_lookup[position]
+        else:
+            family, size, bold, italic = frame.font_family, frame.font_size, frame.bold, frame.italic
         width += _text_flow_character_width(family, size, bold, italic, character)
     return width
 

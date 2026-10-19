@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import tempfile
 import uuid
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 
 from docx import Document
@@ -28,26 +28,59 @@ def _font_family(name: str | None) -> str:
     return "Sans-serif"
 
 
-def _inherited(run: object, paragraph: object, attribute: str, fallback: object) -> object:
-    value = getattr(run, attribute, None)
-    if value is None:
-        value = getattr(getattr(run, "font", None), attribute, None)
-    if value is not None:
-        return value
-    run_style = getattr(run, "style", None)
-    value = getattr(getattr(run_style, "font", None), attribute, None)
-    if value is not None:
-        return value
-    paragraph_style = getattr(paragraph, "style", None)
-    value = getattr(getattr(paragraph_style, "font", None), attribute, None)
-    return fallback if value is None else value
+_FONT_ATTRIBUTES = ("bold", "italic", "underline", "strike", "name", "size")
 
 
-def _run_style(run: object, paragraph: object) -> dict[str, object]:
-    size = _inherited(run, paragraph, "size", None)
-    name = _inherited(run, paragraph, "name", None)
-    color = getattr(getattr(getattr(run, "font", None), "color", None), "rgb", None)
-    highlight = getattr(getattr(run, "font", None), "highlight_color", None)
+def _style_font_defaults(style: object) -> dict[str, object]:
+    """Resolve a Word style chain once; large DOCX style tables make this costly."""
+    values: dict[str, object] = {}
+    current = style
+    visited: set[str] = set()
+    while current is not None:
+        style_id = str(getattr(current, "style_id", "") or id(current))
+        if style_id in visited:
+            break
+        visited.add(style_id)
+        font = getattr(current, "font", None)
+        for attribute in _FONT_ATTRIBUTES:
+            value = getattr(font, attribute, None)
+            if attribute not in values and value is not None:
+                values[attribute] = value
+        current = getattr(current, "base_style", None)
+    return values
+
+
+def _run_style(
+    run: object,
+    paragraph: object,
+    *,
+    paragraph_defaults: dict[str, object] | None = None,
+    character_style_cache: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
+    font = getattr(run, "font", None)
+    paragraph_values = paragraph_defaults
+    if paragraph_values is None:
+        paragraph_values = _style_font_defaults(getattr(paragraph, "style", None))
+    character_values: dict[str, object] = {}
+    style_id = str(getattr(getattr(run, "_r", None), "style", "") or "")
+    if style_id:
+        cache = character_style_cache if character_style_cache is not None else {}
+        if style_id not in cache:
+            cache[style_id] = _style_font_defaults(getattr(run, "style", None))
+        character_values = cache[style_id]
+
+    def inherited(attribute: str, fallback: object) -> object:
+        direct = getattr(font, attribute, None)
+        if direct is not None:
+            return direct
+        if attribute in character_values:
+            return character_values[attribute]
+        return paragraph_values.get(attribute, fallback)
+
+    size = inherited("size", None)
+    name = inherited("name", None)
+    color = getattr(getattr(font, "color", None), "rgb", None)
+    highlight = getattr(font, "highlight_color", None)
     highlight_names = {
         "YELLOW": "#FFF176",
         "BRIGHT_GREEN": "#A7F3A1",
@@ -66,10 +99,10 @@ def _run_style(run: object, paragraph: object) -> dict[str, object]:
         "BLACK": "#000000",
     }
     return {
-        "bold": bool(_inherited(run, paragraph, "bold", False)),
-        "italic": bool(_inherited(run, paragraph, "italic", False)),
-        "underline": bool(_inherited(run, paragraph, "underline", False)),
-        "strikethrough": bool(_inherited(run, paragraph, "strike", False)),
+        "bold": bool(inherited("bold", False)),
+        "italic": bool(inherited("italic", False)),
+        "underline": bool(inherited("underline", False)),
+        "strikethrough": bool(inherited("strike", False)),
         "font_family": _font_family(str(name) if name else None),
         "font_size": float(size.pt) if size is not None else 12.0,
         "color": f"#{color}" if color is not None else "#000000",
@@ -131,6 +164,41 @@ def _embedded_image_queues(source: object) -> dict[str, deque[dict[str, object]]
     return images
 
 
+def _dominant_text_metrics(
+    styles: list[dict[str, object]],
+) -> tuple[str, float]:
+    """Choose a stable frame baseline from the character-weighted DOCX styles."""
+    weights: Counter[tuple[str, float]] = Counter()
+    for style in styles:
+        try:
+            length = max(0, int(style["end"]) - int(style["start"]))
+            family = str(style.get("font_family", "Sans-serif"))
+            size = float(style.get("font_size", 12.0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        weights[(family, size)] += length
+    return weights.most_common(1)[0][0] if weights else ("Sans-serif", 12.0)
+
+
+def _fit_nearly_empty_last_page(
+    frame: PageObject, line_count: int
+) -> tuple[int, int]:
+    """Avoid a spurious page containing only a few metric-rounding lines."""
+    capacity = max(1, text_frame_line_capacity(frame))
+    page_count = max(1, math.ceil(line_count / capacity))
+    if page_count <= 1:
+        return capacity, page_count
+    previous_pages = page_count - 1
+    overflow = line_count - previous_pages * capacity
+    tolerance = max(2, math.ceil(capacity * 0.05))
+    if 0 < overflow <= tolerance:
+        required_capacity = math.ceil(line_count / previous_pages)
+        frame.font_size *= capacity / required_capacity
+        capacity = max(1, text_frame_line_capacity(frame))
+        page_count = max(1, math.ceil(line_count / capacity))
+    return capacity, page_count
+
+
 def import_docx_as_canvas(path: Path) -> CanvasDocument:
     """Import DOCX text, pictures, lists and formatting into editable objects."""
     source = Document(path)
@@ -150,20 +218,35 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
     image_placements: list[dict[str, object]] = []
     image_queues = _embedded_image_queues(source)
     counters: dict[str, int] = {}
+    text_length = 0
+    character_style_cache: dict[str, dict[str, object]] = {}
     alignment_names = {0: "left", 1: "center", 2: "right", 3: "justify", 4: "justify"}
     for paragraph in source.paragraphs:
         if parts:
             parts.append("\n")
-        paragraph_start = sum(len(part) for part in parts)
+            text_length += 1
+        paragraph_start = text_length
         prefix = _paragraph_prefix(paragraph, counters)
         parts.append(prefix)
+        text_length += len(prefix)
+        paragraph_defaults = _style_font_defaults(getattr(paragraph, "style", None))
         for run in paragraph.runs:
             value = run.text.replace("\v", "\n").replace("\f", "\n")
             if value:
-                start = sum(len(part) for part in parts)
+                start = text_length
                 parts.append(value)
                 end = start + len(value)
-                styles.append({"start": start, "end": end, **_run_style(run, paragraph)})
+                text_length = end
+                styles.append({
+                    "start": start,
+                    "end": end,
+                    **_run_style(
+                        run,
+                        paragraph,
+                        paragraph_defaults=paragraph_defaults,
+                        character_style_cache=character_style_cache,
+                    ),
+                })
             for blip in run._r.xpath(".//a:blip"):
                 relationship_id = blip.get(qn("r:embed"))
                 if not relationship_id or not image_queues[relationship_id]:
@@ -176,12 +259,14 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
                         **image,
                         "width": display_width,
                         "height": display_height,
-                        "position": sum(len(part) for part in parts),
+                        "position": text_length,
                     }
                 )
                 # Reserve the picture's vertical space in the linked text flow.
-                parts.append("\n" * max(1, math.ceil(display_height / 15.0)))
-        paragraph_end = sum(len(part) for part in parts)
+                spacer = "\n" * max(1, math.ceil(display_height / 15.0))
+                parts.append(spacer)
+                text_length += len(spacer)
+        paragraph_end = text_length
         alignment = alignment_names.get(int(paragraph.alignment), "left") if paragraph.alignment is not None else "left"
         if alignment != "left" and paragraph_end > paragraph_start:
             alignments.append(
@@ -189,14 +274,15 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
             )
 
     text = "".join(parts)
+    base_family, base_size = _dominant_text_metrics(styles)
     prototype = PageObject(
         "text", 0, margin_left, margin_top, width, height,
         text=text, fill="transparent", border_width=0,
+        font_family=base_family, font_size=base_size,
         text_styles=styles, paragraph_alignments=alignments,
     )
     line_count = max(1, len(wrapped_text_lines(text, prototype)))
-    capacity = max(1, text_frame_line_capacity(prototype))
-    page_count = max(1, math.ceil(line_count / capacity))
+    capacity, page_count = _fit_nearly_empty_last_page(prototype, line_count)
     frames = [prototype]
     for page in range(1, page_count):
         frames.append(PageObject(

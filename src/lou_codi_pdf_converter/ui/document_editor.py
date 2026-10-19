@@ -536,6 +536,24 @@ def text_style_at(item: PageObject, position: int) -> dict[str, object]:
     return style
 
 
+def resolved_text_styles(item: PageObject, text_length: int) -> list[dict[str, object]]:
+    """Resolve overlapping rich styles once for a complete preview pass."""
+    base = text_style_at(item, -1)
+    lookup = [base] * max(0, text_length)
+    for run in item.text_styles:
+        try:
+            start = max(0, min(text_length, int(run.get("start", 0))))
+            end = max(start, min(text_length, int(run.get("end", 0))))
+        except (TypeError, ValueError):
+            continue
+        update = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
+        for position in range(start, end):
+            merged = dict(lookup[position])
+            merged.update(update)
+            lookup[position] = merged
+    return lookup
+
+
 def paragraph_alignment_at(item: PageObject, position: int) -> str:
     """Return the alignment applied to the paragraph containing a character."""
     for run in reversed(item.paragraph_alignments):
@@ -3368,6 +3386,7 @@ class DocumentEditorWindow(tk.Toplevel):
         except OSError:
             font = ImageFont.load_default()
         lines = wrapped_text_ranges(text, render_item)
+        style_lookup = resolved_text_styles(render_item, len(text))
         line_height = text_frame_line_height(render_item) * self.zoom
         visible_lines = text_frame_line_capacity(render_item)
         for row, (line, line_start, line_end) in enumerate(lines[:visible_lines]):
@@ -3383,7 +3402,11 @@ class DocumentEditorWindow(tk.Toplevel):
             fragments: list[tuple[str, dict[str, object], ImageFont.FreeTypeFont | ImageFont.ImageFont, bool, float]] = []
             for start, end in pairwise(ordered):
                 fragment = text[start:end]
-                fragment_style = text_style_at(render_item, start)
+                fragment_style = (
+                    style_lookup[start]
+                    if 0 <= start < len(style_lookup)
+                    else text_style_at(render_item, start)
+                )
                 fragment_size = max(7, round(safe_number(fragment_style.get("font_size"), render_item.font_size, minimum=1.0) * self.zoom))
                 try:
                     fragment_file = _font_file(

@@ -20,6 +20,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     resolve_dynamic_text,
     table_cell_colors,
     text_frame_line_capacity,
+    _text_flow_style_lookup,
     wrapped_text_lines,
     wrapped_text_ranges,
 )
@@ -49,6 +50,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     polygon_area,
     revolution_axis_target,
     revolution_stations,
+    resolved_text_styles,
     resized_circle_diameter,
     rich_clipboard_matches_plain,
     rotated_rectangle_points,
@@ -93,6 +95,52 @@ def test_inline_editor_uses_canvas_pixel_metrics_and_insets() -> None:
     assert inline_editor_padding(1.15) == (9, 5)
     assert DocumentEditorWindow._tk_font_family("Sans-serif") == "DejaVu Sans"
     assert DocumentEditorWindow._tk_font_family("Serif") == "DejaVu Serif"
+
+
+def test_text_flow_style_lookup_preserves_overlapping_partial_styles() -> None:
+    frame = PageObject(
+        "text",
+        0,
+        0,
+        0,
+        100,
+        50,
+        text="abcd",
+        text_styles=[
+            {"start": 0, "end": 4, "bold": True},
+            {"start": 1, "end": 3, "italic": True},
+        ],
+    )
+
+    lookup = _text_flow_style_lookup(frame, len(frame.text))
+
+    assert lookup[0] == ("Sans-serif", 12, True, False)
+    assert lookup[1] == ("Sans-serif", 12, True, True)
+    assert lookup[3] == ("Sans-serif", 12, True, False)
+
+
+def test_preview_style_lookup_preserves_overlapping_partial_styles() -> None:
+    frame = PageObject(
+        "text",
+        0,
+        0,
+        0,
+        100,
+        50,
+        text="abcd",
+        text_styles=[
+            {"start": 0, "end": 4, "bold": True, "color": "#CC0000"},
+            {"start": 1, "end": 3, "italic": True},
+        ],
+    )
+
+    lookup = resolved_text_styles(frame, len(frame.text))
+
+    assert lookup[0]["bold"] is True
+    assert lookup[0]["italic"] is False
+    assert lookup[1]["bold"] is True
+    assert lookup[1]["italic"] is True
+    assert lookup[1]["color"] == "#CC0000"
 
 
 def test_control_diagonal_resize_preserves_original_proportions() -> None:
