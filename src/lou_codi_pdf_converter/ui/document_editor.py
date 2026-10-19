@@ -5201,11 +5201,18 @@ class DocumentEditorWindow(tk.Toplevel):
         dialog.resizable(False, False)
         body = ttk.Frame(dialog, padding=14)
         body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(1, weight=1)
         ttk.Label(body, text="Titre").grid(row=0, column=0, sticky="w", pady=4)
         title_var = tk.StringVar(value=item.chart_title)
-        ttk.Entry(body, textvariable=title_var, width=34).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Entry(body, textvariable=title_var, width=28).grid(row=0, column=1, sticky="ew", pady=4)
         ttk.Label(body, text="Séries de valeurs").grid(row=1, column=0, sticky="nw", pady=4)
-        series_list = tk.Listbox(body, selectmode="extended", exportselection=False, height=min(6, len(headers)))
+        series_list = tk.Listbox(
+            body,
+            selectmode="extended",
+            exportselection=False,
+            height=min(6, len(headers)),
+            width=28,
+        )
         series_list.grid(row=1, column=1, sticky="ew", pady=4)
         for header in headers:
             series_list.insert("end", header)
@@ -5222,7 +5229,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 "Un camembert utilise une seule série."
             ),
             foreground="#52677A",
-        ).grid(row=2, column=1, sticky="w", pady=(0, 6))
+            wraplength=340,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 6))
         legend_var = tk.BooleanVar(value=item.chart_show_legend)
         values_var = tk.BooleanVar(value=item.chart_show_values)
         ttk.Checkbutton(body, text="Afficher la légende", variable=legend_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
@@ -5248,7 +5257,7 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side="left", padx=4)
         ttk.Button(buttons, text="Appliquer", command=apply).pack(side="left", padx=4)
         dialog.bind("<Return>", lambda _event: apply())
-        center_window(dialog, 520, 330)
+        center_window(dialog, 480, 330)
 
     def _draw_chart_preview(self, item: PageObject, x: float, y: float, width: float, height: float, tags: tuple[str, str]) -> None:
         source = next((candidate for candidate in self.document.objects if candidate.object_id == item.source_id), None)
