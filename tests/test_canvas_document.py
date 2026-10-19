@@ -157,6 +157,13 @@ def test_office_html_clipboard_reads_css_classes_and_ignores_list_marker_glyphs(
     assert "\uf0b7" not in text
 
 
+def test_rich_clipboard_matching_tolerates_office_list_markers() -> None:
+    rich = "Titre\n• Premier point\n• Deuxième point"
+    plain = "Titre\n\uf0b7 Premier point\n□ Deuxième point"
+
+    assert rich_clipboard_matches_plain(rich, plain)
+
+
 def test_plain_paste_removes_office_bullets_symbol_font_and_indentation() -> None:
     source = "\t\uf0b7\tPremier point\n    • Deuxième point\n\tTexte ordinaire"
 

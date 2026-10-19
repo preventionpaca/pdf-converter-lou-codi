@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import io
 import math
 import re
@@ -44,6 +45,7 @@ from ..services.canvas_document import (
     _font_file,
 )
 from ..services.docx_canvas import export_editable_docx
+from ..services.docx_import import import_docx_as_canvas
 from ..services.destinations import (
     document_destination,
     favorite_destinations,
@@ -355,7 +357,17 @@ def rich_clipboard_matches_plain(rich_text: str, plain_text: str) -> bool:
     compact = lambda text: re.sub(r"[\W_]+", "", text, flags=re.UNICODE).casefold()
     rich_compact = compact(rich_text)
     plain_compact = compact(plain_text)
-    return bool(rich_compact) and rich_compact == plain_compact
+    if not rich_compact or not plain_compact:
+        return False
+    if rich_compact == plain_compact:
+        return True
+    # Office suites encode bullets and paragraph separators differently in
+    # text/plain and text/html.  Keep the rich target when their actual words
+    # still describe the same clipboard content.
+    shorter, longer = sorted((rich_compact, plain_compact), key=len)
+    if len(shorter) >= 12 and shorter in longer and len(shorter) / len(longer) >= 0.85:
+        return True
+    return difflib.SequenceMatcher(None, rich_compact, plain_compact).ratio() >= 0.9
 
 
 def normalize_external_text(value: str) -> str:
@@ -1794,6 +1806,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Ouvrir un projet…", self._load, "Ctrl+O"),
             ("Nouveau depuis un modèle…", self._load_template, ""),
             ("Importer un PDF…", self._import_pdf, ""),
+            ("Importer un DOCX…", self._import_docx, ""),
             ("Enregistrer", self._save, "Ctrl+S"),
             ("Enregistrer sous…", self._save_as, "Ctrl+Maj+S"),
             ("Enregistrer comme modèle…", self._save_as_template, ""),
@@ -11215,6 +11228,33 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._checkpoint()
         self._use_loaded_document(loaded, files[0])
+
+    def _import_docx(self) -> None:
+        files = choose_documents(
+            self,
+            {".docx"},
+            initial_directory=document_destination(),
+        )
+        if not files:
+            return
+        try:
+            loaded = import_docx_as_canvas(files[0])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            messagebox.showerror("DOCX illisible", str(exc), parent=self)
+            return
+        self._checkpoint()
+        self.document = loaded
+        self.project_path = None
+        self._saved_document = copy.deepcopy(loaded)
+        self.current_page, self.selected = 0, None
+        self.selected_indices.clear()
+        self.status.configure(
+            text=(
+                f"DOCX importé : {files[0].name}. Texte, listes et styles de caractères "
+                "sont modifiables dans Document Studio."
+            )
+        )
+        self._render()
 
     def _choose_export(self, extension: str, label: str) -> Path | None:
         stem = self.project_path.stem if self.project_path else "nouveau_document"
