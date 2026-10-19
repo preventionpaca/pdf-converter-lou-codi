@@ -388,6 +388,12 @@ def _draw_object(
         if item.kind == "table":
             _draw_table(page, rectangle, item, rendered_text)
         else:
+            rotation = float(item.rotation) % 360
+            centre = pymupdf.Point(
+                (rectangle.x0 + rectangle.x1) / 2,
+                (rectangle.y0 + rectangle.y1) / 2,
+            )
+            morph = (centre, pymupdf.Matrix(rotation)) if rotation else None
             if item.fill.upper() != "#FFFFFF" or item.border_width > 0:
                 page.draw_rect(
                     rectangle,
@@ -395,6 +401,7 @@ def _draw_object(
                     fill=_rgb(item.fill) if item.fill.lower() not in {"", "none", "transparent"} else None,
                     width=max(0.5, item.border_width),
                     dashes="[5 3]" if item.border_style == "dashed" else "[1 3]" if item.border_style == "dotted" else None,
+                    morph=morph,
                     overlay=True,
                 )
             font_file = _font_file(item.font_family, item.bold, item.italic)
@@ -403,7 +410,6 @@ def _draw_object(
             else:
                 family = {"Serif": "tiro", "Monospace": "cour"}.get(item.font_family, "helv")
                 font_name = "hebi" if item.bold and item.italic else "hebo" if item.bold else "heit" if item.italic else family
-            rotation = float(item.rotation) % 360
             page.insert_textbox(
                 rectangle,
                 rendered_text,
@@ -412,8 +418,8 @@ def _draw_object(
                 fontfile=font_file,
                 color=_rgb(item.color),
                 align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
-                rotate=int(rotation) if rotation % 90 == 0 else 0,
-                morph=(rectangle.tl, pymupdf.Matrix(rotation)) if rotation % 90 else None,
+                rotate=0,
+                morph=morph,
                 overlay=True,
             )
             if item.underline or item.strikethrough:

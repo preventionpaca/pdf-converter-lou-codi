@@ -27,6 +27,23 @@ SEPARATE_DRAWING_KINDS = {
 }
 
 
+def _text_style_at(item: PageObject, position: int) -> dict[str, object]:
+    style: dict[str, object] = {
+        "bold": item.bold,
+        "italic": item.italic,
+        "underline": item.underline,
+        "strikethrough": item.strikethrough,
+        "color": item.color,
+        "highlight": "",
+        "font_family": item.font_family,
+        "font_size": item.font_size,
+    }
+    for run in item.text_styles:
+        if int(run.get("start", 0)) <= position < int(run.get("end", 0)):
+            style.update({key: value for key, value in run.items() if key not in {"start", "end"}})
+    return style
+
+
 def export_editable_docx(
     canvas_document: CanvasDocument,
     target: Path,
@@ -81,10 +98,6 @@ def export_editable_docx(
                             for link in item.text_links
                             if str(link.get("hyperlink", "")).strip()
                         ]
-                        object_link_relationship = (
-                            document.part.relate_to(item.hyperlink, RT.HYPERLINK, is_external=True)
-                            if item.hyperlink.strip() else None
-                        )
                         paragraph._p.append(
                             _textbox_xml(
                                 item,
@@ -94,7 +107,7 @@ def export_editable_docx(
                                 document_name,
                                 flowed_text_for_object(item, canvas_document.objects),
                                 link_relationships,
-                                object_link_relationship,
+                                None,
                             )
                         )
                     elif (
@@ -225,17 +238,14 @@ def _textbox_xml(
     object_link_relationship: str | None = None,
 ):
     text = resolve_dynamic_text(content, page_number, page_count, document_name)
-    bold = "<w:b/>" if item.bold else ""
-    italic = "<w:i/>" if item.italic else ""
-    font_size = round(item.font_size * 2)
-    color = item.color.lstrip("#")
-    family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "Comic Relief", "Manuscrite ancienne": "Z003", "Inter": "Inter", "JetBrains Mono": "JetBrains Mono", "Symboles": "DejaVu Sans", "Flèches": "DejaVu Sans"}.get(item.font_family, "DejaVu Sans")
     alignment = {"left": "left", "center": "center", "right": "right", "justify": "both"}.get(item.align, "left")
-    run_properties = f'{bold}{italic}<w:rFonts w:ascii="{family}" w:hAnsi="{family}"/><w:sz w:val="{font_size}"/><w:color w:val="{color}"/>'
     boundaries = {0, len(text)}
     for start, end, _relationship in link_relationships or []:
         boundaries.add(max(0, min(len(text), start)))
         boundaries.add(max(0, min(len(text), end)))
+    for style_run in item.text_styles:
+        boundaries.add(max(0, min(len(text), int(style_run.get("start", 0)))))
+        boundaries.add(max(0, min(len(text), int(style_run.get("end", 0)))))
     fragments: list[str] = []
     ordered = sorted(boundaries)
     for start, end in zip(ordered, ordered[1:]):
@@ -246,17 +256,34 @@ def _textbox_xml(
             (relationship for link_start, link_end, relationship in link_relationships or [] if link_start < end and link_end > start),
             None,
         )
+        style = _text_style_at(item, start)
+        family = {"Serif": "Liberation Serif", "Monospace": "Liberation Mono", "Cursive": "Comic Relief", "Manuscrite ancienne": "Z003", "Inter": "Inter", "JetBrains Mono": "JetBrains Mono", "Symboles": "DejaVu Sans", "Flèches": "DejaVu Sans"}.get(str(style["font_family"]), "DejaVu Sans")
+        highlight = str(style.get("highlight", "")).lstrip("#")
+        run_properties = (
+            ("<w:b/>" if style["bold"] else "")
+            + ("<w:i/>" if style["italic"] else "")
+            + ("<w:u w:val=\"single\"/>" if style["underline"] else "")
+            + ("<w:strike/>" if style["strikethrough"] else "")
+            + f'<w:rFonts w:ascii="{family}" w:hAnsi="{family}"/>'
+            + f'<w:sz w:val="{round(float(style["font_size"]) * 2)}"/>'
+            + f'<w:color w:val="{str(style["color"]).lstrip("#")}"/>'
+            + (f'<w:shd w:val="clear" w:color="auto" w:fill="{highlight}"/>' if highlight else "")
+        )
         run = f'<w:r><w:rPr>{run_properties}{"<w:u w:val=\"single\"/><w:color w:val=\"1769AA\"/>" if relationship else ""}</w:rPr><w:t xml:space="preserve">{value}</w:t></w:r>'
         fragments.append(f'<w:hyperlink r:id="{relationship}">{run}</w:hyperlink>' if relationship else run)
     fragment_xml = "".join(fragments)
-    shape_href = f' href="{escape(item.hyperlink)}"' if item.hyperlink else ""
+    fill = item.fill if item.fill.lower() not in {"", "none", "transparent"} else "#FFFFFF"
+    filled = "f" if item.fill.lower() in {"", "none", "transparent"} else "t"
+    stroked = "t" if item.border_width > 0 else "f"
+    dash_style = "dot" if item.border_style == "dotted" else "dash" if item.border_style == "dashed" else "solid"
     run = f"""
     <w:r xmlns:w="{WORD}" xmlns:v="{VML}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
       <w:pict>
         <v:shape id="LouCodiTextBox{page_number}_{index}"
-          {shape_href}
-          style="position:absolute;margin-left:{item.x:.2f}pt;margin-top:{item.y:.2f}pt;width:{item.width:.2f}pt;height:{item.height:.2f}pt;z-index:{item.level};mso-position-horizontal-relative:page;mso-position-vertical-relative:page"
-          strokecolor="#72879C" fillcolor="#FFFFFF">
+          style="position:absolute;margin-left:{item.x:.2f}pt;margin-top:{item.y:.2f}pt;width:{item.width:.2f}pt;height:{item.height:.2f}pt;rotation:{float(item.rotation) % 360:g};z-index:{item.level};mso-position-horizontal-relative:page;mso-position-vertical-relative:page"
+          stroked="{stroked}" strokeweight="{max(0.0, item.border_width):g}pt"
+          strokecolor="{item.border_color}" filled="{filled}" fillcolor="{fill}">
+          <v:stroke dashstyle="{dash_style}"/>
           <v:textbox inset="3pt,2pt,3pt,2pt">
             <w:txbxContent>
               <w:p>

@@ -5,6 +5,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
+import pymupdf
 from pypdf import PdfReader
 from PIL import Image, ImageDraw
 
@@ -901,6 +902,29 @@ def test_rotated_text_frame_keeps_all_corners_around_the_same_centre() -> None:
     expected = [(80.0, -10.0), (80.0, 90.0), (40.0, 90.0), (40.0, -10.0)]
     for point, expected_point in zip(points, expected, strict=True):
         assert point == pytest.approx(expected_point)
+
+
+def test_pdf_export_rotates_text_and_its_border_without_losing_content(tmp_path: Path) -> None:
+    target = tmp_path / "texte-tourne.pdf"
+    document = CanvasDocument(objects=[PageObject(
+        "text", 0, 100, 100, 240, 100,
+        text="Rotation complète", rotation=30,
+        border_width=1.5, border_style="dotted",
+    )])
+
+    export_canvas_pdf(document, target)
+
+    with pymupdf.open(target) as pdf:
+        page = pdf[0]
+        assert "Rotation complète" in page.get_text()
+        text_line = next(
+            line
+            for block in page.get_text("dict")["blocks"]
+            for line in block.get("lines", [])
+        )
+        assert text_line["dir"][0] == pytest.approx(math.cos(math.radians(30)), abs=1e-4)
+        assert text_line["dir"][1] == pytest.approx(-math.sin(math.radians(30)), abs=1e-4)
+        assert page.get_drawings()
 
 
 def test_layout_rich_objects_use_quarter_turns_for_guided_rotation() -> None:

@@ -26,6 +26,34 @@ def test_docx_keeps_text_as_editable_textbox(tmp_path: Path) -> None:
     ).getbbox() is None
 
 
+def test_docx_keeps_rotated_textbox_appearance_and_character_styles(tmp_path: Path) -> None:
+    target = tmp_path / "zone-stylee.docx"
+    document = CanvasDocument(objects=[PageObject(
+        "text", 0, 50, 70, 250, 80,
+        text="Texte rouge", rotation=30,
+        fill="#DCEBFA", border_color="#2368AF",
+        border_width=3, border_style="dotted",
+        text_styles=[{
+            "start": 6, "end": 11, "bold": True,
+            "color": "#CC0000", "highlight": "#FFF176",
+        }],
+    )])
+
+    export_editable_docx(document, target)
+
+    with ZipFile(target) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8")
+    assert "Texte " in xml
+    assert "rouge" in xml
+    assert "rotation:30" in xml
+    assert 'strokeweight="3pt"' in xml
+    assert 'dashstyle="dot"' in xml
+    assert 'fillcolor="#DCEBFA"' in xml
+    assert '<w:b/>' in xml
+    assert 'w:val="CC0000"' in xml
+    assert 'w:fill="FFF176"' in xml
+
+
 def test_compatible_docx_renders_text_once_without_vml_overlay(tmp_path: Path) -> None:
     target = tmp_path / "compatible.docx"
     document = CanvasDocument(
