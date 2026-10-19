@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import tempfile
 import uuid
 from collections import Counter, defaultdict, deque
@@ -242,6 +243,34 @@ def _table_cell_data(
                 if visible_run
                 else {}
             )
+            cell_text = cell.text.lstrip("\n")
+            cell_text_styles: list[dict[str, object]] = []
+            search_at = 0
+            for paragraph in cell.paragraphs:
+                paragraph_defaults = _style_font_defaults(paragraph.style)
+                for run in paragraph.runs:
+                    if not run.text:
+                        continue
+                    start = cell_text.find(run.text, search_at)
+                    if start < 0:
+                        continue
+                    end = start + len(run.text)
+                    cell_text_styles.append({
+                        "start": start,
+                        "end": end,
+                        **_run_style(
+                            run,
+                            paragraph,
+                            paragraph_defaults=paragraph_defaults,
+                        ),
+                    })
+                    search_at = end
+            shading = cell._tc.tcPr.find(qn("w:shd")) if cell._tc.tcPr is not None else None
+            shading_fill = shading.get(qn("w:fill"), "") if shading is not None else ""
+            if shading_fill.lower() in {"", "auto", "nil"}:
+                shading_fill = ""
+            elif not shading_fill.startswith("#"):
+                shading_fill = f"#{shading_fill}"
             if visible_run:
                 direct_size = getattr(visible_run[1].font, "size", None)
                 style_size = _style_font_defaults(visible_run[0].style).get("size")
@@ -252,7 +281,7 @@ def _table_cell_data(
                     cell_style["font_size"] = 8.0
             output_row.append(
                 {
-                    "text": cell.text.lstrip("\n"),
+                    "text": cell_text,
                     "hyperlink": "",
                     "image_path": image_path,
                     "horizontal_align": horizontal,
@@ -263,6 +292,9 @@ def _table_cell_data(
                     "italic": bool(cell_style.get("italic", False)),
                     "underline": bool(cell_style.get("underline", False)),
                     "color": str(cell_style.get("color", "#000000")),
+                    "highlight": str(cell_style.get("highlight", "")),
+                    "fill": shading_fill,
+                    "text_styles": cell_text_styles,
                 }
             )
         cells.append(output_row)
@@ -310,6 +342,40 @@ def _estimated_table_height(cells: list[list[dict[str, str]]], font_size: float)
         )
         row_heights.append(max(24.0, line_count * font_size * 1.3 + 8.0))
     return max(40.0, sum(row_heights))
+
+
+def _signature_date_values(text: str) -> list[str]:
+    """Recognise repeated Word signature placeholders placed just below a table."""
+    return [
+        match.group(0).strip()
+        for match in re.finditer(r"\bLe\s*[_ ]*[/]\s*[_ ]*[/]\s*20[_\d]*", text)
+    ]
+
+
+def _attach_signature_dates(table: PageObject, paragraph: Paragraph) -> bool:
+    """Move a repeated date line into the bottom of the preceding signature cells."""
+    if not table.table_cells:
+        return False
+    column_count = max(len(row) for row in table.table_cells)
+    dates = _signature_date_values(paragraph.text)
+    if len(dates) != column_count or column_count < 2:
+        return False
+    color = "#000000"
+    for run in paragraph.runs:
+        if run.text.strip():
+            color = str(_run_style(run, paragraph).get("color", color))
+            break
+    bottom_row = len(table.table_cells) - 1
+    for column, value in enumerate(dates):
+        anchor_row, anchor_column = bottom_row, column
+        for top, left, row_span, column_span in table.table_merges:
+            if top <= bottom_row < top + row_span and left <= column < left + column_span:
+                anchor_row, anchor_column = top, left
+                break
+        cell = table.table_cells[anchor_row][anchor_column]
+        cell["bottom_text"] = value
+        cell["bottom_color"] = color
+    return True
 
 
 def _imported_table_objects(
@@ -508,6 +574,8 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
         for block in source.iter_inner_content():
             if isinstance(block, Paragraph):
                 paragraph_group.append(block)
+                if len(_signature_date_values(block.text)) >= 2:
+                    flush_paragraphs()
             elif isinstance(block, Table):
                 flush_paragraphs()
                 blocks.append(("table", block))
@@ -568,7 +636,20 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
                     next_page()
                 continue
 
-            paragraphs = value
+            paragraphs = list(value)
+            first_visible = next(
+                (index for index, paragraph in enumerate(paragraphs) if paragraph.text.strip()),
+                None,
+            )
+            if (
+                objects
+                and objects[-1].kind == "table"
+                and first_visible is not None
+                and _attach_signature_dates(objects[-1], paragraphs[first_visible])
+            ):
+                paragraphs.pop(first_visible)
+                if not paragraphs:
+                    continue
             ranges = [paragraph_ranges[paragraph._p] for paragraph in paragraphs]
             group_start, group_end = ranges[0][0], ranges[-1][1]
             group_text = text[group_start:group_end]

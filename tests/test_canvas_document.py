@@ -98,8 +98,8 @@ def test_inline_editor_uses_canvas_pixel_metrics_and_insets() -> None:
     assert inline_editor_font_size(12, 1.0) == -12
     assert inline_editor_font_size(12, 1.15) == -14
     assert inline_editor_font_size("invalid", 1.0) == -12
-    assert inline_editor_padding(1.0) == (8, 4)
-    assert inline_editor_padding(1.15) == (9, 5)
+    assert inline_editor_padding(1.0) == (10, 4)
+    assert inline_editor_padding(1.15) == (12, 5)
     assert DocumentEditorWindow._tk_font_family("Sans-serif") == "DejaVu Sans"
     assert DocumentEditorWindow._tk_font_family("Serif") == "DejaVu Serif"
 

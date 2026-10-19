@@ -22,6 +22,9 @@ def maximize_window(window: tk.Tk | tk.Toplevel) -> None:
 def center_window(window: tk.Tk | tk.Toplevel, width: int, height: int) -> None:
     """Center a non-workspace window at a comfortable fixed size."""
 
+    if isinstance(window, tk.Toplevel):
+        window.bind("<Escape>", lambda _event: window.destroy() or "break", add="+")
+
     def apply() -> None:
         screen_width = window.winfo_screenwidth()
         screen_height = window.winfo_screenheight()
@@ -34,6 +37,7 @@ def center_window(window: tk.Tk | tk.Toplevel, width: int, height: int) -> None:
 
 def make_modal(window: tk.Toplevel, parent: tk.Misc) -> None:
     """Attach a visible workspace to its parent and block the parent reliably."""
+    window.bind("<Escape>", lambda _event: window.destroy() or "break", add="+")
     window.transient(parent)
     try:
         window.wm_group(parent)

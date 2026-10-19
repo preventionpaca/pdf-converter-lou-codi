@@ -21,7 +21,7 @@ from .table_formulas import evaluate_table, evaluate_table_cells
 A4_WIDTH = 595.28
 A4_HEIGHT = 841.89
 FLOW_BREAK_TOKEN = "{{CADRE_SUIVANT}}"
-TEXT_FRAME_HORIZONTAL_PADDING = 8.0
+TEXT_FRAME_HORIZONTAL_PADDING = 10.0
 
 TABLE_STYLE_PALETTES: dict[str, tuple[str, str, str, str]] = {
     "blue": ("#193F6A", "#FFFFFF", "#EAF3FC", "#D5E7F7"),
@@ -947,7 +947,7 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                 and column_index < len(item.table_cells[row_index])
                 else {}
             )
-            cell_fill = str(metadata.get("fill", default_fill))
+            cell_fill = str(metadata.get("fill") or default_fill)
             cell_border_width = float(metadata.get("border_width", 0) or 0)
             cell_border_color = str(metadata.get("border_color", item.border_color))
             page.draw_rect(
@@ -991,12 +991,23 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
             lines = value.split("\n")
             line_height = cell_font_size * 1.2
             block_height = len(lines) * line_height
-            start_y = text_cell.y0 + cell_font_size
+            start_y = text_cell.y0
             if vertical_align == "middle":
                 start_y += max(0.0, (text_cell.height - block_height) / 2)
             elif vertical_align == "bottom":
                 start_y += max(0.0, text_cell.height - block_height)
+            text_align = {"left": 0, "center": 1, "right": 2}.get(str(horizontal_align), 0)
+            highlight = str(metadata.get("highlight", ""))
             for line_number, line in enumerate(lines):
+                line_top = start_y + line_number * line_height
+                line_box = pymupdf.Rect(
+                    text_cell.x0,
+                    line_top,
+                    text_cell.x1,
+                    min(text_cell.y1, line_top + line_height),
+                )
+                if line_box.y1 <= line_box.y0:
+                    continue
                 line_width = pymupdf.get_text_length(
                     line, fontname=font_name, fontsize=cell_font_size
                 )
@@ -1005,12 +1016,42 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                     line_x += max(0.0, (text_cell.width - line_width) / 2)
                 elif horizontal_align == "right":
                     line_x += max(0.0, text_cell.width - line_width)
-                page.insert_text(
-                    pymupdf.Point(line_x, start_y + line_number * line_height),
+                if highlight:
+                    page.draw_rect(
+                        pymupdf.Rect(
+                            line_x,
+                            line_top,
+                            min(text_cell.x1, line_x + line_width),
+                            line_box.y1,
+                        ),
+                        color=None,
+                        fill=_rgb(highlight),
+                        overlay=True,
+                    )
+                page.insert_textbox(
+                    line_box,
                     line,
                     fontsize=cell_font_size,
                     fontname=font_name,
                     color=_rgb(cell_color),
+                    align=text_align,
+                    overlay=True,
+                )
+            bottom_text = str(metadata.get("bottom_text", "")).strip()
+            if bottom_text:
+                bottom_box = pymupdf.Rect(
+                    text_cell.x0,
+                    max(text_cell.y0, text_cell.y1 - line_height),
+                    text_cell.x1,
+                    text_cell.y1,
+                )
+                page.insert_textbox(
+                    bottom_box,
+                    bottom_text,
+                    fontsize=cell_font_size,
+                    fontname=font_name,
+                    color=_rgb(str(metadata.get("bottom_color", cell_color))),
+                    align=1,
                     overlay=True,
                 )
             hyperlink = metadata.get("hyperlink", "").strip()

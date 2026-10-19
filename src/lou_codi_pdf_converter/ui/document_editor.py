@@ -3147,7 +3147,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     cell_h = row_offsets[row_index + row_span] - row_offsets[row_index]
                     metadata = cells[row_index][column_index]
                     default_fill, cell_text_color = table_cell_colors(item.table_style, row_index)
-                    cell_fill = str(metadata.get("fill", default_fill))
+                    cell_fill = str(metadata.get("fill") or default_fill)
                     self.canvas.create_rectangle(
                         cx, cy, cx + cell_w, cy + cell_h,
                         fill=cell_fill,
@@ -3196,10 +3196,34 @@ class DocumentEditorWindow(tk.Toplevel):
                         except OSError:
                             pass
                     hyperlink = metadata.get("hyperlink", "")
-                    self.canvas.create_text(
-                        text_x, text_y, text=value, anchor=text_anchor, width=max(5, cell_w - 8), justify=horizontal_align,
-                        fill="#7FDBFF" if hyperlink and row_index == 0 and item.table_style != "plain" else "#1769AA" if hyperlink else str(metadata.get("color", cell_text_color)),
-                        font=("Sans", max(5, round(cell_font_size * self.zoom)), "underline" if hyperlink else cell_font_style),
+                    text_color = (
+                        "#7FDBFF"
+                        if hyperlink and row_index == 0 and item.table_style != "plain"
+                        else "#1769AA"
+                        if hyperlink
+                        else str(metadata.get("color", cell_text_color))
+                    )
+                    cell_picture = self._table_cell_preview(
+                        value,
+                        max(1, round(cell_w)),
+                        max(1, round(cell_h)),
+                        cell_font_size,
+                        horizontal_align=str(horizontal_align),
+                        vertical_align=str(vertical_align),
+                        color=text_color,
+                        highlight=str(metadata.get("highlight", "")),
+                        bold=bool(metadata.get("bold", False)),
+                        italic=bool(metadata.get("italic", False)),
+                        underline=bool(metadata.get("underline", False) or hyperlink),
+                        bottom_text=str(metadata.get("bottom_text", "")),
+                        bottom_color=str(metadata.get("bottom_color", text_color)),
+                    )
+                    self._overlay_images.append(cell_picture)
+                    self.canvas.create_image(
+                        cx,
+                        cy,
+                        image=cell_picture,
+                        anchor="nw",
                         tags=tags,
                     )
                     active_cell = self._active_table_cell
@@ -3600,6 +3624,76 @@ class DocumentEditorWindow(tk.Toplevel):
             angle=label_angle,
             tags=tags,
         )
+
+    def _table_cell_preview(
+        self,
+        value: str,
+        width: int,
+        height: int,
+        font_size: float,
+        *,
+        horizontal_align: str,
+        vertical_align: str,
+        color: str,
+        highlight: str,
+        bold: bool,
+        italic: bool,
+        underline: bool,
+        bottom_text: str = "",
+        bottom_color: str = "#000000",
+    ) -> ImageTk.PhotoImage:
+        """Draw one table cell into a clipped bitmap so it cannot cover neighbours."""
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        pixel_size = max(5, round(font_size * self.zoom))
+        try:
+            font_file = _font_file("Sans-serif", bold, italic)
+            font = ImageFont.truetype(font_file, pixel_size) if font_file else ImageFont.load_default()
+        except (OSError, TypeError):
+            font = ImageFont.load_default()
+        lines = value.split("\n") if value else []
+        line_height = max(6, round(pixel_size * 1.2))
+        block_height = len(lines) * line_height
+        if vertical_align == "middle":
+            start_y = max(2, (height - block_height) // 2)
+        elif vertical_align == "bottom":
+            start_y = max(2, height - block_height - 3)
+        else:
+            start_y = 2
+        safe_color = safe_pillow_color(color, "#000000")
+        safe_highlight = safe_pillow_color(highlight, "", allow_transparent=True)
+        for line_number, line in enumerate(lines):
+            line_width = float(draw.textlength(line, font=font))
+            if horizontal_align == "center":
+                line_x = max(3.0, (width - line_width) / 2)
+            elif horizontal_align == "right":
+                line_x = max(3.0, width - line_width - 3)
+            else:
+                line_x = 3.0
+            line_y = start_y + line_number * line_height
+            if line_y >= height:
+                break
+            if safe_highlight:
+                draw.rectangle(
+                    (line_x, line_y, min(width - 1, line_x + line_width), min(height - 1, line_y + line_height)),
+                    fill=safe_highlight,
+                )
+            draw.text((line_x, line_y), line, font=font, fill=safe_color)
+            if underline:
+                underline_y = min(height - 1, line_y + pixel_size + 1)
+                draw.line((line_x, underline_y, min(width - 1, line_x + line_width), underline_y), fill=safe_color, width=1)
+        if bottom_text:
+            bottom_value = bottom_text.strip()
+            bottom_width = float(draw.textlength(bottom_value, font=font))
+            bottom_x = max(3.0, (width - bottom_width) / 2)
+            bottom_y = max(2, height - line_height - 2)
+            draw.text(
+                (bottom_x, bottom_y),
+                bottom_value,
+                font=font,
+                fill=safe_pillow_color(bottom_color, safe_color),
+            )
+        return ImageTk.PhotoImage(image)
 
     def _text_preview(
         self,

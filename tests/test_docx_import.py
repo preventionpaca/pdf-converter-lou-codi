@@ -4,6 +4,8 @@ from time import monotonic
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 from PIL import Image
 
@@ -95,6 +97,10 @@ def test_docx_import_keeps_tables_merges_and_cell_images_editable(
     heading.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     heading.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     table.cell(1, 0).text = "Valeur modifiable"
+    table.cell(1, 0).paragraphs[0].runs[0].font.highlight_color = WD_COLOR_INDEX.YELLOW
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), "D9EAF7")
+    table.cell(1, 0)._tc.get_or_add_tcPr().append(shading)
     table.cell(1, 1).paragraphs[0].add_run().add_picture(
         str(picture), width=Pt(40)
     )
@@ -109,6 +115,9 @@ def test_docx_import_keeps_tables_merges_and_cell_images_editable(
     assert imported_table.table_cells[0][0]["horizontal_align"] == "center"
     assert imported_table.table_cells[0][0]["vertical_align"] == "middle"
     assert imported_table.table_cells[1][0]["text"] == "Valeur modifiable"
+    assert imported_table.table_cells[1][0]["highlight"] == "#FFF176"
+    assert imported_table.table_cells[1][0]["fill"] == "#D9EAF7"
+    assert imported_table.table_cells[1][0]["text_styles"][0]["highlight"] == "#FFF176"
     assert imported_table.table_cells[0][1]["text"] == ""
     assert imported_table.table_merges == [[0, 0, 1, 2]]
     assert imported_table.table_column_widths == [90.0, 180.0]
@@ -116,6 +125,38 @@ def test_docx_import_keeps_tables_merges_and_cell_images_editable(
     cell_image = Path(imported_table.table_cells[1][1]["image_path"])
     assert cell_image.is_file()
     assert Image.open(cell_image).size == (80, 40)
+
+
+def test_docx_import_attaches_repeated_signature_dates_to_preceding_table(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "signatures.docx"
+    document = Document()
+    table = document.add_table(rows=1, cols=3)
+    table.cell(0, 0).text = "Entreprise"
+    table.cell(0, 1).text = "Élève"
+    table.cell(0, 2).text = "Proviseur"
+    dates = document.add_paragraph()
+    dates.add_run("Le  /  / 20__\tLe  /  / 20__\tLe  /  / 20__")
+    document.add_paragraph("Texte conservé après les signatures")
+    document.save(source)
+
+    imported = import_docx_as_canvas(source)
+
+    imported_table = next(item for item in imported.objects if item.kind == "table")
+    assert [
+        cell.get("bottom_text") for cell in imported_table.table_cells[0]
+    ] == ["Le  /  / 20__", "Le  /  / 20__", "Le  /  / 20__"]
+    assert all(
+        "Le  /  / 20__" not in item.text
+        for item in imported.objects
+        if item.kind == "text"
+    )
+    assert any(
+        "Texte conservé après les signatures" in item.text
+        for item in imported.objects
+        if item.kind == "text"
+    )
 
 
 def test_docx_import_handles_highly_fragmented_word_text_without_runaway_cpu(
