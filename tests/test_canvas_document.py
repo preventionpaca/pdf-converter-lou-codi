@@ -1323,6 +1323,32 @@ def test_character_style_only_applies_inside_its_text_range() -> None:
     assert text_style_at(item, 10)["color"] == "#CC0000"
 
 
+def test_table_cell_character_style_is_resolved_without_formatting_the_whole_cell() -> None:
+    table = PageObject(
+        "table", 0, 0, 0, 200, 50,
+        table_cells=[[{
+            "text": "bonjour monde",
+            "horizontal_align": "center",
+            "bold": False,
+            "text_styles": [{"start": 8, "end": 13, "bold": True}],
+        }]],
+    )
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor._editing_table_cell = (0, 0)
+    editor._editing_style_tags = {}
+
+    class WidgetWithoutLiveTags:
+        @staticmethod
+        def tag_names(_index: str) -> tuple[str, ...]:
+            return ()
+
+    plain = editor._inline_text_style_at(WidgetWithoutLiveTags(), table, 2)  # type: ignore[arg-type]
+    emphasized = editor._inline_text_style_at(WidgetWithoutLiveTags(), table, 10)  # type: ignore[arg-type]
+
+    assert plain["bold"] is False
+    assert emphasized["bold"] is True
+
+
 def test_text_highlight_only_applies_inside_its_text_range() -> None:
     item = PageObject(
         "text", 0, 0, 0, 200, 50, text="bonjour monde",

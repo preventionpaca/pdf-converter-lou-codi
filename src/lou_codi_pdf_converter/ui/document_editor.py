@@ -6449,7 +6449,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_selection_range = (start, end) if end > start else None
         if self._editing_selection_range is not None and self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and item.object_id == self._editing_object_id:
+            if item.kind in {"text", "table"} and item.object_id == self._editing_object_id:
                 style = self._inline_text_style_at(widget, item, start)
                 self.font_size_var.set(f"{float(style['font_size']):g}")
                 self.font_family_var.set(str(style["font_family"]))
@@ -6464,7 +6464,33 @@ class DocumentEditorWindow(tk.Toplevel):
         self, widget: tk.Text, item: PageObject, position: int
     ) -> dict[str, object]:
         """Resolve persisted and live toolbar styles at one character."""
-        style = text_style_at(item, position)
+        if item.kind == "table" and self._editing_table_cell is not None:
+            row, column = self._editing_table_cell
+            cell = self._ensure_table_cells(item)[row][column]
+            style = {
+                "bold": bool(cell.get("bold", item.bold)),
+                "italic": bool(cell.get("italic", item.italic)),
+                "underline": bool(cell.get("underline", item.underline)),
+                "strikethrough": bool(
+                    cell.get("strikethrough", item.strikethrough)
+                ),
+                "color": str(cell.get("color", item.color)),
+                "highlight": "",
+                "font_family": str(cell.get("font_family", item.font_family)),
+                "font_size": safe_number(
+                    cell.get("font_size"), item.font_size, minimum=1.0
+                ),
+            }
+            for run in cell.get("text_styles", []):
+                if (
+                    isinstance(run, dict)
+                    and int(run.get("start", 0)) <= position < int(run.get("end", 0))
+                ):
+                    for key in TEXT_STYLE_KEYS:
+                        if key in run:
+                            style[key] = run[key]
+        else:
+            style = text_style_at(item, position)
         index = f"1.0 + {position} chars"
         for tag in widget.tag_names(index):
             live_style = self._editing_style_tags.get(tag)
@@ -6550,11 +6576,12 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Control-z>", self._undo_inline_text)
         widget.bind("<Control-y>", self._redo_inline_text)
         widget.bind("<Control-Shift-Z>", self._redo_inline_text)
-        widget.bind("<Button-1>", self._inline_text_mouse_press)
-        widget.bind("<B1-Motion>", self._inline_text_mouse_drag)
-        widget.bind("<ButtonRelease-1>", self._inline_text_mouse_release)
-        widget.bind("<Double-Button-1>", self._inline_text_select_word)
-        widget.bind("<Triple-Button-1>", self._inline_text_select_line)
+        # Let Tk's mature Text bindings resolve click/drag positions.  The
+        # former hand-written selection used ``@x,y`` indexes and expanded a
+        # drag to the whole visual line when that line was centred or aligned
+        # to the right.  Native selection remains character-precise for every
+        # paragraph alignment; we only remember it once the drag is complete.
+        widget.bind("<ButtonRelease-1>", self._inline_text_mouse_release, add="+")
         widget.bind(
             "<KeyRelease>",
             lambda _event: self.after_idle(
@@ -7187,8 +7214,12 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas,
             wrap="word",
             font=(
-                str(cell.get("font_family") or item.font_family or "Liberation Sans"),
-                max(8, round(safe_number(cell.get("font_size"), item.font_size, minimum=1.0) * self.zoom)),
+                self._tk_font_family(
+                    str(cell.get("font_family") or item.font_family or "Sans-serif")
+                ),
+                inline_editor_font_size(
+                    cell.get("font_size", item.font_size), self.zoom
+                ),
                 " ".join(
                     part
                     for part, enabled in (
@@ -7203,8 +7234,9 @@ class DocumentEditorWindow(tk.Toplevel):
             relief="solid",
             borderwidth=2,
             undo=True,
-            padx=4,
-            pady=3,
+            exportselection=False,
+            padx=inline_editor_padding(self.zoom)[0],
+            pady=inline_editor_padding(self.zoom)[1],
         )
         widget.insert("1.0", cell.get("text", ""))
         widget.tag_configure(
@@ -7215,6 +7247,40 @@ class DocumentEditorWindow(tk.Toplevel):
             ),
         )
         widget.tag_add("cell-style", "1.0", "end")
+        self._editing_style_tags = {}
+        configured_style_tags: dict[tuple[tuple[str, object], ...], str] = {}
+        for run in cell.get("text_styles", []):
+            if not isinstance(run, dict):
+                continue
+            start = max(0, int(run.get("start", 0)))
+            end = max(start, int(run.get("end", 0)))
+            if end <= start:
+                continue
+            style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
+            style = {
+                "bold": bool(cell.get("bold", item.bold)),
+                "italic": bool(cell.get("italic", item.italic)),
+                "underline": bool(cell.get("underline", item.underline)),
+                "strikethrough": bool(
+                    cell.get("strikethrough", item.strikethrough)
+                ),
+                "color": str(cell.get("color", item.color)),
+                "highlight": "",
+                "font_family": str(cell.get("font_family", item.font_family)),
+                "font_size": safe_number(
+                    cell.get("font_size"), item.font_size, minimum=1.0
+                ),
+                **style,
+            }
+            style_key = tuple(sorted(style.items()))
+            tag = configured_style_tags.get(style_key, "")
+            if not tag:
+                tag = f"cell_style_{len(configured_style_tags)}"
+                configured_style_tags[style_key] = tag
+                self._editing_style_tags[tag] = style
+                self._configure_text_style_tag(widget, tag, item, style)
+            widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+        widget.tag_raise("sel")
         self._editing_widget = widget
         self._editing_object_id = item.object_id
         self._editing_original_text = cell.get("text", "")
@@ -7325,6 +7391,7 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Delete>", self._edit_table_delete)
         widget.bind("<BackSpace>", self._edit_table_backspace)
         widget.bind("<Control-z>", lambda _event: widget.edit_undo() or "break")
+        widget.bind("<ButtonRelease-1>", self._inline_text_mouse_release, add="+")
         widget.focus_set()
         self.status.configure(
             text=f"Cellule {row + 1},{column + 1} : Entrée = nouvelle ligne, Ctrl+Entrée = terminer."
@@ -8076,6 +8143,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 row, column = table_cell
                 cell = self._ensure_table_cells(item)[row][column]
                 cell["text"] = value
+                styles: list[dict[str, object]] = []
+                for tag, style in self._editing_style_tags.items():
+                    ranges = widget.tag_ranges(tag)
+                    for start_index, end_index in zip(
+                        ranges[::2], ranges[1::2], strict=True
+                    ):
+                        start = self._text_character_offset(widget, start_index)
+                        end = self._text_character_offset(widget, end_index)
+                        if end > start:
+                            styles.append({"start": start, "end": end, **style})
+                cell["text_styles"] = styles
                 self._sync_table_text(item)
                 # Editing one verbose imported cell must not multiply the
                 # complete table height by that cell's number of lines.
@@ -8217,7 +8295,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is not None:
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
-            if item.kind == "text" and self._editing_widget is not None:
+            if item.kind in {"text", "table"} and self._editing_widget is not None:
                 if selection is None:
                     self.status.configure(text="Sélectionnez d’abord le texte à mettre en forme.")
                     self._editing_widget.focus_set()
@@ -8296,7 +8374,7 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if attribute == "color" and self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and self._editing_widget is not None:
+            if item.kind in {"text", "table"} and self._editing_widget is not None:
                 if not self._apply_inline_text_style(item, {"color": normalized.upper()}):
                     self.status.configure(text="Sélectionnez d’abord le texte à colorer.")
                     self._editing_widget.focus_set()
@@ -8327,8 +8405,8 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is None:
             return
         item = self.document.objects[self.selected]
-        if item.kind != "text":
-            self.status.configure(text="Le surlignage s’applique à une zone de texte.")
+        if item.kind not in {"text", "table"}:
+            self.status.configure(text="Le surlignage s’applique au texte en cours d’édition.")
             return
         if self._apply_inline_text_style(item, {"highlight": color}):
             return
@@ -8708,7 +8786,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if self.selected is not None:
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
-            if item.kind == "text" and self._editing_widget is not None:
+            if item.kind in {"text", "table"} and self._editing_widget is not None:
                 if selection is None:
                     self.status.configure(text="Sélectionnez d’abord le texte à redimensionner.")
                     self._editing_widget.focus_set()
@@ -8733,7 +8811,7 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and self._editing_widget is not None:
+            if item.kind in {"text", "table"} and self._editing_widget is not None:
                 if not self._apply_inline_text_style(item, {"font_size": value}):
                     self.status.configure(text="Sélectionnez d’abord le texte à redimensionner.")
                     self._editing_widget.focus_set()
@@ -8743,7 +8821,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _apply_font_family(self) -> None:
         if self.selected is not None:
             item = self.document.objects[self.selected]
-            if item.kind == "text" and self._editing_widget is not None:
+            if item.kind in {"text", "table"} and self._editing_widget is not None:
                 if not self._apply_inline_text_style(
                     item, {"font_family": self.font_family_var.get()}
                 ):
