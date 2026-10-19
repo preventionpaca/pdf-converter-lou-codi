@@ -1397,6 +1397,30 @@ def test_spreadsheet_html_clipboard_keeps_formula_styles_and_dimensions() -> Non
     assert heights == [24.0]
 
 
+def test_spreadsheet_html_clipboard_resolves_office_css_classes_and_nested_formatting() -> None:
+    html = """
+    <style>
+      .xlHeader { background-color:#ffe699; font-weight:bold; border:3px solid #203864; }
+      .xlFormula { text-align:right; font-style:italic; }
+    </style>
+    <table><tr>
+      <td class="xlHeader"><u>Titre</u></td>
+      <td class="xlFormula" data-cell-formula="of:=A1*2">6</td>
+    </tr></table>
+    """
+
+    cells, _widths, _heights = parse_tabular_clipboard_html(html)
+
+    assert cells[0][0]["text"] == "Titre"
+    assert cells[0][0]["bold"] is True
+    assert cells[0][0]["underline"] is True
+    assert str(cells[0][0]["fill"]).upper() == "#FFE699"
+    assert cells[0][0]["border_width"] == 2.25
+    assert cells[0][1]["text"] == "=A1*2"
+    assert cells[0][1]["italic"] is True
+    assert cells[0][1]["horizontal_align"] == "right"
+
+
 def test_verbose_table_cell_is_fitted_and_clipped_to_its_own_rectangle() -> None:
     text, size = fitted_table_cell_text(
         "Informations financières très longues qui ne doivent pas déborder",

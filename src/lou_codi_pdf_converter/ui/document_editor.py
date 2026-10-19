@@ -542,6 +542,17 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
         self._parts: list[str] = []
         self._cell_width = 0.0
         self._row_height = 0.0
+        self._in_style = False
+        self._style_parts: list[str] = []
+        self._class_styles: dict[str, str] = {}
+
+    def _register_stylesheet(self) -> None:
+        css = "".join(self._style_parts)
+        for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+            for selector in selectors.split(","):
+                match = re.search(r"\.([\w-]+)\s*$", selector.strip())
+                if match:
+                    self._class_styles[match.group(1)] = body
 
     @staticmethod
     def _length(value: str) -> float:
@@ -553,7 +564,15 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = {name.lower(): value or "" for name, value in attrs}
-        style_source = attributes.get("style", "")
+        if tag.lower() == "style":
+            self._in_style = True
+            self._style_parts = []
+            return
+        class_style = ";".join(
+            self._class_styles.get(name, "")
+            for name in attributes.get("class", "").split()
+        )
+        style_source = f"{class_style};{attributes.get('style', '')}"
         declarations = {
             name.strip().lower(): value.strip()
             for declaration in style_source.split(";") if ":" in declaration
@@ -566,8 +585,12 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
             self._parts = []
             self._cell_width = self._length(declarations.get("width", attributes.get("width", "")))
             formula = next((attributes.get(name, "") for name in (
-                "data-formula", "data-sheets-formula", "formula", "x:fmla"
+                "data-formula", "data-sheets-formula", "formula", "x:fmla",
+                "data-fmla", "data-cell-formula",
             ) if attributes.get(name)), "")
+            formula = formula or declarations.get("mso-formula", "")
+            if formula.startswith("of:="):
+                formula = formula[3:]
             cell: dict[str, object] = {"text": formula}
             rich = RichClipboardHTMLParser._css_style(style_source)
             cell.update({key: value for key, value in rich.items() if key != "highlight"})
@@ -580,7 +603,10 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
             vertical = declarations.get("vertical-align", attributes.get("valign", "")).lower()
             if vertical in {"top", "middle", "bottom"}:
                 cell["vertical_align"] = vertical
-            border = declarations.get("border", "")
+            border = declarations.get("border", "") or " ".join(
+                declarations.get(side, "")
+                for side in ("border-top", "border-right", "border-bottom", "border-left")
+            )
             border_width = self._length(border)
             if border_width:
                 cell["border_width"] = border_width
@@ -590,13 +616,26 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
             self._cell = cell
         elif tag.lower() == "br" and self._cell is not None:
             self._parts.append("\n")
+        elif self._cell is not None and tag.lower() in {"b", "strong"}:
+            self._cell["bold"] = True
+        elif self._cell is not None and tag.lower() in {"i", "em"}:
+            self._cell["italic"] = True
+        elif self._cell is not None and tag.lower() == "u":
+            self._cell["underline"] = True
+        elif self._cell is not None and tag.lower() == "font" and attributes.get("color"):
+            self._cell["color"] = safe_pillow_color(attributes["color"], "#000000")
 
     def handle_data(self, data: str) -> None:
-        if self._cell is not None:
+        if self._in_style:
+            self._style_parts.append(data)
+        elif self._cell is not None:
             self._parts.append(normalize_external_text(data))
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in {"td", "th"} and self._cell is not None and self._row is not None:
+        if tag.lower() == "style":
+            self._in_style = False
+            self._register_stylesheet()
+        elif tag.lower() in {"td", "th"} and self._cell is not None and self._row is not None:
             if not str(self._cell.get("text", "")).startswith("="):
                 self._cell["text"] = "".join(self._parts).strip()
             self._row.append(self._cell)
@@ -1113,6 +1152,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._background_image: ImageTk.PhotoImage | None = None
         self._overlay_images: list[ImageTk.PhotoImage] = []
         self._text_preview_cache: dict[tuple[object, ...], ImageTk.PhotoImage] = {}
+        self._zoom_render_after_id: str | None = None
         self._drag_origin: tuple[float, float, float, float] | None = None
         self._resize_origin: tuple[str, float, float, float, float, float, float] | None = None
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
@@ -1757,6 +1797,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.bind("<Control-MouseWheel>", self._mouse_zoom)
         self.canvas.bind("<Control-Button-4>", lambda event: self._mouse_zoom(event, 1))
         self.canvas.bind("<Control-Button-5>", lambda event: self._mouse_zoom(event, -1))
+        self.canvas.bind("<MouseWheel>", self._mouse_scroll)
+        self.canvas.bind("<Button-4>", lambda event: self._mouse_scroll(event, 1))
+        self.canvas.bind("<Button-5>", lambda event: self._mouse_scroll(event, -1))
         self.bind("<KeyPress>", self._modifier_key_event, add="+")
         self.bind("<KeyRelease>", self._modifier_key_event, add="+")
         # A palette keeps following the pointer even after it leaves its narrow title bar.
@@ -2785,6 +2828,12 @@ class DocumentEditorWindow(tk.Toplevel):
         return self.document.page_width, self.document.page_height
 
     def _render(self) -> None:
+        if self._zoom_render_after_id is not None:
+            try:
+                self.after_cancel(self._zoom_render_after_id)
+            except tk.TclError:
+                pass
+            self._zoom_render_after_id = None
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
         self._update_associative_dimensions()
@@ -6690,9 +6739,20 @@ class DocumentEditorWindow(tk.Toplevel):
         widget = tk.Text(
             self.canvas,
             wrap="word",
-            font=("Liberation Sans", max(8, round(item.font_size * self.zoom))),
-            bg="white",
-            fg="#000000",
+            font=(
+                str(cell.get("font_family") or item.font_family or "Liberation Sans"),
+                max(8, round(safe_number(cell.get("font_size"), item.font_size, minimum=1.0) * self.zoom)),
+                " ".join(
+                    part
+                    for part, enabled in (
+                        ("bold", bool(cell.get("bold", False))),
+                        ("italic", bool(cell.get("italic", False))),
+                    )
+                    if enabled
+                ) or "normal",
+            ),
+            bg=str(cell.get("fill") or "#FFFFFF"),
+            fg=str(cell.get("color") or "#000000"),
             relief="solid",
             borderwidth=2,
             undo=True,
@@ -6700,6 +6760,14 @@ class DocumentEditorWindow(tk.Toplevel):
             pady=3,
         )
         widget.insert("1.0", cell.get("text", ""))
+        widget.tag_configure(
+            "cell-style",
+            underline=bool(cell.get("underline", False)),
+            justify={"center": "center", "right": "right"}.get(
+                str(cell.get("horizontal_align", "left")), "left"
+            ),
+        )
+        widget.tag_add("cell-style", "1.0", "end")
         self._editing_widget = widget
         self._editing_object_id = item.object_id
         self._editing_original_text = cell.get("text", "")
@@ -11439,7 +11507,35 @@ class DocumentEditorWindow(tk.Toplevel):
     def _set_zoom(self, change: float) -> None:
         self._commit_inline_editor(render=False)
         self.zoom = max(0.25, min(4.0, self.zoom + change))
+        self._schedule_zoom_render()
+
+    def _schedule_zoom_render(self) -> None:
+        """Regroupe les crans rapides d'un geste de zoom en un seul rendu."""
+        if self._zoom_render_after_id is not None:
+            try:
+                self.after_cancel(self._zoom_render_after_id)
+            except tk.TclError:
+                pass
+        self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
+        self._zoom_render_after_id = self.after(90, self._finish_scheduled_zoom)
+
+    def _finish_scheduled_zoom(self) -> None:
+        self._zoom_render_after_id = None
         self._render()
+
+    def _mouse_scroll(
+        self, event: tk.Event[tk.Misc], linux_direction: int | None = None
+    ) -> str:
+        """Fait défiler la feuille à la molette sur Windows, macOS et X11."""
+        direction = linux_direction
+        if direction is None:
+            direction = 1 if int(getattr(event, "delta", 0)) > 0 else -1
+        units = -3 if direction > 0 else 3
+        if int(getattr(event, "state", 0)) & 0x0001:
+            self.canvas.xview_scroll(units, "units")
+        else:
+            self.canvas.yview_scroll(units, "units")
+        return "break"
 
     def _zoom_page_width(self) -> None:
         self._commit_inline_editor(render=False)
@@ -11478,23 +11574,12 @@ class DocumentEditorWindow(tk.Toplevel):
         new_zoom = max(0.25, min(4.0, old_zoom * factor))
         if abs(new_zoom - old_zoom) < 1e-9:
             return "break"
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
-        document_x = (canvas_x - self.page_x) / old_zoom
-        document_y = (canvas_y - self.page_y) / old_zoom
         self._commit_inline_editor(render=False)
         self.zoom = new_zoom
-        self._render()
-        self.update_idletasks()
-        target_x = self.page_x + document_x * new_zoom
-        target_y = self.page_y + document_y * new_zoom
-        region = [float(value) for value in str(self.canvas.cget("scrollregion")).split()]
-        if len(region) == 4:
-            left, top, right, bottom = region
-            width = max(1.0, right - left)
-            height = max(1.0, bottom - top)
-            self.canvas.xview_moveto(max(0.0, min(1.0, (target_x - event.x - left) / width)))
-            self.canvas.yview_moveto(max(0.0, min(1.0, (target_y - event.y - top) / height)))
+        # Une molette physique émet souvent des dizaines d'événements. Le rendu
+        # riche complet à chaque cran saturait un cœur CPU et accumulait les
+        # aperçus bitmap. Le dernier niveau demandé est rendu après le geste.
+        self._schedule_zoom_render()
         return "break"
 
     def _set_orientation(self, orientation: str) -> None:

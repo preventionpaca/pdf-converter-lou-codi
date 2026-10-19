@@ -257,6 +257,7 @@ def _table_cell_data(
                     "image_path": image_path,
                     "horizontal_align": horizontal,
                     "vertical_align": vertical,
+                    "font_family": str(cell_style.get("font_family", "Sans-serif")),
                     "font_size": cell_style.get("font_size", 9.0),
                     "bold": bool(cell_style.get("bold", False)),
                     "italic": bool(cell_style.get("italic", False)),
