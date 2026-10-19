@@ -2,6 +2,7 @@ from pathlib import Path
 from time import monotonic
 
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.shared import Pt, RGBColor
 from PIL import Image
@@ -74,6 +75,41 @@ def test_docx_import_keeps_images_as_editable_independent_objects(tmp_path: Path
     assert image_objects[0].width == 180
     assert image_objects[0].height == 90
     assert image_objects[0].page == 0
+
+
+def test_docx_import_keeps_tables_merges_and_cell_images_editable(
+    tmp_path: Path,
+) -> None:
+    picture = tmp_path / "cellule.png"
+    Image.new("RGB", (80, 40), "#4A90E2").save(picture)
+    source = tmp_path / "source-avec-tableau.docx"
+    document = Document()
+    document.add_paragraph("Texte avant le tableau")
+    table = document.add_table(rows=2, cols=2)
+    heading = table.cell(0, 0).merge(table.cell(0, 1))
+    heading.text = "En-tête fusionné"
+    heading.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    heading.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    table.cell(1, 0).text = "Valeur modifiable"
+    table.cell(1, 1).paragraphs[0].add_run().add_picture(
+        str(picture), width=Pt(40)
+    )
+    document.save(source)
+
+    imported = import_docx_as_canvas(source)
+
+    tables = [item for item in imported.objects if item.kind == "table"]
+    assert len(tables) == 1
+    imported_table = tables[0]
+    assert imported_table.table_cells[0][0]["text"] == "En-tête fusionné"
+    assert imported_table.table_cells[0][0]["horizontal_align"] == "center"
+    assert imported_table.table_cells[0][0]["vertical_align"] == "middle"
+    assert imported_table.table_cells[1][0]["text"] == "Valeur modifiable"
+    assert imported_table.table_cells[0][1]["text"] == ""
+    assert imported_table.table_merges == [[0, 0, 1, 2]]
+    cell_image = Path(imported_table.table_cells[1][1]["image_path"])
+    assert cell_image.is_file()
+    assert Image.open(cell_image).size == (80, 40)
 
 
 def test_docx_import_handles_highly_fragmented_word_text_without_runaway_cpu(

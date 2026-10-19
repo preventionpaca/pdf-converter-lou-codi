@@ -6055,15 +6055,20 @@ class DocumentEditorWindow(tk.Toplevel):
             if link.get("hyperlink") and end > start:
                 widget.tag_add("hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars")
         self._editing_style_tags = {}
-        for number, run in enumerate(editor_styles):
+        configured_style_tags: dict[tuple[tuple[str, object], ...], str] = {}
+        for run in editor_styles:
             start = max(0, int(run.get("start", 0)))
             end = max(start, int(run.get("end", 0)))
             if end <= start:
                 continue
-            tag = f"style_{number}"
             style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
-            self._editing_style_tags[tag] = style
-            self._configure_text_style_tag(widget, tag, style_source, style)
+            style_key = tuple(sorted(style.items()))
+            tag = configured_style_tags.get(style_key, "")
+            if not tag:
+                tag = f"style_{len(configured_style_tags)}"
+                configured_style_tags[style_key] = tag
+                self._editing_style_tags[tag] = style
+                self._configure_text_style_tag(widget, tag, style_source, style)
             widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         for number, run in enumerate(editor_alignments):
             start = max(0, int(run.get("start", 0)))

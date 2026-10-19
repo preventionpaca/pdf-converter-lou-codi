@@ -7,6 +7,7 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml.ns import qn
 
 from .canvas_document import (
@@ -164,6 +165,151 @@ def _embedded_image_queues(source: object) -> dict[str, deque[dict[str, object]]
     return images
 
 
+def _table_cell_data(
+    table: object,
+    image_queues: dict[str, deque[dict[str, object]]],
+) -> tuple[list[list[dict[str, str]]], list[list[int]], float]:
+    """Convert a Word table to Lou Còdi's editable grid and merge metadata."""
+    rows = list(getattr(table, "rows", ()))
+    column_count = max((len(row.cells) for row in rows), default=1)
+    cells: list[list[dict[str, str]]] = []
+    anchors: dict[int, tuple[int, int]] = {}
+    coordinates: dict[int, set[tuple[int, int]]] = defaultdict(set)
+    font_sizes: list[float] = []
+    for row_index, row in enumerate(rows):
+        output_row: list[dict[str, str]] = []
+        for column_index in range(column_count):
+            if column_index >= len(row.cells):
+                output_row.append({"text": "", "hyperlink": "", "image_path": ""})
+                continue
+            cell = row.cells[column_index]
+            cell_key = id(cell._tc)
+            coordinates[cell_key].add((row_index, column_index))
+            anchor = anchors.setdefault(cell_key, (row_index, column_index))
+            if anchor != (row_index, column_index):
+                output_row.append({"text": "", "hyperlink": "", "image_path": ""})
+                continue
+            image_path = ""
+            for blip in cell._tc.xpath(".//a:blip"):
+                relationship_id = blip.get(qn("r:embed"))
+                if relationship_id and image_queues[relationship_id]:
+                    image_path = str(image_queues[relationship_id].popleft()["path"])
+                    break
+            horizontal = "left"
+            for paragraph in cell.paragraphs:
+                if paragraph.alignment is not None:
+                    horizontal = {1: "center", 2: "right"}.get(
+                        int(paragraph.alignment), "left"
+                    )
+                    break
+            vertical = {
+                WD_CELL_VERTICAL_ALIGNMENT.CENTER: "middle",
+                WD_CELL_VERTICAL_ALIGNMENT.BOTTOM: "bottom",
+            }.get(cell.vertical_alignment, "top")
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    size = getattr(run.font, "size", None)
+                    if size is not None:
+                        font_sizes.append(float(size.pt))
+            output_row.append(
+                {
+                    "text": cell.text,
+                    "hyperlink": "",
+                    "image_path": image_path,
+                    "horizontal_align": horizontal,
+                    "vertical_align": vertical,
+                }
+            )
+        cells.append(output_row)
+    merges: list[list[int]] = []
+    for cell_key, positions in coordinates.items():
+        if len(positions) <= 1:
+            continue
+        top = min(row for row, _column in positions)
+        left = min(column for _row, column in positions)
+        bottom = max(row for row, _column in positions)
+        right = max(column for _row, column in positions)
+        if positions == {
+            (row, column)
+            for row in range(top, bottom + 1)
+            for column in range(left, right + 1)
+        }:
+            merges.append([top, left, bottom - top + 1, right - left + 1])
+    typical_font_size = sorted(font_sizes)[len(font_sizes) // 2] if font_sizes else 9.0
+    return (
+        cells or [[{"text": "", "hyperlink": "", "image_path": ""}]],
+        merges,
+        typical_font_size,
+    )
+
+
+def _estimated_table_height(cells: list[list[dict[str, str]]], font_size: float) -> float:
+    """Estimate a readable equal-row table height for the canvas model."""
+    row_heights: list[float] = []
+    for row in cells:
+        line_count = max(
+            (max(1, cell.get("text", "").count("\n") + 1) for cell in row),
+            default=1,
+        )
+        row_heights.append(max(24.0, line_count * font_size * 1.3 + 8.0))
+    return max(40.0, sum(row_heights))
+
+
+def _imported_table_objects(
+    source: object,
+    image_queues: dict[str, deque[dict[str, object]]],
+    *,
+    page_count: int,
+    margin_left: float,
+    margin_top: float,
+    width: float,
+    height: float,
+) -> list[PageObject]:
+    """Place Word tables on their approximate source pages as editable objects."""
+    tables = list(getattr(source, "tables", ()))
+    if not tables:
+        return []
+    converted = [_table_cell_data(table, image_queues) for table in tables]
+    assignments = [
+        min(page_count - 1, index * page_count // len(tables))
+        for index in range(len(tables))
+    ]
+    result: list[PageObject] = []
+    for page in range(page_count):
+        indices = [index for index, assigned in enumerate(assignments) if assigned == page]
+        if not indices:
+            continue
+        estimates = [
+            _estimated_table_height(converted[index][0], converted[index][2])
+            for index in indices
+        ]
+        available = max(80.0, height - 12.0 * (len(indices) - 1))
+        scale = min(1.0, available / max(1.0, sum(estimates)))
+        cursor_y = margin_top
+        for index, estimate in zip(indices, estimates, strict=True):
+            cells, merges, font_size = converted[index]
+            table_height = max(40.0, estimate * scale)
+            result.append(
+                PageObject(
+                    "table",
+                    page,
+                    margin_left,
+                    cursor_y,
+                    width,
+                    table_height,
+                    text="\n".join(
+                        "\t".join(cell.get("text", "").replace("\n", " ") for cell in row)
+                        for row in cells
+                    ),
+                    font_size=font_size,
+                    table_cells=cells,
+                    table_merges=merges,
+                )
+            )
+            cursor_y += table_height + 12.0
+    return result
+
+
 def _dominant_text_metrics(
     styles: list[dict[str, object]],
 ) -> tuple[str, float]:
@@ -309,9 +455,18 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
                 image_path=str(image["path"]),
             )
         )
+    table_objects = _imported_table_objects(
+        source,
+        image_queues,
+        page_count=page_count,
+        margin_left=margin_left,
+        margin_top=margin_top,
+        width=width,
+        height=height,
+    )
     return CanvasDocument(
         page_width=page_width,
         page_height=page_height,
         page_count=page_count,
-        objects=frames + image_objects,
+        objects=frames + image_objects + table_objects,
     )
