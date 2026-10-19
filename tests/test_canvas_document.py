@@ -37,11 +37,13 @@ from lou_codi_pdf_converter.ui.document_editor import (
     objects_bounds,
     paragraph_alignment_at,
     parse_tabular_clipboard,
+    parse_rich_clipboard_html,
     point_hits_rotation_handle,
     polygon_area,
     revolution_axis_target,
     revolution_stations,
     resized_circle_diameter,
+    rich_clipboard_matches_plain,
     rotated_rectangle_points,
     rotation_step_for_objects,
     snapped_rotation_delta,
@@ -49,6 +51,22 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
+
+
+def test_office_html_clipboard_keeps_styles_and_lists() -> None:
+    html = (
+        '<p><span style="font-family:Times New Roman;font-size:14pt;color:#123456">'
+        '<b>Titre</b></span></p><ul><li><i>Premier point</i></li>'
+        '<li>Second point</li></ul>'
+    )
+
+    text, styles = parse_rich_clipboard_html(html)
+
+    assert text == "Titre\n• Premier point\n• Second point"
+    assert any(run.get("bold") and run["start"] == 0 for run in styles)
+    assert any(run.get("italic") and text[run["start"] : run["end"]] == "Premier point" for run in styles)
+    assert any(run.get("font_family") == "Serif" and run.get("font_size") == 14 for run in styles)
+    assert rich_clipboard_matches_plain(text, "Titre\n· Premier point\n· Second point")
 
 
 def test_styled_rectangle_draws_real_gaps_for_dashed_and_dotted_borders() -> None:

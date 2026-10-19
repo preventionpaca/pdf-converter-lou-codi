@@ -12,6 +12,7 @@ import tkinter as tk
 import unicodedata
 import uuid
 import webbrowser
+from html.parser import HTMLParser
 from itertools import pairwise
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -106,6 +107,116 @@ def safe_text_offset(value: object, fallback: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return fallback
+
+
+class RichClipboardHTMLParser(HTMLParser):
+    """Extract editable text and character styles from office HTML clipboard data."""
+
+    _blocks = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.styles: list[dict[str, object]] = []
+        self._length = 0
+        self._stack: list[dict[str, object]] = [{}]
+
+    def _newline(self) -> None:
+        if self.parts and not self.parts[-1].endswith("\n"):
+            self.parts.append("\n")
+            self._length += 1
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in self._blocks:
+            self._newline()
+        if tag == "li":
+            self.parts.append("• ")
+            self._length += 2
+        if tag == "br":
+            self._newline()
+        style = dict(self._stack[-1])
+        if tag in {"b", "strong"}:
+            style["bold"] = True
+        if tag in {"i", "em"}:
+            style["italic"] = True
+        if tag == "u":
+            style["underline"] = True
+        if tag in {"s", "strike", "del"}:
+            style["strikethrough"] = True
+        attributes = {name.lower(): value or "" for name, value in attrs}
+        css = attributes.get("style", "")
+        declarations = {
+            name.strip().lower(): value.strip()
+            for declaration in css.split(";")
+            if ":" in declaration
+            for name, value in [declaration.split(":", 1)]
+        }
+        family = declarations.get("font-family", "").strip(" '\"").split(",", 1)[0]
+        if family:
+            style["font_family"] = (
+                "Monospace" if "courier" in family.lower() or "mono" in family.lower()
+                else "Serif" if "times" in family.lower() or "serif" in family.lower()
+                else "Sans-serif"
+            )
+        size_match = re.match(r"([0-9.]+)\s*pt", declarations.get("font-size", ""))
+        if size_match:
+            style["font_size"] = max(1.0, float(size_match.group(1)))
+        if declarations.get("color"):
+            style["color"] = safe_pillow_color(declarations["color"], "#000000")
+        background = declarations.get("background-color") or declarations.get("background")
+        if background:
+            style["highlight"] = safe_pillow_color(background, "", allow_transparent=True)
+        self._stack.append(style)
+
+    def handle_endtag(self, tag: str) -> None:
+        if len(self._stack) > 1:
+            self._stack.pop()
+        if tag.lower() in self._blocks:
+            self._newline()
+
+    def handle_data(self, data: str) -> None:
+        value = normalize_external_text(data)
+        if not value:
+            return
+        start = self._length
+        self.parts.append(value)
+        self._length += len(value)
+        style = self._stack[-1]
+        if style:
+            run = {"start": start, "end": self._length, **style}
+            if self.styles and self.styles[-1]["end"] == start and {
+                key: value for key, value in self.styles[-1].items() if key not in {"start", "end"}
+            } == style:
+                self.styles[-1]["end"] = self._length
+            else:
+                self.styles.append(run)
+
+
+def parse_rich_clipboard_html(value: str) -> tuple[str, list[dict[str, object]]]:
+    parser = RichClipboardHTMLParser()
+    parser.feed(value)
+    text = "".join(parser.parts)
+    leading = len(text) - len(text.lstrip("\n"))
+    text = text.strip("\n")
+    styles = [
+        {
+            **run,
+            "start": max(0, int(run["start"]) - leading),
+            "end": min(len(text), int(run["end"]) - leading),
+        }
+        for run in parser.styles
+        if int(run["end"]) - leading > 0 and int(run["start"]) - leading < len(text)
+    ]
+    return text, [run for run in styles if run["end"] > run["start"]]
+
+
+def rich_clipboard_matches_plain(rich_text: str, plain_text: str) -> bool:
+    """Ensure HTML and plain clipboard targets describe the same document."""
+    compact = lambda text: re.sub(r"[\W_]+", "", text, flags=re.UNICODE).casefold()
+    rich_compact = compact(rich_text)
+    plain_compact = compact(plain_text)
+    return bool(rich_compact) and rich_compact == plain_compact
 
 
 def normalize_external_text(value: str) -> str:
@@ -6727,11 +6838,23 @@ class DocumentEditorWindow(tk.Toplevel):
     def _paste_clean_text_widget(
         self, event: tk.Event[tk.Text] | None = None
     ) -> str | None:
-        """Paste office/PDF text without visible control-character squares."""
+        """Paste office text with its character styles, or clean plain text."""
+        rich_text = ""
+        rich_styles: list[dict[str, object]] = []
+        try:
+            html_value = self.selection_get(selection="CLIPBOARD", type="text/html")
+            if html_value:
+                rich_text, rich_styles = parse_rich_clipboard_html(str(html_value))
+        except (tk.TclError, UnicodeError, ValueError):
+            pass
         try:
             value = normalize_external_text(self.clipboard_get())
         except tk.TclError:
             return None
+        if rich_text and rich_clipboard_matches_plain(rich_text, value):
+            value = rich_text
+        else:
+            rich_styles = []
         if not value or value == "LOUCODI_OBJECTS":
             return "break"
         widget = event.widget if event is not None else self._editing_widget
@@ -6742,7 +6865,31 @@ class DocumentEditorWindow(tk.Toplevel):
             widget.delete("sel.first", "sel.last")
         except tk.TclError:
             pass
+        insertion_start = self._text_character_offset(widget, "insert")
         widget.insert("insert", value)
+        item = next(
+            (
+                candidate
+                for candidate in self.document.objects
+                if candidate.object_id == self._editing_object_id
+            ),
+            None,
+        )
+        if item is not None:
+            for run in rich_styles:
+                start = insertion_start + int(run["start"])
+                end = insertion_start + int(run["end"])
+                style = {
+                    key: style_value
+                    for key, style_value in run.items()
+                    if key in TEXT_STYLE_KEYS
+                }
+                if not style or end <= start:
+                    continue
+                tag = f"style_paste_{uuid.uuid4().hex}"
+                self._editing_style_tags[tag] = style
+                self._configure_text_style_tag(widget, tag, item, style)
+                widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
         widget.edit_separator()
         self._editing_selection_range = None
         widget.focus_set()
