@@ -26,6 +26,8 @@ from lou_codi_pdf_converter.services.canvas_document import (
 from lou_codi_pdf_converter.services.geometry import Segment
 from lou_codi_pdf_converter.ui.document_editor import (
     DocumentEditorWindow,
+    _replace_text_ranges,
+    _slice_text_ranges,
     aligned_text_x,
     dimension_label_layout,
     dimension_line_geometry,
@@ -40,6 +42,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     paragraph_alignment_at,
     parse_tabular_clipboard,
     parse_rich_clipboard_html,
+    proportional_resize,
     point_hits_rotation_handle,
     polygon_area,
     revolution_axis_target,
@@ -53,6 +56,64 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
+
+
+def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None:
+    ranges = [
+        {"start": 0, "end": 5, "bold": True},
+        {"start": 6, "end": 11, "italic": True},
+        {"start": 12, "end": 18, "underline": True},
+    ]
+
+    assert _slice_text_ranges(ranges, 6, 5) == [
+        {"start": 0, "end": 5, "italic": True}
+    ]
+    replaced = _replace_text_ranges(
+        ranges,
+        6,
+        5,
+        [{"start": 0, "end": 8, "italic": True, "color": "#FF0000"}],
+        8,
+    )
+
+    assert replaced == [
+        {"start": 0, "end": 5, "bold": True},
+        {"start": 6, "end": 14, "italic": True, "color": "#FF0000"},
+        {"start": 15, "end": 21, "underline": True},
+    ]
+
+
+def test_control_diagonal_resize_preserves_original_proportions() -> None:
+    assert proportional_resize(200, 100, 300, 120) == (300, 150)
+    assert proportional_resize(200, 100, 210, 180) == (360, 180)
+
+
+def test_linked_frame_can_copy_previous_frame_appearance_independently() -> None:
+    first = PageObject(
+        "text", 0, 10, 10, 200, 80,
+        fill="#FFF9C4", border_color="#7B2CBF", border_width=5,
+        border_style="dotted",
+    )
+    second = PageObject(
+        "text", 0, 10, 110, 140, 60,
+        fill="transparent", border_color="#000000", border_width=0.5,
+        border_style="solid", rotation=25,
+    )
+    first.flow_next_id = second.object_id
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[first, second])
+    editor.selected = 1
+    editor.selected_indices = {1}
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+    editor.status = _StatusRecorder()
+
+    editor._copy_previous_text_frame_appearance()
+
+    assert (second.fill, second.border_color, second.border_width, second.border_style) == (
+        first.fill, first.border_color, first.border_width, first.border_style
+    )
+    assert (second.width, second.height, second.rotation) == (140, 60, 25)
 
 
 def test_office_html_clipboard_keeps_styles_and_lists() -> None:

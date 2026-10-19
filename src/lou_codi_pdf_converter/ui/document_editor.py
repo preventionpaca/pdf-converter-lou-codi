@@ -110,6 +110,85 @@ def safe_text_offset(value: object, fallback: int = 0) -> int:
         return fallback
 
 
+def _slice_text_ranges(
+    ranges: list[dict[str, object]], start: int, length: int
+) -> list[dict[str, object]]:
+    """Return text metadata overlapping a displayed linked-frame segment."""
+    end = start + length
+    sliced: list[dict[str, object]] = []
+    for run in ranges:
+        run_start = safe_text_offset(run.get("start"))
+        run_end = safe_text_offset(run.get("end"))
+        overlap_start = max(start, run_start)
+        overlap_end = min(end, run_end)
+        if overlap_end > overlap_start:
+            sliced.append(
+                {**run, "start": overlap_start - start, "end": overlap_end - start}
+            )
+    return sliced
+
+
+def _replace_text_ranges(
+    ranges: list[dict[str, object]],
+    start: int,
+    old_length: int,
+    replacement: list[dict[str, object]],
+    new_length: int,
+) -> list[dict[str, object]]:
+    """Replace metadata for one linked-frame segment and rebase later ranges."""
+    end = start + old_length
+    delta = new_length - old_length
+    result: list[dict[str, object]] = []
+    for run in ranges:
+        run_start = safe_text_offset(run.get("start"))
+        run_end = safe_text_offset(run.get("end"))
+        if run_end <= start:
+            result.append(copy.deepcopy(run))
+        elif run_start >= end:
+            result.append({**run, "start": run_start + delta, "end": run_end + delta})
+        else:
+            if run_start < start:
+                result.append({**run, "end": start})
+            if run_end > end:
+                result.append(
+                    {**run, "start": start + new_length, "end": run_end + delta}
+                )
+    result.extend(
+        {
+            **run,
+            "start": start + safe_text_offset(run.get("start")),
+            "end": start + safe_text_offset(run.get("end")),
+        }
+        for run in replacement
+        if safe_text_offset(run.get("end")) > safe_text_offset(run.get("start"))
+    )
+    return sorted(
+        result,
+        key=lambda run: (
+            safe_text_offset(run.get("start")),
+            safe_text_offset(run.get("end")),
+        ),
+    )
+
+
+def proportional_resize(
+    old_width: float,
+    old_height: float,
+    proposed_width: float,
+    proposed_height: float,
+    *,
+    minimum: float = 20.0,
+) -> tuple[float, float]:
+    """Constrain a diagonal resize to the object's original proportions."""
+    if old_width <= 0 or old_height <= 0:
+        return max(minimum, proposed_width), max(minimum, proposed_height)
+    width_scale = proposed_width / old_width
+    height_scale = proposed_height / old_height
+    scale = width_scale if abs(width_scale - 1.0) >= abs(height_scale - 1.0) else height_scale
+    scale = max(minimum / old_width, minimum / old_height, scale)
+    return old_width * scale, old_height * scale
+
+
 class RichClipboardHTMLParser(HTMLParser):
     """Extract editable text and character styles from office HTML clipboard data."""
 
@@ -800,6 +879,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_border_width = 1.0
         self._editing_original_border_style = "solid"
         self._editing_original_paragraph_alignments: list[dict[str, object]] = []
+        self._editing_flow_root_id = ""
+        self._editing_flow_offset = 0
+        self._editing_flow_original_segment = ""
+        self._editing_flow_original_links: list[dict[str, object]] = []
+        self._editing_flow_local_links: list[dict[str, object]] = []
         self._editing_alignment_tags: dict[str, str] = {}
         self._editing_selection_range: tuple[int, int] | None = None
         self._editing_drag_anchor: str | None = None
@@ -2207,6 +2291,14 @@ class DocumentEditorWindow(tk.Toplevel):
                 menu.add_command(label="Ouvrir le lien hypertexte", command=self._open_selected_hyperlink)
                 menu.add_command(label="Supprimer le lien hypertexte", command=self._remove_selected_hyperlink)
             menu.add_command(label="Chaîner vers une autre zone de texte…", command=self._link_text_frames)
+            if any(
+                candidate.kind == "text" and candidate.flow_next_id == one.object_id
+                for candidate in self.document.objects
+            ):
+                menu.add_command(
+                    label="Reprendre l’apparence du cadre précédent",
+                    command=self._copy_previous_text_frame_appearance,
+                )
             if one.flow_next_id:
                 menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
 
@@ -5199,8 +5291,8 @@ class DocumentEditorWindow(tk.Toplevel):
             else:
                 new_width = max(20, old_width + delta_x)
                 new_height = max(20, old_height + delta_y)
+            control = bool(event.state & 0x0004) or "control" in self._modifier_keys
             if item.kind == "shape" and item.shape == "circle":
-                control = bool(event.state & 0x0004) or "control" in self._modifier_keys
                 if control:
                     item.shape = "ellipse"
                     self.status.configure(
@@ -5209,6 +5301,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 else:
                     diameter = resized_circle_diameter(old_width, delta_x, delta_y)
                     new_width = new_height = diameter
+            elif control and item.kind not in {"line", "polyline"}:
+                new_width, new_height = proportional_resize(
+                    old_width, old_height, new_width, new_height
+                )
             if item.kind == "polyline" and item.width and item.height:
                 item.points = [
                     [point[0] * new_width / item.width, point[1] * new_height / item.height]
@@ -5451,37 +5547,6 @@ class DocumentEditorWindow(tk.Toplevel):
         if item.kind == "table":
             self._start_inline_table_cell_editor(item, 0, 0)
             return
-        predecessor = next(
-            (
-                (index, candidate)
-                for index, candidate in enumerate(self.document.objects)
-                if candidate.kind == "text" and candidate.flow_next_id == item.object_id
-            ),
-            None,
-        )
-        if predecessor is not None:
-            index, root = predecessor
-            visited = {item.object_id}
-            while root.object_id not in visited:
-                visited.add(root.object_id)
-                earlier = next(
-                    (
-                        (candidate_index, candidate)
-                        for candidate_index, candidate in enumerate(self.document.objects)
-                        if candidate.kind == "text" and candidate.flow_next_id == root.object_id
-                    ),
-                    None,
-                )
-                if earlier is None:
-                    break
-                index, root = earlier
-            self.current_page = root.page
-            self.selected = index
-            self.selected_indices = {index}
-            self._render()
-            self.status.configure(text="Modification du texte depuis le premier cadre de la chaîne.")
-            self.after_idle(lambda: self._start_inline_text_editor(root))
-            return
         self._start_inline_text_editor(item)
 
     @staticmethod
@@ -5607,18 +5672,33 @@ class DocumentEditorWindow(tk.Toplevel):
         # surfaces cannot mutate the same frame while it is being edited.
         self.palette_visible_vars["text_zone_style"].set(False)
         self._set_palette_visibility("text_zone_style")
+        segment, style_source, flow_offset = flowed_text_context(item, self.document.objects)
+        linked_segment = style_source.object_id != item.object_id
+        editor_text = segment if linked_segment else item.text
+        editor_styles = (
+            _slice_text_ranges(style_source.text_styles, flow_offset, len(editor_text))
+            if linked_segment else copy.deepcopy(item.text_styles)
+        )
+        editor_links = (
+            _slice_text_ranges(style_source.text_links, flow_offset, len(editor_text))
+            if linked_segment else copy.deepcopy(item.text_links)
+        )
+        editor_alignments = (
+            _slice_text_ranges(style_source.paragraph_alignments, flow_offset, len(editor_text))
+            if linked_segment else copy.deepcopy(item.paragraph_alignments)
+        )
         x = self.page_x + item.x * self.zoom
         y = self.page_y + item.y * self.zoom
         widget = tk.Text(
             self.canvas,
             wrap="word",
             font=(
-                self._tk_font_family(item.font_family),
-                max(8, round(item.font_size * self.zoom)),
-                "bold italic" if item.bold and item.italic else "bold" if item.bold else "italic" if item.italic else "normal",
+                self._tk_font_family(style_source.font_family),
+                max(8, round(style_source.font_size * self.zoom)),
+                "bold italic" if style_source.bold and style_source.italic else "bold" if style_source.bold else "italic" if style_source.italic else "normal",
             ),
             bg=item.fill if item.fill.lower() not in {"", "none", "transparent"} else "white",
-            fg=item.color,
+            fg=style_source.color,
             relief="flat",
             borderwidth=0,
             highlightthickness=max(0, round(item.border_width * self.zoom)),
@@ -5631,7 +5711,7 @@ class DocumentEditorWindow(tk.Toplevel):
         # pointer bindings are deliberately excluded: they used to continue a
         # selection after the mouse button had been released.
         widget.bindtags((str(widget), "Text"))
-        widget.insert("1.0", item.text)
+        widget.insert("1.0", editor_text)
         widget.bind("<Control-a>", self._select_all_inline_text)
         widget.bind("<Control-c>", self._copy_inline_text)
         widget.bind("<Control-x>", self._cut_inline_text)
@@ -5659,14 +5739,19 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Button-3>", self._show_inline_text_context_menu)
         self._editing_widget = widget
         self._editing_object_id = item.object_id
-        self._editing_original_text = item.text
-        self._editing_original_styles = copy.deepcopy(item.text_styles)
-        self._editing_original_align = item.align
+        self._editing_original_text = style_source.text
+        self._editing_original_styles = copy.deepcopy(style_source.text_styles)
+        self._editing_original_align = style_source.align
         self._editing_original_fill = item.fill
         self._editing_original_border_color = item.border_color
         self._editing_original_border_width = item.border_width
         self._editing_original_border_style = item.border_style
-        self._editing_original_paragraph_alignments = copy.deepcopy(item.paragraph_alignments)
+        self._editing_original_paragraph_alignments = copy.deepcopy(style_source.paragraph_alignments)
+        self._editing_flow_root_id = style_source.object_id if linked_segment else ""
+        self._editing_flow_offset = flow_offset if linked_segment else 0
+        self._editing_flow_original_segment = editor_text if linked_segment else ""
+        self._editing_flow_original_links = copy.deepcopy(style_source.text_links)
+        self._editing_flow_local_links = copy.deepcopy(editor_links)
         self._editing_alignment_tags = {}
         self._editing_selection_range = None
         self._editing_drag_anchor = None
@@ -5846,16 +5931,16 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
         widget.edit_modified(False)
         widget.focus_set()
-        widget.tag_configure("align", justify=item.align if item.align != "justify" else "left")
+        widget.tag_configure("align", justify=style_source.align if style_source.align != "justify" else "left")
         widget.tag_add("align", "1.0", "end")
         widget.tag_configure("hyperlink", foreground="#1769AA", underline=True)
-        for link in item.text_links:
+        for link in editor_links:
             start = max(0, int(link.get("start", 0)))
             end = max(start, int(link.get("end", 0)))
             if link.get("hyperlink") and end > start:
                 widget.tag_add("hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars")
         self._editing_style_tags = {}
-        for number, run in enumerate(item.text_styles):
+        for number, run in enumerate(editor_styles):
             start = max(0, int(run.get("start", 0)))
             end = max(start, int(run.get("end", 0)))
             if end <= start:
@@ -5863,12 +5948,12 @@ class DocumentEditorWindow(tk.Toplevel):
             tag = f"style_{number}"
             style = {key: value for key, value in run.items() if key in TEXT_STYLE_KEYS}
             self._editing_style_tags[tag] = style
-            self._configure_text_style_tag(widget, tag, item, style)
+            self._configure_text_style_tag(widget, tag, style_source, style)
             widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
-        for number, run in enumerate(item.paragraph_alignments):
+        for number, run in enumerate(editor_alignments):
             start = max(0, int(run.get("start", 0)))
             end = max(start, int(run.get("end", 0)))
-            value = str(run.get("align", item.align))
+            value = str(run.get("align", style_source.align))
             if end <= start or value not in {"left", "center", "right", "justify"}:
                 continue
             tag = f"paragraph_align_{number}"
@@ -6977,6 +7062,11 @@ class DocumentEditorWindow(tk.Toplevel):
         original_border_width = self._editing_original_border_width
         original_border_style = self._editing_original_border_style
         original_paragraph_alignments = self._editing_original_paragraph_alignments
+        flow_root_id = self._editing_flow_root_id
+        flow_offset = self._editing_flow_offset
+        flow_original_segment = self._editing_flow_original_segment
+        flow_original_links = self._editing_flow_original_links
+        flow_local_links = self._editing_flow_local_links
         table_cell = self._editing_table_cell
         table_original = self._editing_table_original
         self._editing_widget = None
@@ -6991,6 +7081,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_original_border_width = 1.0
         self._editing_original_border_style = "solid"
         self._editing_original_paragraph_alignments = []
+        self._editing_flow_root_id = ""
+        self._editing_flow_offset = 0
+        self._editing_flow_original_segment = ""
+        self._editing_flow_original_links = []
+        self._editing_flow_local_links = []
         self._editing_selection_range = None
         self._editing_drag_anchor = None
         self._editing_table_cell = None
@@ -7010,7 +7105,6 @@ class DocumentEditorWindow(tk.Toplevel):
                 )
                 changed = cell != table_original
             else:
-                item.text = value
                 styles: list[dict[str, object]] = []
                 for tag, style in self._editing_style_tags.items():
                     ranges = widget.tag_ranges(tag)
@@ -7019,7 +7113,15 @@ class DocumentEditorWindow(tk.Toplevel):
                         end = self._text_character_offset(widget, end_index)
                         if end > start:
                             styles.append({"start": start, "end": end, **style})
-                item.text_styles = styles
+                flow_root = next(
+                    (
+                        candidate
+                        for candidate in self.document.objects
+                        if candidate.object_id == flow_root_id
+                    ),
+                    None,
+                ) if flow_root_id else None
+                style_owner = flow_root or item
                 paragraph_alignments: list[dict[str, object]] = []
                 last_line = int(widget.index("end-1c").split(".", 1)[0])
                 for line_number in range(1, last_line + 1):
@@ -7029,25 +7131,63 @@ class DocumentEditorWindow(tk.Toplevel):
                     end = self._text_character_offset(widget, end_index)
                     if end <= start:
                         continue
-                    alignment = item.align
+                    alignment = style_owner.align
                     for tag in widget.tag_names(start_index):
                         if tag in self._editing_alignment_tags:
                             alignment = self._editing_alignment_tags[tag]
-                    if alignment != item.align:
+                    if alignment != style_owner.align:
                         paragraph_alignments.append(
                             {"start": start, "end": end, "align": alignment}
                         )
-                item.paragraph_alignments = paragraph_alignments
-                changed = (
-                    value != original_text
-                    or styles != original_styles
-                    or item.align != original_align
-                    or item.fill != original_fill
-                    or item.border_color != original_border_color
-                    or item.border_width != original_border_width
-                    or item.border_style != original_border_style
-                    or paragraph_alignments != original_paragraph_alignments
-                )
+                if flow_root is not None:
+                    old_length = len(flow_original_segment)
+                    flow_root.text = (
+                        original_text[:flow_offset]
+                        + value
+                        + original_text[flow_offset + old_length:]
+                    )
+                    flow_root.text_styles = _replace_text_ranges(
+                        original_styles, flow_offset, old_length, styles, len(value)
+                    )
+                    flow_root.paragraph_alignments = _replace_text_ranges(
+                        original_paragraph_alignments,
+                        flow_offset,
+                        old_length,
+                        paragraph_alignments,
+                        len(value),
+                    )
+                    flow_root.text_links = _replace_text_ranges(
+                        flow_original_links,
+                        flow_offset,
+                        old_length,
+                        flow_local_links,
+                        len(value),
+                    )
+                    changed = (
+                        value != flow_original_segment
+                        or flow_root.text_styles != original_styles
+                        or flow_root.paragraph_alignments != original_paragraph_alignments
+                        or flow_root.text_links != flow_original_links
+                        or item.fill != original_fill
+                        or item.border_color != original_border_color
+                        or item.border_width != original_border_width
+                        or item.border_style != original_border_style
+                    )
+                else:
+                    item.text = value
+                    item.text_styles = styles
+                    item.paragraph_alignments = paragraph_alignments
+                    changed = (
+                        value != original_text
+                        or styles != original_styles
+                        or item.align != original_align
+                        or item.fill != original_fill
+                        or item.border_color != original_border_color
+                        or item.border_width != original_border_width
+                        or item.border_style != original_border_style
+                        or paragraph_alignments != original_paragraph_alignments
+                        or item.text_links != flow_original_links
+                    )
             if changed:
                 snapshot = copy.deepcopy(self.document)
                 snapshot_item = next(
@@ -7058,14 +7198,23 @@ class DocumentEditorWindow(tk.Toplevel):
                     self._ensure_table_cells(snapshot_item)[row][column] = table_original
                     self._sync_table_text(snapshot_item)
                 else:
-                    snapshot_item.text = original_text
-                    snapshot_item.text_styles = original_styles
-                    snapshot_item.align = original_align
+                    snapshot_root = next(
+                        (
+                            candidate
+                            for candidate in snapshot.objects
+                            if candidate.object_id == flow_root_id
+                        ),
+                        snapshot_item,
+                    )
+                    snapshot_root.text = original_text
+                    snapshot_root.text_styles = original_styles
+                    snapshot_root.align = original_align
+                    snapshot_root.text_links = flow_original_links
+                    snapshot_root.paragraph_alignments = original_paragraph_alignments
                     snapshot_item.fill = original_fill
                     snapshot_item.border_color = original_border_color
                     snapshot_item.border_width = original_border_width
                     snapshot_item.border_style = original_border_style
-                    snapshot_item.paragraph_alignments = original_paragraph_alignments
                 self.undo_stack.append(snapshot)
                 self.undo_stack = self.undo_stack[-80:]
                 self.redo_stack.clear()
@@ -7482,19 +7631,19 @@ class DocumentEditorWindow(tk.Toplevel):
         self._checkpoint()
         if text_selection and self._editing_widget is not None:
             start, end = text_selection
-            item.text = self._editing_widget.get("1.0", "end-1c")
-            item.text_links = [
-                link for link in item.text_links
+            links = self._editing_flow_local_links if self._editing_flow_root_id else item.text_links
+            links[:] = [
+                link for link in links
                 if int(link.get("end", 0)) <= start or int(link.get("start", 0)) >= end
             ]
-            item.text_links.append({"start": start, "end": end, "hyperlink": value})
-            item.text_links.sort(key=lambda link: int(link.get("start", 0)))
+            links.append({"start": start, "end": end, "hyperlink": value})
+            links.sort(key=lambda link: int(link.get("start", 0)))
         else:
             item.hyperlink = value
         self.status.configure(
             text=("Lien ajouté au texte sélectionné." if text_selection else "Lien hypertexte ajouté à l’objet.")
         )
-        if text_selection and self._editing_widget is not None and self._editing_dialog is not None:
+        if text_selection and self._editing_widget is not None:
             start, end = text_selection
             self._editing_widget.tag_add(
                 "hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars"
@@ -7518,20 +7667,18 @@ class DocumentEditorWindow(tk.Toplevel):
             except tk.TclError:
                 start = end = -1
             if end > start:
-                previous = len(item.text_links)
-                item.text_links = [
-                    link for link in item.text_links
+                links = self._editing_flow_local_links if self._editing_flow_root_id else item.text_links
+                previous = len(links)
+                links[:] = [
+                    link for link in links
                     if int(link.get("end", 0)) <= start or int(link.get("start", 0)) >= end
                 ]
-                if len(item.text_links) != previous:
+                if len(links) != previous:
                     self.status.configure(text="Lien retiré du texte sélectionné.")
-                    if self._editing_dialog is not None:
-                        self._editing_widget.tag_remove(
-                            "hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars"
-                        )
-                        self._editing_widget.tag_raise("sel")
-                        return
-                    self._render()
+                    self._editing_widget.tag_remove(
+                        "hyperlink", f"1.0 + {start} chars", f"1.0 + {end} chars"
+                    )
+                    self._editing_widget.tag_raise("sel")
                     return
         if item.kind == "text":
             self.status.configure(
@@ -7828,7 +7975,21 @@ class DocumentEditorWindow(tk.Toplevel):
             else:
                 assert image_path is not None
                 with Image.open(image_path) as source:
+                    image = source.convert("RGBA")
                     width, height = source.size
+            if (
+                self.selected is not None
+                and self.document.objects[self.selected].kind == "image"
+                and image is not None
+            ):
+                self._checkpoint()
+                target = self.document.objects[self.selected]
+                self._replace_image_pixels(target, image, optimize=False)
+                self._render()
+                self.status.configure(
+                    text="Image remplacée sans modifier la taille ni les proportions de son cadre."
+                )
+                return
             display_width = min(320.0, max(80.0, float(width)))
             display_height = min(240.0, max(60.0, display_width * height / max(1, width)))
             self._add_object(PageObject("image", self.current_page, 70, 80, display_width, display_height, image_path=str(image_path)))
@@ -7949,6 +8110,30 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         self._render()
         self.after_idle(lambda: self._start_inline_text_editor(first))
+
+    def _copy_previous_text_frame_appearance(self) -> None:
+        """Copy only frame appearance, never the linked text content."""
+        if self.selected is None:
+            return
+        target = self.document.objects[self.selected]
+        predecessor = next(
+            (
+                candidate
+                for candidate in self.document.objects
+                if candidate.kind == "text" and candidate.flow_next_id == target.object_id
+            ),
+            None,
+        )
+        if target.kind != "text" or predecessor is None:
+            self.status.configure(text="Cette zone n’a pas de cadre précédent.")
+            return
+        self._checkpoint()
+        for attribute in ("fill", "border_color", "border_width", "border_style"):
+            setattr(target, attribute, getattr(predecessor, attribute))
+        self._render()
+        self.status.configure(
+            text="Fond et bordure repris du cadre précédent ; dimensions et rotation conservées."
+        )
 
     def _unlink_text_frame(self) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
