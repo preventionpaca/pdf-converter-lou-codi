@@ -31,6 +31,7 @@ from ..services.canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    flowed_text_context,
     flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
@@ -2765,8 +2766,48 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         else:
             source_name = Path(self.document.source_pdf).stem if self.document.source_pdf else (self.project_path.stem if self.project_path else "Nouveau document")
-            flowed_text = flowed_text_for_object(item, self.document.objects)
+            flowed_text, style_source, flow_offset = flowed_text_context(
+                item, self.document.objects
+            )
             displayed_text = resolve_dynamic_text(flowed_text, self.current_page, self.document.page_count, source_name)
+            render_item = copy.copy(item)
+            if style_source.object_id != item.object_id:
+                for attribute in (
+                    "font_family", "font_size", "bold", "italic", "underline",
+                    "strikethrough", "color", "align",
+                ):
+                    setattr(render_item, attribute, getattr(style_source, attribute))
+                flow_end = flow_offset + len(flowed_text)
+                render_item.text_styles = [
+                    {
+                        **run,
+                        "start": max(0, int(run.get("start", 0)) - flow_offset),
+                        "end": min(len(flowed_text), int(run.get("end", 0)) - flow_offset),
+                    }
+                    for run in style_source.text_styles
+                    if int(run.get("start", 0)) < flow_end
+                    and int(run.get("end", 0)) > flow_offset
+                ]
+                render_item.paragraph_alignments = [
+                    {
+                        **run,
+                        "start": max(0, int(run.get("start", 0)) - flow_offset),
+                        "end": min(len(flowed_text), int(run.get("end", 0)) - flow_offset),
+                    }
+                    for run in style_source.paragraph_alignments
+                    if int(run.get("start", 0)) < flow_end
+                    and int(run.get("end", 0)) > flow_offset
+                ]
+                render_item.text_links = [
+                    {
+                        **run,
+                        "start": max(0, int(run.get("start", 0)) - flow_offset),
+                        "end": min(len(flowed_text), int(run.get("end", 0)) - flow_offset),
+                    }
+                    for run in style_source.text_links
+                    if int(run.get("start", 0)) < flow_end
+                    and int(run.get("end", 0)) > flow_offset
+                ]
             emphasized = selected or bool(self._pending_text_link_id and item.kind == "text")
             if item.kind != "text":
                 self.canvas.create_rectangle(
@@ -2776,7 +2817,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 )
             try:
                 picture = self._text_preview(
-                    item, displayed_text, max(1, round(w)), max(1, round(h))
+                    render_item, displayed_text, max(1, round(w)), max(1, round(h))
                 )
                 self._overlay_images.append(picture)
                 self.canvas.create_image(
@@ -2993,17 +3034,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 line_start = search_from
             line_end = line_start + len(line)
             boundaries = {line_start, line_end}
-            for link in item.text_links:
+            for link in render_item.text_links:
                 boundaries.add(max(line_start, min(line_end, int(link.get("start", 0)))))
                 boundaries.add(max(line_start, min(line_end, int(link.get("end", 0)))))
-            for style_run in item.text_styles:
+            for style_run in render_item.text_styles:
                 boundaries.add(max(line_start, min(line_end, int(style_run.get("start", 0)))))
                 boundaries.add(max(line_start, min(line_end, int(style_run.get("end", 0)))))
             ordered = sorted(boundaries)
             fragments: list[tuple[str, dict[str, object], ImageFont.FreeTypeFont | ImageFont.ImageFont, bool, float]] = []
             for start, end in pairwise(ordered):
                 fragment = text[start:end]
-                fragment_style = text_style_at(item, start)
+                fragment_style = text_style_at(render_item, start)
                 fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
                 try:
                     fragment_file = _font_file(
@@ -3018,13 +3059,13 @@ class DocumentEditorWindow(tk.Toplevel):
                     int(link.get("start", 0)) < end
                     and int(link.get("end", 0)) > start
                     and link.get("hyperlink")
-                    for link in item.text_links
+                    for link in render_item.text_links
                 )
                 fragment_width = float(draw.textlength(fragment, font=fragment_font))
                 fragments.append((fragment, fragment_style, fragment_font, linked, fragment_width))
             actual_line_width = sum(fragment[4] for fragment in fragments)
             padding = TEXT_FRAME_HORIZONTAL_PADDING * self.zoom
-            line_alignment = paragraph_alignment_at(item, line_start)
+            line_alignment = paragraph_alignment_at(render_item, line_start)
             justify_line = (
                 line_alignment == "justify"
                 and line_end < len(text)

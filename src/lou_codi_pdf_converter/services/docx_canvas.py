@@ -15,7 +15,7 @@ from .canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
-    flowed_text_for_object,
+    flowed_text_context,
     pages_for_object,
     resolve_dynamic_text,
 )
@@ -87,6 +87,37 @@ def export_editable_docx(
                         in pages_for_object(item, canvas_document.page_count)
                     ):
                         document_name = Path(canvas_document.source_pdf).stem if canvas_document.source_pdf else target.stem
+                        flowed_text, style_source, flow_offset = flowed_text_context(
+                            item, canvas_document.objects
+                        )
+                        styled_item = copy.copy(item)
+                        if style_source.object_id != item.object_id:
+                            for attribute in (
+                                "font_family", "font_size", "bold", "italic", "underline",
+                                "strikethrough", "color", "align",
+                            ):
+                                setattr(styled_item, attribute, getattr(style_source, attribute))
+                            flow_end = flow_offset + len(flowed_text)
+                            styled_item.text_styles = [
+                                {
+                                    **run,
+                                    "start": max(0, int(run.get("start", 0)) - flow_offset),
+                                    "end": min(len(flowed_text), int(run.get("end", 0)) - flow_offset),
+                                }
+                                for run in style_source.text_styles
+                                if int(run.get("start", 0)) < flow_end
+                                and int(run.get("end", 0)) > flow_offset
+                            ]
+                            styled_item.text_links = [
+                                {
+                                    **run,
+                                    "start": max(0, int(run.get("start", 0)) - flow_offset),
+                                    "end": min(len(flowed_text), int(run.get("end", 0)) - flow_offset),
+                                }
+                                for run in style_source.text_links
+                                if int(run.get("start", 0)) < flow_end
+                                and int(run.get("end", 0)) > flow_offset
+                            ]
                         link_relationships = [
                             (
                                 int(link.get("start", 0)),
@@ -95,17 +126,17 @@ def export_editable_docx(
                                     str(link.get("hyperlink", "")), RT.HYPERLINK, is_external=True
                                 ),
                             )
-                            for link in item.text_links
+                            for link in styled_item.text_links
                             if str(link.get("hyperlink", "")).strip()
                         ]
                         paragraph._p.append(
                             _textbox_xml(
-                                item,
+                                styled_item,
                                 page_number,
                                 index,
                                 canvas_document.page_count,
                                 document_name,
-                                flowed_text_for_object(item, canvas_document.objects),
+                                flowed_text,
                                 link_relationships,
                                 None,
                             )

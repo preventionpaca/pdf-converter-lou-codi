@@ -14,6 +14,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
+    flowed_text_context,
     flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
@@ -672,6 +673,27 @@ def test_text_can_flow_between_linked_frames() -> None:
     assert f"{first_part} {second_part}" == first.text
 
 
+def test_linked_frame_keeps_the_root_formatting_offset() -> None:
+    text = "Début ordinaire puis suite colorée et importante"
+    color_start = text.index("suite")
+    first = PageObject(
+        "text", 0, 10, 10, 120, 24, text=text, font_size=12,
+        text_styles=[{
+            "start": color_start, "end": len(text),
+            "bold": True, "color": "#CC0000",
+        }],
+    )
+    second = PageObject("text", 0, 10, 50, 300, 40, font_size=12)
+    first.flow_next_id = second.object_id
+
+    second_text, style_source, offset = flowed_text_context(second, [first, second])
+
+    assert second_text
+    assert style_source is first
+    assert first.text[offset : offset + len(second_text)] == second_text
+    assert offset <= color_start < offset + len(second_text)
+
+
 def test_text_flow_respects_explicit_line_breaks() -> None:
     first = PageObject("text", 0, 10, 10, 180, 18, text="Première ligne\nDeuxième ligne", font_size=12)
     second = PageObject("text", 0, 10, 40, 180, 40, font_size=12)
@@ -902,6 +924,27 @@ def test_rotated_text_frame_keeps_all_corners_around_the_same_centre() -> None:
     expected = [(80.0, -10.0), (80.0, 90.0), (40.0, 90.0), (40.0, -10.0)]
     for point, expected_point in zip(points, expected, strict=True):
         assert point == pytest.approx(expected_point)
+
+
+def test_text_preview_rotates_the_rendered_pixels_not_only_the_selection_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    editor = object.__new__(DocumentEditorWindow)
+    editor.zoom = 1.0
+    item = PageObject(
+        "text", 0, 0, 0, 100, 40,
+        text="Texte tourné", rotation=90,
+        border_width=1.5, border_style="dotted",
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.ImageTk.PhotoImage",
+        lambda image: image,
+    )
+
+    rendered = editor._text_preview(item, item.text, 100, 40)
+
+    assert rendered.size == (40, 100)
+    assert rendered.getbbox() is not None
 
 
 def test_pdf_export_rotates_text_and_its_border_without_losing_content(tmp_path: Path) -> None:

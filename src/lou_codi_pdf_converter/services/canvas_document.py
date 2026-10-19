@@ -383,7 +383,10 @@ def _draw_object(
                 overlay=True,
             )
     elif item.kind in {"text", "table"}:
-        content = flowed_text_for_object(item, objects) if item.kind == "text" else item.text
+        if item.kind == "text":
+            content, style_source, flow_offset = flowed_text_context(item, objects)
+        else:
+            content, style_source, flow_offset = item.text, item, 0
         rendered_text = resolve_dynamic_text(content, page_number, page_count, document_name)
         if item.kind == "table":
             _draw_table(page, rectangle, item, rendered_text)
@@ -404,45 +407,45 @@ def _draw_object(
                     morph=morph,
                     overlay=True,
                 )
-            font_file = _font_file(item.font_family, item.bold, item.italic)
+            font_file = _font_file(style_source.font_family, style_source.bold, style_source.italic)
             if font_file:
-                font_name = f"lc{item.font_family.replace('-', '')}{'b' if item.bold else ''}{'i' if item.italic else ''}"
+                font_name = f"lc{style_source.font_family.replace('-', '')}{'b' if style_source.bold else ''}{'i' if style_source.italic else ''}"
             else:
-                family = {"Serif": "tiro", "Monospace": "cour"}.get(item.font_family, "helv")
-                font_name = "hebi" if item.bold and item.italic else "hebo" if item.bold else "heit" if item.italic else family
+                family = {"Serif": "tiro", "Monospace": "cour"}.get(style_source.font_family, "helv")
+                font_name = "hebi" if style_source.bold and style_source.italic else "hebo" if style_source.bold else "heit" if style_source.italic else family
             page.insert_textbox(
                 rectangle,
                 rendered_text,
-                fontsize=max(6, item.font_size),
+                fontsize=max(6, style_source.font_size),
                 fontname=font_name,
                 fontfile=font_file,
-                color=_rgb(item.color),
-                align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(item.align, 0),
+                color=_rgb(style_source.color),
+                align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(style_source.align, 0),
                 rotate=0,
                 morph=morph,
                 overlay=True,
             )
-            if item.underline or item.strikethrough:
+            if style_source.underline or style_source.strikethrough:
                 for text_line in (line.strip() for line in rendered_text.splitlines()):
                     if not text_line:
                         continue
                     for text_rectangle in page.search_for(text_line, clip=rectangle):
-                        if item.underline:
+                        if style_source.underline:
                             page.draw_line(
                                 text_rectangle.bottom_left,
                                 text_rectangle.bottom_right,
-                                color=_rgb(item.color), width=0.8, overlay=True,
+                                color=_rgb(style_source.color), width=0.8, overlay=True,
                             )
-                        if item.strikethrough:
+                        if style_source.strikethrough:
                             middle_y = (text_rectangle.y0 + text_rectangle.y1) / 2
                             page.draw_line(
                                 pymupdf.Point(text_rectangle.x0, middle_y),
                                 pymupdf.Point(text_rectangle.x1, middle_y),
-                                color=_rgb(item.color), width=0.8, overlay=True,
+                                color=_rgb(style_source.color), width=0.8, overlay=True,
                             )
-            for link in item.text_links:
-                start = max(0, int(link.get("start", 0)))
-                end = min(len(rendered_text), int(link.get("end", 0)))
+            for link in style_source.text_links:
+                start = max(0, int(link.get("start", 0)) - flow_offset)
+                end = min(len(rendered_text), int(link.get("end", 0)) - flow_offset)
                 uri = str(link.get("hyperlink", "")).strip()
                 linked_text = rendered_text[start:end].strip()
                 if not linked_text or not uri:
@@ -544,8 +547,15 @@ def resolve_dynamic_text(text: str, page_number: int, page_count: int, document_
 
 def flowed_text_for_object(item: PageObject, objects: list[PageObject]) -> str:
     """Return the portion of a linked text flow displayed by ``item``."""
+    return flowed_text_context(item, objects)[0]
+
+
+def flowed_text_context(
+    item: PageObject, objects: list[PageObject]
+) -> tuple[str, PageObject, int]:
+    """Return displayed text, its root style source and its offset in that source."""
     if item.kind != "text":
-        return item.text
+        return item.text, item, 0
     by_id = {candidate.object_id: candidate for candidate in objects}
     previous = {
         candidate.flow_next_id: candidate
@@ -568,9 +578,18 @@ def flowed_text_for_object(item: PageObject, objects: list[PageObject]) -> str:
         current = by_id[current.flow_next_id]
     segments = _flow_segments(root.text, chain)
     try:
-        return segments[chain.index(item)]
+        target_index = chain.index(item)
     except ValueError:
-        return item.text
+        return item.text, item, 0
+    cursor = 0
+    offsets: list[int] = []
+    for segment in segments:
+        offset = root.text.find(segment, cursor) if segment else cursor
+        if offset < 0:
+            offset = cursor
+        offsets.append(offset)
+        cursor = offset + len(segment)
+    return segments[target_index], root, offsets[target_index]
 
 
 def _flow_segments(text: str, frames: list[PageObject]) -> list[str]:

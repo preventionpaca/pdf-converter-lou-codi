@@ -111,6 +111,29 @@ def test_docx_keeps_hyperlinks_attached_to_selected_words(tmp_path: Path) -> Non
     assert "https://example.com" in relationships
 
 
+def test_docx_linked_second_frame_inherits_root_character_formatting(tmp_path: Path) -> None:
+    target = tmp_path / "texte-chaine.docx"
+    text = "Première partie puis seconde partie rouge"
+    styled_start = text.index("seconde")
+    first = PageObject(
+        "text", 0, 30, 30, 115, 24, text=text, font_size=12,
+        text_styles=[{
+            "start": styled_start, "end": len(text),
+            "bold": True, "color": "#CC0000",
+        }],
+    )
+    second = PageObject("text", 0, 30, 80, 260, 50, font_size=12)
+    first.flow_next_id = second.object_id
+
+    export_editable_docx(CanvasDocument(objects=[first, second]), target)
+
+    with ZipFile(target) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8")
+    assert "seconde" in xml
+    assert '<w:color w:val="CC0000"/>' in xml
+    assert "<w:b/>" in xml
+
+
 def test_docx_exports_simple_drawings_as_separate_positioned_objects(tmp_path: Path) -> None:
     target = tmp_path / "dessins.docx"
     document = CanvasDocument(objects=[
