@@ -5188,13 +5188,21 @@ class DocumentEditorWindow(tk.Toplevel):
     ) -> list[tuple[str, list[tuple[str, float]]]]:
         return [cls._chart_values(rows, index) for index in series_indices]
 
+    @staticmethod
+    def _chart_oriented_rows(rows: list[list[str]], orientation: str) -> list[list[str]]:
+        if orientation != "rows" or not rows:
+            return rows
+        width = max(len(row) for row in rows)
+        padded = [row + [""] * (width - len(row)) for row in rows]
+        return [list(column) for column in zip(*padded)]
+
     def _edit_chart_settings(self, item: PageObject) -> None:
         source = next(
             (candidate for candidate in self.document.objects if candidate.object_id == item.source_id),
             None,
         )
-        rows = self._ensure_table_cells(source) if source and source.kind == "table" else []
-        headers = [str(cell.get("text", "")) or f"Colonne {index + 1}" for index, cell in enumerate(rows[0])] if rows else ["Valeurs"]
+        cell_rows = self._ensure_table_cells(source) if source and source.kind == "table" else []
+        rows = [[str(cell.get("text", "")) for cell in row] for row in cell_rows]
         dialog = tk.Toplevel(self)
         dialog.title("Paramètres du graphique")
         dialog.transient(self)
@@ -5205,23 +5213,53 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Label(body, text="Titre").grid(row=0, column=0, sticky="w", pady=4)
         title_var = tk.StringVar(value=item.chart_title)
         ttk.Entry(body, textvariable=title_var, width=28).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(body, text="Séries de valeurs").grid(row=1, column=0, sticky="nw", pady=4)
+        ttk.Label(body, text="Type").grid(row=1, column=0, sticky="w", pady=4)
+        chart_types = {
+            "Colonnes": "bar",
+            "Barres horizontales": "hbar",
+            "Courbe": "line",
+            "Camembert": "pie",
+        }
+        current_type = next((label for label, value in chart_types.items() if value == item.fill), "Colonnes")
+        type_var = tk.StringVar(value=current_type)
+        ttk.Combobox(
+            body, textvariable=type_var, values=list(chart_types), state="readonly", width=26,
+        ).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(body, text="Analyser par").grid(row=2, column=0, sticky="nw", pady=4)
+        orientation_var = tk.StringVar(value=item.chart_data_orientation)
+        orientation_frame = ttk.Frame(body)
+        orientation_frame.grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Radiobutton(
+            orientation_frame, text="Colonnes", variable=orientation_var, value="columns",
+        ).pack(side="left")
+        ttk.Radiobutton(
+            orientation_frame, text="Lignes", variable=orientation_var, value="rows",
+        ).pack(side="left", padx=(12, 0))
+        ttk.Label(body, text="Séries de valeurs").grid(row=3, column=0, sticky="nw", pady=4)
         series_list = tk.Listbox(
             body,
             selectmode="extended",
             exportselection=False,
-            height=min(6, len(headers)),
+            height=6,
             width=28,
         )
-        series_list.grid(row=1, column=1, sticky="ew", pady=4)
-        for header in headers:
-            series_list.insert("end", header)
-        selected_series = item.chart_series_indices or [item.chart_series_index]
-        for index in selected_series:
-            if 0 <= index < len(headers):
-                series_list.selection_set(index)
-        if not series_list.curselection() and headers:
-            series_list.selection_set(min(1, len(headers) - 1))
+        series_list.grid(row=3, column=1, sticky="ew", pady=4)
+
+        def refresh_series(*_args: object) -> None:
+            oriented = self._chart_oriented_rows(rows, orientation_var.get())
+            headers = oriented[0] if oriented else ["Valeurs"]
+            series_list.delete(0, "end")
+            for index, header in enumerate(headers):
+                series_list.insert("end", header or f"Colonne {index + 1}")
+            selected = item.chart_series_indices or [item.chart_series_index]
+            for index in selected:
+                if 0 <= index < len(headers):
+                    series_list.selection_set(index)
+            if not series_list.curselection() and headers:
+                series_list.selection_set(min(1, len(headers) - 1))
+
+        orientation_var.trace_add("write", refresh_series)
+        refresh_series()
         ttk.Label(
             body,
             text=(
@@ -5231,33 +5269,44 @@ class DocumentEditorWindow(tk.Toplevel):
             foreground="#52677A",
             wraplength=340,
             justify="left",
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 6))
         legend_var = tk.BooleanVar(value=item.chart_show_legend)
         values_var = tk.BooleanVar(value=item.chart_show_values)
-        ttk.Checkbutton(body, text="Afficher la légende", variable=legend_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Checkbutton(body, text="Afficher les valeurs", variable=values_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="Afficher la légende", variable=legend_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="Afficher les valeurs", variable=values_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
 
         def apply() -> None:
             self._checkpoint()
             item.chart_title = title_var.get().strip()
             chosen = [int(index) for index in series_list.curselection()]
+            oriented = self._chart_oriented_rows(rows, orientation_var.get())
+            headers = oriented[0] if oriented else ["Valeurs"]
             if not chosen:
                 chosen = [min(1, len(headers) - 1)]
+            item.fill = chart_types[type_var.get()]
             if item.fill == "pie" and len(chosen) > 1:
                 chosen = chosen[:1]
             item.chart_series_indices = chosen
             item.chart_series_index = chosen[0]
+            item.chart_data_orientation = orientation_var.get()
             item.chart_show_legend = legend_var.get()
             item.chart_show_values = values_var.get()
             dialog.destroy()
             self._render()
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        buttons.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side="left", padx=4)
         ttk.Button(buttons, text="Appliquer", command=apply).pack(side="left", padx=4)
         dialog.bind("<Return>", lambda _event: apply())
-        center_window(dialog, 480, 330)
+        dialog.update_idletasks()
+        requested_width = max(480, dialog.winfo_reqwidth() + 8)
+        requested_height = max(390, dialog.winfo_reqheight() + 8)
+        center_window(
+            dialog,
+            min(requested_width, dialog.winfo_screenwidth() - 60),
+            min(requested_height, dialog.winfo_screenheight() - 100),
+        )
 
     def _draw_chart_preview(self, item: PageObject, x: float, y: float, width: float, height: float, tags: tuple[str, str]) -> None:
         source = next((candidate for candidate in self.document.objects if candidate.object_id == item.source_id), None)
@@ -5266,6 +5315,7 @@ class DocumentEditorWindow(tk.Toplevel):
             if source and source.kind == "table"
             else []
         )
+        rows = self._chart_oriented_rows(rows, item.chart_data_orientation)
         selected_series = item.chart_series_indices or [item.chart_series_index]
         series = self._chart_series(rows, selected_series)
         series_name, values = series[0] if series else ("", [])
@@ -5294,6 +5344,51 @@ class DocumentEditorWindow(tk.Toplevel):
                     suffix = f" — {value:g}" if item.chart_show_values else ""
                     self.canvas.create_text(legend_x + 14, legend_y, text=f"{label}{suffix}", anchor="nw", font=("Sans", 8), tags=tags)
                 start += extent
+        elif item.fill == "line":
+            all_values = [abs(value) for _name, entries in series for _label, value in entries]
+            maximum = max(all_values, default=1) or 1
+            categories = values
+            plot_top = top + (18 if item.chart_show_legend else 0)
+            plot_bottom = y + height - 22
+            step = (width - 24) / max(1, len(categories) - 1)
+            for series_index, (_name, entries) in enumerate(series):
+                points: list[float] = []
+                for index, (_label, value) in enumerate(entries):
+                    point_x = x + 12 + index * step
+                    point_y = plot_bottom - (plot_bottom - plot_top) * abs(value) / maximum
+                    points.extend((point_x, point_y))
+                    self.canvas.create_oval(point_x - 3, point_y - 3, point_x + 3, point_y + 3, fill=colors[series_index % len(colors)], outline="", tags=tags)
+                    if item.chart_show_values:
+                        self.canvas.create_text(point_x, point_y - 8, text=f"{value:g}", font=("Sans", 7), tags=tags)
+                if len(points) >= 4:
+                    self.canvas.create_line(*points, fill=colors[series_index % len(colors)], width=2, tags=tags)
+            for index, (label, _value) in enumerate(categories):
+                self.canvas.create_text(x + 12 + index * step, y + height - 10, text=label[:10], font=("Sans", 7), tags=tags)
+            if item.chart_show_legend:
+                self._draw_chart_legend(item, series, colors, x + 8, top, tags)
+        elif item.fill == "hbar":
+            all_values = [abs(value) for _name, entries in series for _label, value in entries]
+            maximum = max(all_values, default=1) or 1
+            categories = values
+            plot_top = top + (18 if item.chart_show_legend else 0)
+            category_gap = max(12.0, (y + height - plot_top - 8) / max(1, len(categories)))
+            series_count = max(1, len(series))
+            bar_height = max(3.0, category_gap - 5) / series_count
+            plot_left = x + min(70, width * 0.24)
+            for category_index, (label, _value) in enumerate(categories):
+                center_y = plot_top + (category_index + 0.5) * category_gap
+                self.canvas.create_text(plot_left - 5, center_y, text=label[:12], anchor="e", font=("Sans", 7), tags=tags)
+                for series_index, (_name, entries) in enumerate(series):
+                    if category_index >= len(entries):
+                        continue
+                    value = entries[category_index][1]
+                    top_y = center_y - (series_count * bar_height) / 2 + series_index * bar_height
+                    right = plot_left + (width - (plot_left - x) - 8) * abs(value) / maximum
+                    self.canvas.create_rectangle(plot_left, top_y, right, top_y + max(2, bar_height - 2), fill=colors[series_index % len(colors)], outline="", tags=tags)
+                    if item.chart_show_values:
+                        self.canvas.create_text(right + 3, top_y, text=f"{value:g}", anchor="nw", font=("Sans", 7), tags=tags)
+            if item.chart_show_legend:
+                self._draw_chart_legend(item, series, colors, x + 8, top, tags)
         else:
             all_values = [abs(value) for _name, entries in series for _label, value in entries]
             maximum = max(all_values, default=1) or 1
@@ -5314,11 +5409,23 @@ class DocumentEditorWindow(tk.Toplevel):
                         self.canvas.create_text((left + right) / 2, y + height - 24 - bar_height, text=f"{value:g}", font=("Sans", 7), tags=tags)
                 self.canvas.create_text(x + (category_index + 0.5) * gap, y + height - 10, text=label[:10], font=("Sans", 7), tags=tags)
             if item.chart_show_legend:
-                legend_x = x + 8
-                for series_index, (name, _entries) in enumerate(series):
-                    self.canvas.create_rectangle(legend_x, top + 2, legend_x + 9, top + 11, fill=colors[series_index % len(colors)], outline="", tags=tags)
-                    self.canvas.create_text(legend_x + 12, top, text=name or f"Série {series_index + 1}", anchor="nw", font=("Sans", 7), tags=tags)
-                    legend_x += max(55, len(name) * 6 + 24)
+                self._draw_chart_legend(item, series, colors, x + 8, top, tags)
+
+    def _draw_chart_legend(
+        self,
+        item: PageObject,
+        series: list[tuple[str, list[tuple[str, float]]]],
+        colors: tuple[str, ...],
+        x: float,
+        y: float,
+        tags: tuple[str, str],
+    ) -> None:
+        legend_x = x
+        for series_index, (name, _entries) in enumerate(series):
+            self.canvas.create_rectangle(legend_x, y + 2, legend_x + 9, y + 11, fill=colors[series_index % len(colors)], outline="", tags=tags)
+            label = name or f"Série {series_index + 1}"
+            self.canvas.create_text(legend_x + 12, y, text=label, anchor="nw", font=("Sans", 7), tags=tags)
+            legend_x += max(55, len(label) * 6 + 24)
 
     def _make_list(self, numbered: bool) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":

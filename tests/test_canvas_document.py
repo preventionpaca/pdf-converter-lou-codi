@@ -1016,8 +1016,13 @@ def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
     bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")
     pie = PageObject("chart", 0, 310, 160, 250, 160, source_id=table.object_id, fill="pie")
+    line = PageObject("chart", 0, 580, 160, 110, 160, source_id=table.object_id, fill="line")
+    horizontal = PageObject(
+        "chart", 0, 700, 160, 110, 160,
+        source_id=table.object_id, fill="hbar", chart_data_orientation="rows",
+    )
     document = CanvasDocument(
-        objects=[table, bars, pie],
+        objects=[table, bars, pie, line, horizontal],
         page_width=841.89,
         page_height=595.28,
     )
@@ -1438,6 +1443,20 @@ def test_chart_uses_first_column_as_labels_and_selected_numeric_series() -> None
     assert series == [
         ("Notes", [("Alice", 12.0), ("Bob", 15.0)]),
         ("Absences", [("Alice", 1.0), ("Bob", 3.0)]),
+    ]
+
+    oriented = DocumentEditorWindow._chart_oriented_rows(
+        [["", "Notes", "Absences"], ["Alice", "12", "1"], ["Bob", "15", "3"]],
+        "rows",
+    )
+    assert oriented == [
+        ["", "Alice", "Bob"],
+        ["Notes", "12", "15"],
+        ["Absences", "1", "3"],
+    ]
+    assert DocumentEditorWindow._chart_series(oriented, [1, 2]) == [
+        ("Alice", [("Notes", 12.0), ("Absences", 1.0)]),
+        ("Bob", [("Notes", 15.0), ("Absences", 3.0)]),
     ]
 
 
