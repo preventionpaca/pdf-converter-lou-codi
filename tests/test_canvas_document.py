@@ -98,8 +98,8 @@ def test_inline_editor_uses_canvas_pixel_metrics_and_insets() -> None:
     assert inline_editor_font_size(12, 1.0) == -12
     assert inline_editor_font_size(12, 1.15) == -14
     assert inline_editor_font_size("invalid", 1.0) == -12
-    assert inline_editor_padding(1.0) == (10, 4)
-    assert inline_editor_padding(1.15) == (12, 5)
+    assert inline_editor_padding(1.0) == (14, 6)
+    assert inline_editor_padding(1.15) == (16, 7)
     assert DocumentEditorWindow._tk_font_family("Sans-serif") == "DejaVu Sans"
     assert DocumentEditorWindow._tk_font_family("Serif") == "DejaVu Serif"
 
@@ -277,7 +277,7 @@ def test_rich_paste_fallback_replaces_office_symbol_bullets_without_squares() ->
 
 
 def test_imported_table_cell_editor_is_readable_without_exceeding_the_page() -> None:
-    assert table_cell_editor_size(55, 28, 650, 900) == (220, 110)
+    assert table_cell_editor_size(55, 28, 650, 900) == (60, 35)
     assert table_cell_editor_size(800, 700, 650, 900) == (650, 405)
 
 
@@ -1363,6 +1363,62 @@ def test_text_alignment_uses_actual_rendered_width() -> None:
     assert aligned_text_x(300, 80, 10, "left") == 10
     assert aligned_text_x(300, 80, 10, "center") == 110
     assert aligned_text_x(300, 80, 10, "right") == 210
+
+
+def test_text_frame_border_and_resize_keep_text_inside_safe_insets() -> None:
+    text = "Une phrase assez longue pour vérifier la marge intérieure droite"
+    wide = PageObject("text", 0, 0, 0, 260, 80, text=text, border_width=4)
+    narrow = copy.deepcopy(wide)
+    narrow.width = 150
+
+    assert len(wrapped_text_lines(wide.text, wide)) < len(
+        wrapped_text_lines(narrow.text, narrow)
+    )
+    assert text_frame_line_capacity(wide) == 3
+
+
+def test_partial_style_selection_stays_partial_in_a_right_aligned_paragraph() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 240, 60, text="texte aligné à droite", align="right"
+    )
+
+    class InlineWidget:
+        added: list[tuple[str, str, str]] = []
+
+        @staticmethod
+        def tag_names(_index: str) -> tuple[str, ...]:
+            return ()
+
+        @staticmethod
+        def cget(_name: str) -> str:
+            return "#FFFFFF"
+
+        @staticmethod
+        def tag_configure(_tag: str, **_options: object) -> None:
+            return None
+
+        @classmethod
+        def tag_add(cls, tag: str, start: str, end: str) -> None:
+            cls.added.append((tag, start, end))
+
+        @staticmethod
+        def tag_raise(_tag: str) -> None:
+            return None
+
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor._editing_widget = InlineWidget()
+    editor._editing_object_id = item.object_id
+    editor._editing_selection_range = (6, 12)
+    editor._editing_style_tags = {}
+    editor._editing_table_cell = None
+    editor.zoom = 1.0
+    editor.status = _StatusRecorder()
+
+    assert editor._apply_inline_text_style(item, {"bold": True}) is True
+    assert InlineWidget.added[-1][1:] == (
+        "1.0 + 6 chars",
+        "1.0 + 12 chars",
+    )
 
 
 def test_zero_character_offset_from_tk_is_not_treated_as_an_error() -> None:

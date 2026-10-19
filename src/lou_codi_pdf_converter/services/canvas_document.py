@@ -21,7 +21,8 @@ from .table_formulas import evaluate_table, evaluate_table_cells
 A4_WIDTH = 595.28
 A4_HEIGHT = 841.89
 FLOW_BREAK_TOKEN = "{{CADRE_SUIVANT}}"
-TEXT_FRAME_HORIZONTAL_PADDING = 10.0
+TEXT_FRAME_HORIZONTAL_PADDING = 14.0
+TEXT_FRAME_VERTICAL_PADDING = 6.0
 
 TABLE_STYLE_PALETTES: dict[str, tuple[str, str, str, str]] = {
     "blue": ("#193F6A", "#FFFFFF", "#EAF3FC", "#D5E7F7"),
@@ -430,10 +431,22 @@ def _draw_object(
             # only a fraction of a point too short is otherwise rejected in
             # full, leaving a completely blank legal-text frame.  Retry with
             # the smallest necessary reduction instead of losing its content.
+            horizontal_inset = min(
+                rectangle.width / 3, text_frame_horizontal_inset(item)
+            )
+            vertical_inset = min(
+                rectangle.height / 3, text_frame_vertical_inset(item)
+            )
+            content_rectangle = pymupdf.Rect(
+                rectangle.x0 + horizontal_inset,
+                rectangle.y0 + vertical_inset,
+                rectangle.x1 - horizontal_inset,
+                rectangle.y1 - vertical_inset,
+            )
             text_font_size = max(6.0, style_source.font_size)
             while text_font_size >= 4.0:
                 spare_height = page.insert_textbox(
-                    rectangle,
+                    content_rectangle,
                     rendered_text,
                     fontsize=text_font_size,
                     fontname=font_name,
@@ -451,7 +464,7 @@ def _draw_object(
                 for text_line in (line.strip() for line in rendered_text.splitlines()):
                     if not text_line:
                         continue
-                    for text_rectangle in page.search_for(text_line, clip=rectangle):
+                    for text_rectangle in page.search_for(text_line, clip=content_rectangle):
                         if style_source.underline:
                             page.draw_line(
                                 text_rectangle.bottom_left,
@@ -472,7 +485,7 @@ def _draw_object(
                 linked_text = rendered_text[start:end].strip()
                 if not linked_text or not uri:
                     continue
-                for linked_rectangle in page.search_for(linked_text, clip=rectangle):
+                for linked_rectangle in page.search_for(linked_text, clip=content_rectangle):
                     page.draw_line(
                         linked_rectangle.bottom_left,
                         linked_rectangle.bottom_right,
@@ -684,8 +697,10 @@ def fitted_table_cell_text(
     italic: bool = False,
 ) -> tuple[str, float]:
     """Fit an editable cell value without allowing it to paint over neighbours."""
-    available_width = max(4.0, width - 6.0)
-    available_height = max(4.0, height - 4.0)
+    # Horizontal and vertical safety margins match the clipped on-screen cell
+    # bitmap and keep glyphs away from grid lines while the table is resized.
+    available_width = max(4.0, width - 10.0)
+    available_height = max(4.0, height - 6.0)
     requested = max(4.0, float(font_size))
 
     def wrap(size: float) -> list[str]:
@@ -730,9 +745,25 @@ def fitted_table_cell_text(
     return "\n".join(lines), size
 
 
+def text_frame_horizontal_inset(frame: PageObject) -> float:
+    """Safe horizontal inset including the part occupied by the border."""
+    return TEXT_FRAME_HORIZONTAL_PADDING + max(0.0, float(frame.border_width or 0.0))
+
+
+def text_frame_vertical_inset(frame: PageObject) -> float:
+    """Safe vertical inset including the part occupied by the border."""
+    return TEXT_FRAME_VERTICAL_PADDING + max(0.0, float(frame.border_width or 0.0))
+
+
 def text_frame_line_capacity(frame: PageObject) -> int:
     """Return how many complete lines are visible inside a text frame."""
-    return max(1, int((abs(frame.height) - 8) / text_frame_line_height(frame)))
+    return max(
+        1,
+        int(
+            (abs(frame.height) - 2 * text_frame_vertical_inset(frame))
+            / text_frame_line_height(frame)
+        ),
+    )
 
 
 def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
@@ -744,7 +775,9 @@ def wrapped_text_ranges(
     text: str, frame: PageObject
 ) -> list[tuple[str, int, int]]:
     """Return wrapped lines with their exact offsets in the rich source text."""
-    available_width = max(4.0, abs(frame.width) - 2 * TEXT_FRAME_HORIZONTAL_PADDING)
+    available_width = max(
+        4.0, abs(frame.width) - 2 * text_frame_horizontal_inset(frame)
+    )
     style_lookup = _text_flow_style_lookup(frame, len(text))
 
     def styled_width(value: str, start: int) -> float:

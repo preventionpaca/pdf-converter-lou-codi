@@ -30,6 +30,7 @@ from ..services.canvas_document import (
     A4_WIDTH,
     FLOW_BREAK_TOKEN,
     TEXT_FRAME_HORIZONTAL_PADDING,
+    TEXT_FRAME_VERTICAL_PADDING,
     CanvasDocument,
     PageObject,
     export_canvas_pdf,
@@ -42,6 +43,8 @@ from ..services.canvas_document import (
     table_grid_offsets,
     text_frame_line_capacity,
     text_frame_line_height,
+    text_frame_horizontal_inset,
+    text_frame_vertical_inset,
     wrapped_text_lines,
     wrapped_text_ranges,
     _font_file,
@@ -126,7 +129,7 @@ def inline_editor_padding(zoom: float) -> tuple[int, int]:
     """Return the same horizontal and vertical insets as the final preview."""
     return (
         max(0, round(TEXT_FRAME_HORIZONTAL_PADDING * zoom)),
-        max(0, round(4.0 * zoom)),
+        max(0, round(TEXT_FRAME_VERTICAL_PADDING * zoom)),
     )
 
 
@@ -215,10 +218,10 @@ def table_cell_editor_size(
     page_width: float,
     page_height: float,
 ) -> tuple[float, float]:
-    """Give even a tiny imported cell a practical, page-bounded editor."""
+    """Keep cell wrapping stable between preview and editing."""
     return (
-        min(max(220.0, cell_width), page_width),
-        min(max(110.0, cell_height), page_height * 0.45),
+        min(max(60.0, cell_width), page_width),
+        min(max(35.0, cell_height), page_height * 0.45),
     )
 
 
@@ -3654,22 +3657,25 @@ class DocumentEditorWindow(tk.Toplevel):
         lines = value.split("\n") if value else []
         line_height = max(6, round(pixel_size * 1.2))
         block_height = len(lines) * line_height
+        cell_padding = max(3, round(5 * self.zoom))
         if vertical_align == "middle":
-            start_y = max(2, (height - block_height) // 2)
+            start_y = max(cell_padding, (height - block_height) // 2)
         elif vertical_align == "bottom":
-            start_y = max(2, height - block_height - 3)
+            start_y = max(cell_padding, height - block_height - cell_padding)
         else:
-            start_y = 2
+            start_y = cell_padding
         safe_color = safe_pillow_color(color, "#000000")
         safe_highlight = safe_pillow_color(highlight, "", allow_transparent=True)
         for line_number, line in enumerate(lines):
             line_width = float(draw.textlength(line, font=font))
             if horizontal_align == "center":
-                line_x = max(3.0, (width - line_width) / 2)
+                line_x = max(float(cell_padding), (width - line_width) / 2)
             elif horizontal_align == "right":
-                line_x = max(3.0, width - line_width - 3)
+                line_x = max(
+                    float(cell_padding), width - line_width - cell_padding
+                )
             else:
-                line_x = 3.0
+                line_x = float(cell_padding)
             line_y = start_y + line_number * line_height
             if line_y >= height:
                 break
@@ -3685,8 +3691,8 @@ class DocumentEditorWindow(tk.Toplevel):
         if bottom_text:
             bottom_value = bottom_text.strip()
             bottom_width = float(draw.textlength(bottom_value, font=font))
-            bottom_x = max(3.0, (width - bottom_width) / 2)
-            bottom_y = max(2, height - line_height - 2)
+            bottom_x = max(float(cell_padding), (width - bottom_width) / 2)
+            bottom_y = max(cell_padding, height - line_height - cell_padding)
             draw.text(
                 (bottom_x, bottom_y),
                 bottom_value,
@@ -3808,7 +3814,7 @@ class DocumentEditorWindow(tk.Toplevel):
         line_height = text_frame_line_height(render_item) * self.zoom
         visible_lines = text_frame_line_capacity(render_item)
         for row, (line, line_start, line_end) in enumerate(lines[:visible_lines]):
-            py = 4 * self.zoom + row * line_height
+            py = text_frame_vertical_inset(render_item) * self.zoom + row * line_height
             if py + line_height < origin_y or py > origin_y + bitmap_height:
                 continue
             boundaries = {line_start, line_end}
@@ -3846,7 +3852,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 fragment_width = float(draw.textlength(fragment, font=fragment_font))
                 fragments.append((fragment, fragment_style, fragment_font, linked, fragment_width))
             actual_line_width = sum(fragment[4] for fragment in fragments)
-            padding = TEXT_FRAME_HORIZONTAL_PADDING * self.zoom
+            padding = text_frame_horizontal_inset(render_item) * self.zoom
             line_alignment = paragraph_alignment_at(render_item, line_start)
             justify_line = (
                 line_alignment == "justify"
@@ -3964,13 +3970,14 @@ class DocumentEditorWindow(tk.Toplevel):
         except OSError:
             font = ImageFont.load_default()
         line_height = max(1, round(font_size * 1.25))
-        y = max(2, round(4 * self.zoom))
-        for line in text.splitlines() or [""]:
+        text_x = max(2, round(text_frame_horizontal_inset(render_item) * self.zoom))
+        y = max(2, round(text_frame_vertical_inset(render_item) * self.zoom))
+        for line in wrapped_text_lines(text, render_item) or [""]:
             if y + line_height > height:
                 break
             # Pillow clips at the image boundary: text cannot spill into the
             # following linked frame even in this emergency renderer.
-            draw.text((max(2, round(4 * self.zoom)), y), line, font=font, fill=render_item.color)
+            draw.text((text_x, y), line, font=font, fill=render_item.color)
             y += line_height
         if render_item.rotation % 360:
             image = image.rotate(
@@ -7235,8 +7242,10 @@ class DocumentEditorWindow(tk.Toplevel):
             borderwidth=2,
             undo=True,
             exportselection=False,
-            padx=inline_editor_padding(self.zoom)[0],
-            pady=inline_editor_padding(self.zoom)[1],
+            # The two-pixel editor border plus this padding equals the
+            # five-point inset used by the clipped table preview.
+            padx=max(1, round(3 * self.zoom)),
+            pady=max(1, round(3 * self.zoom)),
         )
         widget.insert("1.0", cell.get("text", ""))
         widget.tag_configure(
