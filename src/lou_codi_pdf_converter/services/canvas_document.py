@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -648,24 +649,30 @@ def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
     """Wrap text in page units so flow and on-screen rendering cannot diverge."""
     available_width = max(4.0, abs(frame.width) - 2 * TEXT_FRAME_HORIZONTAL_PADDING)
     lines: list[str] = []
+    paragraph_start = 0
     for paragraph in text.split("\n"):
         if not paragraph:
             lines.append("")
+            paragraph_start += 1
             continue
-        words = paragraph.split()
-        if not words:
+        matches = list(re.finditer(r"\S+", paragraph))
+        if not matches:
             lines.append("")
+            paragraph_start += len(paragraph) + 1
             continue
         current_words: list[str] = []
         current_width = 0.0
-        space_width = _text_flow_character_width(
-            frame.font_family, frame.font_size, frame.bold, frame.italic, " "
-        )
-        for word in words:
-            word_width = _text_flow_text_width(
-                frame.font_family, frame.font_size, frame.bold, frame.italic, word
+        previous_end = 0
+        for match in matches:
+            word = match.group(0)
+            word_start = paragraph_start + match.start()
+            word_width = _styled_text_flow_width(frame, word, word_start)
+            separator = paragraph[previous_end : match.start()] if current_words else ""
+            separator_width = _styled_text_flow_width(
+                frame, separator, paragraph_start + previous_end
             )
-            candidate_width = current_width + (space_width if current_words else 0) + word_width
+            previous_end = match.end()
+            candidate_width = current_width + separator_width + word_width
             if current_words and candidate_width > available_width:
                 lines.append(" ".join(current_words))
                 current_words = []
@@ -680,13 +687,9 @@ def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
                 current_width = 0.0
             fragment = ""
             fragment_width = 0.0
-            for character in word:
-                character_width = _text_flow_character_width(
-                    frame.font_family,
-                    frame.font_size,
-                    frame.bold,
-                    frame.italic,
-                    character,
+            for character_index, character in enumerate(word):
+                character_width = _styled_text_flow_width(
+                    frame, character, word_start + character_index
                 )
                 if fragment and fragment_width + character_width > available_width:
                     lines.append(fragment)
@@ -700,7 +703,35 @@ def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
                 current_width = fragment_width
         if current_words:
             lines.append(" ".join(current_words))
+        paragraph_start += len(paragraph) + 1
     return lines
+
+
+def _styled_text_flow_width(frame: PageObject, text: str, start: int) -> float:
+    """Measure text with the effective rich style of every character."""
+    width = 0.0
+    for offset, character in enumerate(text):
+        family = frame.font_family
+        size = frame.font_size
+        bold = frame.bold
+        italic = frame.italic
+        position = start + offset
+        for run in frame.text_styles:
+            try:
+                run_start = int(run.get("start", 0))
+                run_end = int(run.get("end", 0))
+            except (TypeError, ValueError):
+                continue
+            if run_start <= position < run_end:
+                family = str(run.get("font_family", family))
+                try:
+                    size = float(run.get("font_size", size))
+                except (TypeError, ValueError):
+                    pass
+                bold = bool(run.get("bold", bold))
+                italic = bool(run.get("italic", italic))
+        width += _text_flow_character_width(family, size, bold, italic, character)
+    return width
 
 
 @lru_cache(maxsize=48)

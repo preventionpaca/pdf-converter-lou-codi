@@ -763,6 +763,25 @@ def test_text_frame_wraps_between_words_with_an_inner_margin() -> None:
     assert all(word in {"bonjour", "magnifique", "monde", "entier"} for line in lines for word in line.split())
 
 
+def test_text_frame_wrap_uses_the_pasted_rich_font_size_and_weight() -> None:
+    text = "Organiser une matinée éco-citoyenne à Cannes parcourir la ville jusqu’au littoral"
+    plain = PageObject("text", 0, 0, 0, 300, 100, text=text, font_size=12)
+    rich = copy.deepcopy(plain)
+    rich.text_styles = [{
+        "start": 0,
+        "end": len(text),
+        "font_family": "Serif",
+        "font_size": 14,
+        "bold": True,
+    }]
+
+    plain_lines = wrapped_text_lines(text, plain)
+    rich_lines = wrapped_text_lines(text, rich)
+
+    assert len(rich_lines) > len(plain_lines)
+    assert "littoral" not in rich_lines[0]
+
+
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
     bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")
