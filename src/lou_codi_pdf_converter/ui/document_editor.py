@@ -112,6 +112,22 @@ def safe_text_offset(value: object, fallback: int = 0) -> int:
         return fallback
 
 
+def inline_editor_font_size(font_size: object, zoom: float) -> int:
+    """Return a Tk pixel size matching the Pillow canvas preview."""
+    pixels = max(7, round(safe_number(font_size, 12.0, minimum=1.0) * zoom))
+    # Tk interprets positive sizes as typographic points and negative sizes as
+    # pixels.  The final canvas preview already renders in pixels.
+    return -pixels
+
+
+def inline_editor_padding(zoom: float) -> tuple[int, int]:
+    """Return the same horizontal and vertical insets as the final preview."""
+    return (
+        max(0, round(TEXT_FRAME_HORIZONTAL_PADDING * zoom)),
+        max(0, round(4.0 * zoom)),
+    )
+
+
 def _slice_text_ranges(
     ranges: list[dict[str, object]], start: int, length: int
 ) -> list[dict[str, object]]:
@@ -5624,14 +5640,15 @@ class DocumentEditorWindow(tk.Toplevel):
     @staticmethod
     def _tk_font_family(family: str) -> str:
         return {
-            "Serif": "Liberation Serif",
-            "Monospace": "Liberation Mono",
+            "Sans-serif": "DejaVu Sans",
+            "Serif": "DejaVu Serif",
+            "Monospace": "DejaVu Sans Mono",
             "Cursive": "Comic Relief",
             "Manuscrite ancienne": "Z003",
             "Inter": "Inter",
             "JetBrains Mono": "JetBrains Mono",
-            "Symboles": "Noto Sans Symbols 2",
-        }.get(family, "Liberation Sans")
+            "Symboles": "DejaVu Sans",
+        }.get(family, "DejaVu Sans")
 
     def _update_font_sample(self) -> None:
         preview = Image.new("RGBA", (92, 26), "#FFFFFF")
@@ -5649,7 +5666,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self, widget: tk.Text, tag: str, item: PageObject, style: dict[str, object]
     ) -> None:
         family = self._tk_font_family(str(style.get("font_family", item.font_family)))
-        size = max(6, round(float(style.get("font_size", item.font_size)) * self.zoom))
+        size = inline_editor_font_size(style.get("font_size", item.font_size), self.zoom)
         bold = bool(style.get("bold", item.bold))
         italic = bool(style.get("italic", item.italic))
         weight = "bold" if bold else "normal"
@@ -5761,18 +5778,21 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         x = self.page_x + item.x * self.zoom
         y = self.page_y + item.y * self.zoom
+        editor_pad_x, editor_pad_y = inline_editor_padding(self.zoom)
         widget = tk.Text(
             self.canvas,
             wrap="word",
             font=(
                 self._tk_font_family(style_source.font_family),
-                max(8, round(style_source.font_size * self.zoom)),
+                inline_editor_font_size(style_source.font_size, self.zoom),
                 "bold italic" if style_source.bold and style_source.italic else "bold" if style_source.bold else "italic" if style_source.italic else "normal",
             ),
             bg=item.fill if item.fill.lower() not in {"", "none", "transparent"} else "white",
             fg=style_source.color,
             relief="flat",
             borderwidth=0,
+            padx=editor_pad_x,
+            pady=editor_pad_y,
             highlightthickness=max(0, round(item.border_width * self.zoom)),
             highlightbackground=item.border_color,
             highlightcolor=item.border_color,

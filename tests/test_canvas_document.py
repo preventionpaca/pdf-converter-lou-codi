@@ -35,6 +35,8 @@ from lou_codi_pdf_converter.ui.document_editor import (
     draw_styled_rectangle,
     edge_coincidence_translation,
     expanded_group_indices,
+    inline_editor_font_size,
+    inline_editor_padding,
     merge_mirrored_outlines,
     normalize_external_text,
     normalize_plain_paste,
@@ -81,6 +83,16 @@ def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None
         {"start": 6, "end": 14, "italic": True, "color": "#FF0000"},
         {"start": 15, "end": 21, "underline": True},
     ]
+
+
+def test_inline_editor_uses_canvas_pixel_metrics_and_insets() -> None:
+    assert inline_editor_font_size(12, 1.0) == -12
+    assert inline_editor_font_size(12, 1.15) == -14
+    assert inline_editor_font_size("invalid", 1.0) == -12
+    assert inline_editor_padding(1.0) == (8, 4)
+    assert inline_editor_padding(1.15) == (9, 5)
+    assert DocumentEditorWindow._tk_font_family("Sans-serif") == "DejaVu Sans"
+    assert DocumentEditorWindow._tk_font_family("Serif") == "DejaVu Serif"
 
 
 def test_control_diagonal_resize_preserves_original_proportions() -> None:
