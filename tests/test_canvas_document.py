@@ -59,6 +59,8 @@ from lou_codi_pdf_converter.ui.document_editor import (
     rotated_rectangle_points,
     rotation_step_for_objects,
     snapped_rotation_delta,
+    stable_table_height_after_cell_edit,
+    table_cell_editor_size,
     text_style_at,
     transform_object_assembly,
     union_axis_aligned_rectangles,
@@ -270,6 +272,16 @@ def test_rich_paste_fallback_replaces_office_symbol_bullets_without_squares() ->
     assert normalize_rich_plain_fallback(source) == (
         "• « Premier point »\n• Deuxième point"
     )
+
+
+def test_imported_table_cell_editor_is_readable_without_exceeding_the_page() -> None:
+    assert table_cell_editor_size(55, 28, 650, 900) == (220, 110)
+    assert table_cell_editor_size(800, 700, 650, 900) == (650, 405)
+
+
+def test_editing_a_verbose_cell_does_not_expand_every_table_row() -> None:
+    assert stable_table_height_after_cell_edit(310, 13) == 312
+    assert stable_table_height_after_cell_edit(600, 13) == 600
 
 
 def test_styled_rectangle_draws_real_gaps_for_dashed_and_dotted_borders() -> None:

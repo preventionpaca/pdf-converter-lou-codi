@@ -207,6 +207,26 @@ def proportional_resize(
     return old_width * scale, old_height * scale
 
 
+def table_cell_editor_size(
+    cell_width: float,
+    cell_height: float,
+    page_width: float,
+    page_height: float,
+) -> tuple[float, float]:
+    """Give even a tiny imported cell a practical, page-bounded editor."""
+    return (
+        min(max(220.0, cell_width), page_width),
+        min(max(110.0, cell_height), page_height * 0.45),
+    )
+
+
+def stable_table_height_after_cell_edit(
+    current_height: float, row_count: int
+) -> float:
+    """Keep one verbose cell from expanding every row in an imported table."""
+    return max(current_height, max(1, row_count) * 24.0)
+
+
 class RichClipboardHTMLParser(HTMLParser):
     """Extract editable text and character styles from office HTML clipboard data."""
 
@@ -995,6 +1015,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.redo_stack: list[CanvasDocument] = []
         self._background_image: ImageTk.PhotoImage | None = None
         self._overlay_images: list[ImageTk.PhotoImage] = []
+        self._text_preview_cache: dict[tuple[object, ...], ImageTk.PhotoImage] = {}
         self._drag_origin: tuple[float, float, float, float] | None = None
         self._resize_origin: tuple[str, float, float, float, float, float, float] | None = None
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
@@ -3367,6 +3388,34 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
         """Render a flat text frame, then rotate its transparent bitmap around its centre."""
+        cache_key = (
+            item.object_id,
+            text,
+            width,
+            height,
+            round(self.zoom, 4),
+            item.font_family,
+            item.font_size,
+            item.bold,
+            item.italic,
+            item.underline,
+            item.strikethrough,
+            item.color,
+            item.fill,
+            item.border_color,
+            item.border_width,
+            item.border_style,
+            item.rotation,
+            repr(item.text_styles),
+            repr(item.text_links),
+            repr(item.paragraph_alignments),
+        )
+        cache = getattr(self, "_text_preview_cache", None)
+        if cache is None:
+            cache = self._text_preview_cache = {}
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
         render_item = copy.copy(item)
         render_item.font_size = safe_number(render_item.font_size, 12.0, minimum=1.0)
         render_item.border_width = safe_number(render_item.border_width, 0.0, minimum=0.0)
@@ -3528,7 +3577,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 resample=Image.Resampling.BICUBIC,
                 fillcolor=(0, 0, 0, 0),
             )
-        return ImageTk.PhotoImage(image)
+        if len(cache) >= 32:
+            cache.pop(next(iter(cache)))
+        picture = ImageTk.PhotoImage(image)
+        cache[cache_key] = picture
+        return picture
 
     def _basic_text_preview(
         self, item: PageObject, text: str, width: int, height: int
@@ -6478,8 +6531,19 @@ class DocumentEditorWindow(tk.Toplevel):
         columns = max(len(candidate) for candidate in cells)
         cell_width = item.width * self.zoom / columns
         cell_height = item.height * self.zoom / rows
-        x = self.page_x + item.x * self.zoom + column * cell_width
-        y = self.page_y + item.y * self.zoom + row * cell_height
+        cell_x = self.page_x + item.x * self.zoom + column * cell_width
+        cell_y = self.page_y + item.y * self.zoom + row * cell_height
+        page_width, page_height = self._page_size()
+        editor_width, editor_height = table_cell_editor_size(
+            cell_width,
+            cell_height,
+            page_width * self.zoom,
+            page_height * self.zoom,
+        )
+        page_right = self.page_x + page_width * self.zoom
+        page_bottom = self.page_y + page_height * self.zoom
+        x = max(self.page_x, min(cell_x, page_right - editor_width))
+        y = max(self.page_y, min(cell_y, page_bottom - editor_height))
         widget = tk.Text(
             self.canvas,
             wrap="word",
@@ -6504,8 +6568,8 @@ class DocumentEditorWindow(tk.Toplevel):
             y,
             window=widget,
             anchor="nw",
-            width=max(70, cell_width),
-            height=max(42, cell_height),
+            width=editor_width,
+            height=editor_height,
             tags=("inline-editor",),
         )
         toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
@@ -7107,7 +7171,9 @@ class DocumentEditorWindow(tk.Toplevel):
             value = normalize_external_text(self.clipboard_get())
         except tk.TclError:
             return None
-        if rich_text and rich_clipboard_matches_plain(rich_text, value):
+        if rich_text and (
+            rich_styles or rich_clipboard_matches_plain(rich_text, value)
+        ):
             value = rich_text
         else:
             rich_styles = []
@@ -7311,12 +7377,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 cell = self._ensure_table_cells(item)[row][column]
                 cell["text"] = value
                 self._sync_table_text(item)
-                line_count = max(1, value.count("\n") + 1)
-                item.height = max(
+                # Editing one verbose imported cell must not multiply the
+                # complete table height by that cell's number of lines.
+                item.height = stable_table_height_after_cell_edit(
                     item.height,
-                    len(item.table_cells) * max(
-                        46.0, line_count * item.font_size * 1.35 + 10
-                    ),
+                    len(item.table_cells),
                 )
                 changed = cell != table_original
             else:
