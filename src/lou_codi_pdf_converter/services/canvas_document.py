@@ -397,7 +397,9 @@ def _draw_object(
                 (rectangle.x0 + rectangle.x1) / 2,
                 (rectangle.y0 + rectangle.y1) / 2,
             )
-            morph = (centre, pymupdf.Matrix(rotation)) if rotation else None
+            # Canvas/Pillow use screen coordinates (positive angles clockwise).
+            # PyMuPDF uses the opposite sign, so mirror the angle, not the page.
+            morph = (centre, pymupdf.Matrix(-rotation)) if rotation else None
             if item.fill.upper() != "#FFFFFF" or item.border_width > 0:
                 page.draw_rect(
                     rectangle,
@@ -647,62 +649,76 @@ def text_frame_line_capacity(frame: PageObject) -> int:
 
 def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
     """Wrap text in page units so flow and on-screen rendering cannot diverge."""
+    return [line for line, _start, _end in wrapped_text_ranges(text, frame)]
+
+
+def wrapped_text_ranges(
+    text: str, frame: PageObject
+) -> list[tuple[str, int, int]]:
+    """Return wrapped lines with their exact offsets in the rich source text."""
     available_width = max(4.0, abs(frame.width) - 2 * TEXT_FRAME_HORIZONTAL_PADDING)
-    lines: list[str] = []
+    lines: list[tuple[str, int, int]] = []
     paragraph_start = 0
     for paragraph in text.split("\n"):
         if not paragraph:
-            lines.append("")
+            lines.append(("", paragraph_start, paragraph_start))
             paragraph_start += 1
             continue
         matches = list(re.finditer(r"\S+", paragraph))
         if not matches:
-            lines.append("")
+            lines.append(("", paragraph_start, paragraph_start))
             paragraph_start += len(paragraph) + 1
             continue
-        current_words: list[str] = []
+        line_start: int | None = None
+        line_end = paragraph_start
         current_width = 0.0
         previous_end = 0
         for match in matches:
             word = match.group(0)
             word_start = paragraph_start + match.start()
+            word_end = paragraph_start + match.end()
             word_width = _styled_text_flow_width(frame, word, word_start)
-            separator = paragraph[previous_end : match.start()] if current_words else ""
+            separator = paragraph[previous_end : match.start()] if line_start is not None else ""
             separator_width = _styled_text_flow_width(
                 frame, separator, paragraph_start + previous_end
             )
             previous_end = match.end()
             candidate_width = current_width + separator_width + word_width
-            if current_words and candidate_width > available_width:
-                lines.append(" ".join(current_words))
-                current_words = []
+            if line_start is not None and candidate_width > available_width:
+                lines.append((text[line_start:line_end], line_start, line_end))
+                line_start = None
                 current_width = 0.0
             if word_width <= available_width:
-                current_words.append(word)
-                current_width = word_width if len(current_words) == 1 else candidate_width
+                if line_start is None:
+                    line_start = word_start
+                    current_width = word_width
+                else:
+                    current_width = candidate_width
+                line_end = word_end
                 continue
-            if current_words:
-                lines.append(" ".join(current_words))
-                current_words = []
+            if line_start is not None:
+                lines.append((text[line_start:line_end], line_start, line_end))
+                line_start = None
                 current_width = 0.0
-            fragment = ""
+            fragment_start = word_start
             fragment_width = 0.0
             for character_index, character in enumerate(word):
                 character_width = _styled_text_flow_width(
                     frame, character, word_start + character_index
                 )
-                if fragment and fragment_width + character_width > available_width:
-                    lines.append(fragment)
-                    fragment = character
+                character_position = word_start + character_index
+                if character_position > fragment_start and fragment_width + character_width > available_width:
+                    lines.append((text[fragment_start:character_position], fragment_start, character_position))
+                    fragment_start = character_position
                     fragment_width = character_width
                 else:
-                    fragment += character
                     fragment_width += character_width
-            if fragment:
-                current_words = [fragment]
+            if fragment_start < word_end:
+                line_start = fragment_start
+                line_end = word_end
                 current_width = fragment_width
-        if current_words:
-            lines.append(" ".join(current_words))
+        if line_start is not None:
+            lines.append((text[line_start:line_end], line_start, line_end))
         paragraph_start += len(paragraph) + 1
     return lines
 

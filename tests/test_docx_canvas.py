@@ -46,6 +46,7 @@ def test_docx_keeps_rotated_textbox_appearance_and_character_styles(tmp_path: Pa
     assert "Texte " in xml
     assert "rouge" in xml
     assert "rotation:30" in xml
+    assert "mso-rotate-with-shape:t" in xml
     assert 'strokeweight="3pt"' in xml
     assert 'dashstyle="dot"' in xml
     assert 'fillcolor="#DCEBFA"' in xml

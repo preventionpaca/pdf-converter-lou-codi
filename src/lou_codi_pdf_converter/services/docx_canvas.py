@@ -315,7 +315,7 @@ def _textbox_xml(
           stroked="{stroked}" strokeweight="{max(0.0, item.border_width):g}pt"
           strokecolor="{item.border_color}" filled="{filled}" fillcolor="{fill}">
           <v:stroke dashstyle="{dash_style}"/>
-          <v:textbox inset="3pt,2pt,3pt,2pt">
+          <v:textbox inset="3pt,2pt,3pt,2pt" style="mso-rotate-with-shape:t">
             <w:txbxContent>
               <w:p>
                 <w:pPr><w:jc w:val="{alignment}"/></w:pPr>

@@ -21,6 +21,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     table_cell_colors,
     text_frame_line_capacity,
     wrapped_text_lines,
+    wrapped_text_ranges,
 )
 from lou_codi_pdf_converter.services.geometry import Segment
 from lou_codi_pdf_converter.ui.document_editor import (
@@ -782,6 +783,19 @@ def test_text_frame_wrap_uses_the_pasted_rich_font_size_and_weight() -> None:
     assert "littoral" not in rich_lines[0]
 
 
+def test_rich_wrapping_keeps_exact_source_offsets_for_preview() -> None:
+    text = "Titre en gras\n• Première phrase très longue qui doit revenir à la ligne"
+    frame = PageObject(
+        "text", 0, 0, 0, 190, 100, text=text, font_size=12,
+        text_styles=[{"start": 0, "end": 13, "font_size": 16, "bold": True}],
+    )
+
+    ranges = wrapped_text_ranges(text, frame)
+
+    assert len(ranges) >= 3
+    assert all(line == text[start:end] for line, start, end in ranges)
+
+
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
     bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")
@@ -1049,7 +1063,7 @@ def test_pdf_export_rotates_text_and_its_border_without_losing_content(tmp_path:
             for line in block.get("lines", [])
         )
         assert text_line["dir"][0] == pytest.approx(math.cos(math.radians(30)), abs=1e-4)
-        assert text_line["dir"][1] == pytest.approx(-math.sin(math.radians(30)), abs=1e-4)
+        assert text_line["dir"][1] == pytest.approx(math.sin(math.radians(30)), abs=1e-4)
         assert page.get_drawings()
 
 

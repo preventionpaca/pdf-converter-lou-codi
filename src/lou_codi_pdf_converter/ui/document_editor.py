@@ -40,6 +40,7 @@ from ..services.canvas_document import (
     text_frame_line_capacity,
     text_frame_line_height,
     wrapped_text_lines,
+    wrapped_text_ranges,
     _font_file,
 )
 from ..services.docx_canvas import export_editable_docx
@@ -3175,16 +3176,11 @@ class DocumentEditorWindow(tk.Toplevel):
             font = ImageFont.truetype(f"{family}{suffix}.ttf", size)
         except OSError:
             font = ImageFont.load_default()
-        lines = wrapped_text_lines(text, render_item)
+        lines = wrapped_text_ranges(text, render_item)
         line_height = text_frame_line_height(render_item) * self.zoom
         visible_lines = text_frame_line_capacity(render_item)
-        search_from = 0
-        for row, line in enumerate(lines[:visible_lines]):
+        for row, (line, line_start, line_end) in enumerate(lines[:visible_lines]):
             py = 4 * self.zoom + row * line_height
-            line_start = text.find(line, search_from) if line else search_from
-            if line_start < 0:
-                line_start = search_from
-            line_end = line_start + len(line)
             boundaries = {line_start, line_end}
             for link in render_item.text_links:
                 boundaries.add(max(line_start, min(line_end, safe_text_offset(link.get("start", 0)))))
@@ -3267,7 +3263,6 @@ class DocumentEditorWindow(tk.Toplevel):
                         fill=color, width=max(1, round(self.zoom)),
                     )
                 cursor_x += displayed_width
-            search_from = max(search_from, line_end)
         rotation = float(render_item.rotation) % 360
         if rotation:
             image = image.rotate(
@@ -6021,7 +6016,8 @@ class DocumentEditorWindow(tk.Toplevel):
         menu.add_separator()
         menu.add_command(label="Couper    Ctrl+X", command=self._cut_inline_text)
         menu.add_command(label="Copier    Ctrl+C", command=self._copy_inline_text)
-        menu.add_command(label="Coller    Ctrl+V", command=self._paste_clean_text_widget)
+        menu.add_command(label="Coller avec mise en forme    Ctrl+V", command=self._paste_clean_text_widget)
+        menu.add_command(label="Coller en texte brut", command=self._paste_plain_text_widget)
         menu.add_command(label="Tout sélectionner    Ctrl+A", command=self._select_all_inline_text)
         menu.add_separator()
         menu.add_command(label="Gras", command=lambda: self._toggle("bold"))
@@ -6836,17 +6832,18 @@ class DocumentEditorWindow(tk.Toplevel):
         widget.focus_set()
 
     def _paste_clean_text_widget(
-        self, event: tk.Event[tk.Text] | None = None
+        self, event: tk.Event[tk.Text] | None = None, *, rich: bool = True
     ) -> str | None:
         """Paste office text with its character styles, or clean plain text."""
         rich_text = ""
         rich_styles: list[dict[str, object]] = []
-        try:
-            html_value = self.selection_get(selection="CLIPBOARD", type="text/html")
-            if html_value:
-                rich_text, rich_styles = parse_rich_clipboard_html(str(html_value))
-        except (tk.TclError, UnicodeError, ValueError):
-            pass
+        if rich:
+            try:
+                html_value = self.selection_get(selection="CLIPBOARD", type="text/html")
+                if html_value:
+                    rich_text, rich_styles = parse_rich_clipboard_html(str(html_value))
+            except (tk.TclError, UnicodeError, ValueError):
+                pass
         try:
             value = normalize_external_text(self.clipboard_get())
         except tk.TclError:
@@ -6894,6 +6891,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_selection_range = None
         widget.focus_set()
         return "break"
+
+    def _paste_plain_text_widget(self) -> str:
+        return self._paste_clean_text_widget(rich=False) or "break"
 
     def _redraw_text_chain(self, root: PageObject) -> None:
         chain_ids = {root.object_id}
@@ -7352,7 +7352,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._crop_box = None
         self._crop_drag_edge = None
         self.canvas.configure(cursor="")
-        self.status.configure(text=f"Image rognée : {cropped.width} × {cropped.height} pixels.")
+        self.status.configure(
+            text=f"Image rognée : {cropped.width} × {cropped.height} pixels. Ctrl+Z restaure l’image précédente."
+        )
         self._render()
 
     def _cancel_visual_crop(self) -> None:
