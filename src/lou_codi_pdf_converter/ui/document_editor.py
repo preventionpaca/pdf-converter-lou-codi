@@ -1211,6 +1211,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("0.5", lambda: self._set_border_width_value(0.5), "Bordure fine"),
                 ("1.5", lambda: self._set_border_width_value(1.5), "Bordure moyenne"),
                 ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
+                ("5", lambda: self._set_border_width_value(5), "Bordure très épaisse"),
                 ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
                 ("···", lambda: self._set_border_style_value("dotted"), "Bordure pointillée"),
                 ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
@@ -1233,6 +1234,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("0.5", lambda: self._set_border_width_value(0.5), "Bordure fine"),
                 ("1.5", lambda: self._set_border_width_value(1.5), "Bordure moyenne"),
                 ("3", lambda: self._set_border_width_value(3), "Bordure épaisse"),
+                ("5", lambda: self._set_border_width_value(5), "Bordure très épaisse"),
                 ("—", lambda: self._set_border_style_value("solid"), "Bordure continue"),
                 ("···", lambda: self._set_border_style_value("dotted"), "Bordure pointillée"),
                 ("---", lambda: self._set_border_style_value("dashed"), "Bordure en tirets"),
@@ -1953,9 +1955,10 @@ class DocumentEditorWindow(tk.Toplevel):
         appearance_menu.add_cascade(label="Fond", menu=fill_menu)
         border_menu = tk.Menu(appearance_menu, tearoff=False)
         border_menu.add_command(label="Sans bordure", command=lambda: self._set_border_width_value(0.0))
-        border_menu.add_command(label="Fine", command=lambda: self._set_border_width_value(0.6))
+        border_menu.add_command(label="Fine", command=lambda: self._set_border_width_value(0.5))
         border_menu.add_command(label="Normale", command=lambda: self._set_border_width_value(1.5))
         border_menu.add_command(label="Épaisse", command=lambda: self._set_border_width_value(3.0))
+        border_menu.add_command(label="Très épaisse", command=lambda: self._set_border_width_value(5.0))
         border_menu.add_separator()
         border_menu.add_command(label="Continue", command=lambda: self._set_border_style_value("solid"))
         border_menu.add_command(label="Tirets", command=lambda: self._set_border_style_value("dashed"))
@@ -2126,7 +2129,7 @@ class DocumentEditorWindow(tk.Toplevel):
             appearance.add_command(label="Couleur du fond…", command=lambda: self._choose_color("fill"))
             appearance.add_separator()
         border = tk.Menu(appearance, tearoff=False)
-        for label, width in (("Aucune", 0.0), ("Fine", 0.6), ("Normale", 1.5), ("Épaisse", 3.0)):
+        for label, width in (("Aucune", 0.0), ("Fine", 0.5), ("Normale", 1.5), ("Épaisse", 3.0), ("Très épaisse", 5.0)):
             border.add_command(label=label, command=lambda value=width: self._set_border_width_value(value))
         border.add_separator()
         border.add_command(label="Continue", command=lambda: self._set_border_style_value("solid"))
@@ -2828,7 +2831,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                 ]
                 self.canvas.create_polygon(
-                    *selection_points, fill="", outline=outline, width=4, tags=tags,
+                    *selection_points, fill="", outline=outline, width=2, dash=(6, 4), tags=tags,
                 )
             elif item.kind != "text":
                 self.canvas.create_rectangle(
@@ -4745,6 +4748,8 @@ class DocumentEditorWindow(tk.Toplevel):
         pointer = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         if not point_hits_rotation_handle(pointer, handle):
             return False
+        if getattr(self, "_editing_widget", None) is not None:
+            self._commit_inline_editor(render=False)
         pivot_x, pivot_y = left + width / 2, top + height / 2
         pointer_x = (pointer[0] - self.page_x) / self.zoom
         pointer_y = (pointer[1] - self.page_y) / self.zoom
@@ -5090,7 +5095,10 @@ class DocumentEditorWindow(tk.Toplevel):
             self._text_draw_start = None
             self.canvas.delete("text-frame-preview")
             self.canvas.configure(cursor="")
-            self._add_object(PageObject("text", self.current_page, left, top, max(40, width), max(30, height)))
+            self._add_object(PageObject(
+                "text", self.current_page, left, top, max(40, width), max(30, height),
+                border_width=1.5,
+            ))
             self.status.configure(text="Zone de texte créée. Saisissez son contenu.")
             self.after_idle(
                 lambda: self._start_inline_text_editor(self.document.objects[self.selected])
@@ -6820,7 +6828,7 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             if item.kind == "text" and self._editing_widget is not None:
                 item.border_color = normalized.upper()
-                item.border_width = max(0.6, item.border_width)
+                item.border_width = max(1.5, item.border_width)
                 self._editing_widget.configure(
                     highlightthickness=max(1, round(item.border_width * self.zoom)),
                     highlightbackground=item.border_color,
@@ -6832,7 +6840,7 @@ class DocumentEditorWindow(tk.Toplevel):
             if item.kind == "text":
                 def apply_text_border(target: PageObject) -> None:
                     target.border_color = normalized.upper()
-                    target.border_width = max(0.6, target.border_width)
+                    target.border_width = max(1.5, target.border_width)
 
                 self._mutate(apply_text_border)
                 return
@@ -6897,9 +6905,9 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             if item.kind == "text" and self._editing_widget is not None:
                 item.border_style = value
-                self._editing_widget.focus_set()
+                self._commit_inline_editor(render=True)
                 self.status.configure(
-                    text="Style de bordure enregistré ; le pointillé apparaît après Terminer."
+                    text="Style de bordure appliqué à la zone. Double-cliquez pour reprendre la saisie."
                 )
                 return
         self._mutate(lambda item: setattr(item, "border_style", value))
