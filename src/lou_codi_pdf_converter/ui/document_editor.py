@@ -1153,6 +1153,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._overlay_images: list[ImageTk.PhotoImage] = []
         self._text_preview_cache: dict[tuple[object, ...], ImageTk.PhotoImage] = {}
         self._zoom_render_after_id: str | None = None
+        self._page_edge_wheel: tuple[int, int, int] | None = None
+        self._rendering = False
         self._drag_origin: tuple[float, float, float, float] | None = None
         self._resize_origin: tuple[str, float, float, float, float, float, float] | None = None
         self._assembly_resize_origin: tuple[float, float, float, float, float, float] | None = None
@@ -1801,6 +1803,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.bind("<Button-4>", lambda event: self._mouse_scroll(event, 1))
         self.canvas.bind("<Button-5>", lambda event: self._mouse_scroll(event, -1))
         self.bind("<KeyPress>", self._modifier_key_event, add="+")
+        self.bind("<KeyPress>", self._table_typing_event, add="+")
         self.bind("<KeyRelease>", self._modifier_key_event, add="+")
         # A palette keeps following the pointer even after it leaves its narrow title bar.
         self.bind("<B1-Motion>", self._drag_tool_palette, add="+")
@@ -2828,6 +2831,12 @@ class DocumentEditorWindow(tk.Toplevel):
         return self.document.page_width, self.document.page_height
 
     def _render(self) -> None:
+        # Tk peut livrer un événement Configure pendant la création d'un grand
+        # PhotoImage. Sans garde, un second rendu repartait au milieu du premier
+        # et doublait brutalement CPU et mémoire, surtout au-delà de 200 %.
+        if self._rendering:
+            return
+        self._rendering = True
         if self._zoom_render_after_id is not None:
             try:
                 self.after_cancel(self._zoom_render_after_id)
@@ -3004,6 +3013,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
         self._show_properties()
         self._update_contextual_ribbon()
+        self._rendering = False
 
     def _update_contextual_ribbon(self) -> None:
         """Only expose commands that apply to the selected object."""
@@ -3074,6 +3084,18 @@ class DocumentEditorWindow(tk.Toplevel):
     def _draw_object(self, index: int, item: PageObject) -> None:
         x, y = self.page_x + item.x * self.zoom, self.page_y + item.y * self.zoom
         w, h = item.width * self.zoom, item.height * self.zoom
+        if self.zoom > 1.6:
+            visible_left = self.canvas.canvasx(0) - 40
+            visible_top = self.canvas.canvasy(0) - 40
+            visible_right = self.canvas.canvasx(self.canvas.winfo_width()) + 40
+            visible_bottom = self.canvas.canvasy(self.canvas.winfo_height()) + 40
+            if (
+                x + w < visible_left
+                or x > visible_right
+                or y + h < visible_top
+                or y > visible_bottom
+            ):
+                return
         tag, selected = f"object:{index}", index in self.selected_indices
         if self._pending_text_link_id and item.kind == "text":
             outline = "#E47D16" if item.object_id == self._pending_text_link_id else "#1E9B66"
@@ -3398,12 +3420,34 @@ class DocumentEditorWindow(tk.Toplevel):
                     outline=outline, width=4 if emphasized else 1, tags=tags,
                 )
             try:
+                crop_box: tuple[int, int, int, int] | None = None
+                if self.zoom > 1.6 and not float(render_item.rotation) % 360:
+                    visible_left = self.canvas.canvasx(0)
+                    visible_top = self.canvas.canvasy(0)
+                    visible_right = self.canvas.canvasx(self.canvas.winfo_width())
+                    visible_bottom = self.canvas.canvasy(self.canvas.winfo_height())
+                    crop_left = max(0, round(visible_left - x) - 24)
+                    crop_top = max(0, round(visible_top - y) - 24)
+                    crop_right = min(round(w), round(visible_right - x) + 24)
+                    crop_bottom = min(round(h), round(visible_bottom - y) + 24)
+                    if crop_right > crop_left and crop_bottom > crop_top:
+                        crop_box = (crop_left, crop_top, crop_right, crop_bottom)
                 picture = self._text_preview(
-                    render_item, displayed_text, max(1, round(w)), max(1, round(h))
+                    render_item,
+                    displayed_text,
+                    max(1, round(w)),
+                    max(1, round(h)),
+                    crop_box=crop_box,
                 )
                 self._overlay_images.append(picture)
+                if crop_box is None:
+                    picture_x, picture_y = x + w / 2, y + h / 2
+                else:
+                    crop_left, crop_top, crop_right, crop_bottom = crop_box
+                    picture_x = x + (crop_left + crop_right) / 2
+                    picture_y = y + (crop_top + crop_bottom) / 2
                 self.canvas.create_image(
-                    x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags
+                    picture_x, picture_y, image=picture, anchor="center", tags=tags
                 )
             except Exception as exc:
                 # Même un ancien document mal formé doit rester borné par son
@@ -3557,7 +3601,15 @@ class DocumentEditorWindow(tk.Toplevel):
             tags=tags,
         )
 
-    def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
+    def _text_preview(
+        self,
+        item: PageObject,
+        text: str,
+        width: int,
+        height: int,
+        *,
+        crop_box: tuple[int, int, int, int] | None = None,
+    ) -> ImageTk.PhotoImage:
         """Render a flat text frame, then rotate its transparent bitmap around its centre."""
         cache_key = (
             item.object_id,
@@ -3580,6 +3632,7 @@ class DocumentEditorWindow(tk.Toplevel):
             repr(item.text_styles),
             repr(item.text_links),
             repr(item.paragraph_alignments),
+            crop_box,
         )
         cache = getattr(self, "_text_preview_cache", None)
         if cache is None:
@@ -3623,16 +3676,28 @@ class DocumentEditorWindow(tk.Toplevel):
             if isinstance(run, dict)
         ]
         render_width, render_height = max(1, width), max(1, height)
+        origin_x = origin_y = 0
+        bitmap_width, bitmap_height = render_width, render_height
+        if crop_box is not None and not float(render_item.rotation) % 360:
+            left, top, right, bottom = crop_box
+            origin_x, origin_y = max(0, left), max(0, top)
+            bitmap_width = max(1, min(render_width, right) - origin_x)
+            bitmap_height = max(1, min(render_height, bottom) - origin_y)
         transparent = not render_item.fill
-        image = Image.new("RGBA", (render_width, render_height), (0, 0, 0, 0))
+        image = Image.new("RGBA", (bitmap_width, bitmap_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         if not transparent:
-            draw.rectangle((0, 0, render_width - 1, render_height - 1), fill=render_item.fill)
+            draw.rectangle((0, 0, bitmap_width - 1, bitmap_height - 1), fill=render_item.fill)
         if render_item.border_width > 0:
             border_width = max(1, round(render_item.border_width * self.zoom))
             draw_styled_rectangle(
                 draw,
-                (border_width // 2, border_width // 2, render_width - 1 - border_width // 2, render_height - 1 - border_width // 2),
+                (
+                    border_width // 2 - origin_x,
+                    border_width // 2 - origin_y,
+                    render_width - 1 - border_width // 2 - origin_x,
+                    render_height - 1 - border_width // 2 - origin_y,
+                ),
                 color=render_item.border_color,
                 width=border_width,
                 style=render_item.border_style,
@@ -3650,6 +3715,8 @@ class DocumentEditorWindow(tk.Toplevel):
         visible_lines = text_frame_line_capacity(render_item)
         for row, (line, line_start, line_end) in enumerate(lines[:visible_lines]):
             py = 4 * self.zoom + row * line_height
+            if py + line_height < origin_y or py > origin_y + bitmap_height:
+                continue
             boundaries = {line_start, line_end}
             for link in render_item.text_links:
                 boundaries.add(max(line_start, min(line_end, safe_text_offset(link.get("start", 0)))))
@@ -3710,22 +3777,40 @@ class DocumentEditorWindow(tk.Toplevel):
                 displayed_width = fragment_width + fragment.count(" ") * extra_space
                 if highlight:
                     draw.rectangle(
-                        (cursor_x, py, cursor_x + displayed_width, min(render_height - 1, py + line_height)),
+                        (
+                            cursor_x - origin_x,
+                            py - origin_y,
+                            cursor_x + displayed_width - origin_x,
+                            min(render_height - 1, py + line_height) - origin_y,
+                        ),
                         fill=highlight,
                     )
                 if extra_space:
-                    character_x = cursor_x
-                    for character in fragment:
-                        draw.text((character_x, py), character, font=fragment_font, fill=color)
-                        character_x += float(draw.textlength(character, font=fragment_font))
-                        if character == " ":
-                            character_x += extra_space
+                    # Dessiner mot par mot plutôt que caractère par caractère.
+                    # Sur les longues clauses justifiées d'un DOCX, l'ancien
+                    # chemin effectuait plusieurs milliers d'appels Pillow à
+                    # chaque zoom ou validation.
+                    fragment_x = cursor_x
+                    for part in re.split(r"( +)", fragment):
+                        if not part:
+                            continue
+                        base_width = float(draw.textlength(part, font=fragment_font))
+                        if part.isspace():
+                            fragment_x += base_width + len(part) * extra_space
+                        else:
+                            draw.text(
+                                (fragment_x - origin_x, py - origin_y),
+                                part,
+                                font=fragment_font,
+                                fill=color,
+                            )
+                            fragment_x += base_width
                 else:
-                    draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
+                    draw.text((cursor_x - origin_x, py - origin_y), fragment, font=fragment_font, fill=color)
                 if linked or bool(fragment_style.get("underline", render_item.underline)):
-                    underline_y = min(render_height - 1, py + fragment_size + 2)
+                    underline_y = min(render_height - 1, py + fragment_size + 2) - origin_y
                     draw.line(
-                        (cursor_x, underline_y, cursor_x + displayed_width, underline_y),
+                        (cursor_x - origin_x, underline_y, cursor_x + displayed_width - origin_x, underline_y),
                         fill="#1769AA" if linked else color,
                         width=max(1, round(self.zoom)),
                     )
@@ -3734,9 +3819,9 @@ class DocumentEditorWindow(tk.Toplevel):
                         "strikethrough", render_item.strikethrough
                     )
                 ):
-                    strike_y = min(render_height - 1, py + fragment_size * 0.55)
+                    strike_y = min(render_height - 1, py + fragment_size * 0.55) - origin_y
                     draw.line(
-                        (cursor_x, strike_y, cursor_x + displayed_width, strike_y),
+                        (cursor_x - origin_x, strike_y, cursor_x + displayed_width - origin_x, strike_y),
                         fill=color, width=max(1, round(self.zoom)),
                     )
                 cursor_x += displayed_width
@@ -4084,6 +4169,31 @@ class DocumentEditorWindow(tk.Toplevel):
             self._draw_rectangle_angle_guides(0x0004 if "control" in self._modifier_keys else 0)
         elif self._drawing_triangle and len(self._triangle_points) == 1:
             self._draw_triangle_angle_guides(0x0004 if "control" in self._modifier_keys else 0)
+
+    def _table_typing_event(self, event: tk.Event[tk.Misc]) -> str | None:
+        """Enter/F2 or direct typing edits the active cell like a spreadsheet."""
+        if self._editing_widget is not None or isinstance(event.widget, (tk.Entry, ttk.Entry, tk.Text)):
+            return None
+        if self.selected is None or self.selected >= len(self.document.objects):
+            return None
+        item = self.document.objects[self.selected]
+        active = self._active_table_cell
+        if item.kind != "table" or active is None or active[0] != item.object_id:
+            return None
+        direct_character = event.char if event.char and event.char.isprintable() else ""
+        if event.keysym not in {"Return", "KP_Enter", "F2"} and not direct_character:
+            return None
+        row, column = active[1], active[2]
+
+        def begin() -> None:
+            self._start_inline_table_cell_editor(item, row, column)
+            if direct_character and self._editing_widget is not None:
+                self._editing_widget.delete("1.0", "end")
+                self._editing_widget.insert("1.0", direct_character)
+                self._editing_widget.mark_set("insert", "end-1c")
+
+        self.after_idle(begin)
+        return "break"
 
     def _constrained_drawing_point(
         self, start: tuple[float, float], x: float, y: float, state: int
@@ -5044,7 +5154,73 @@ class DocumentEditorWindow(tk.Toplevel):
             messagebox.showinfo("Graphique", "Sélectionnez d’abord le tableau qui contient les données.", parent=self)
             return
         table = self.document.objects[self.selected]
-        self._add_object(PageObject("chart", self.current_page, table.x, table.y + table.height + 25, 320, 210, fill=chart_type, source_id=table.object_id))
+        chart = PageObject(
+            "chart", self.current_page, table.x, table.y + table.height + 25,
+            320, 210, fill=chart_type, source_id=table.object_id,
+        )
+        self._add_object(chart)
+        self.after_idle(lambda: self._edit_chart_settings(chart))
+
+    @staticmethod
+    def _chart_values(rows: list[list[str]], series_index: int) -> tuple[str, list[tuple[str, float]]]:
+        if not rows:
+            return "", []
+        columns = max(len(row) for row in rows)
+        series_index = min(max(0, series_index), max(0, columns - 1))
+        header = rows[0][series_index] if series_index < len(rows[0]) else ""
+        start = 1 if any(
+            value and not value.replace(",", ".").replace("-", "", 1).isdigit()
+            for value in rows[0]
+        ) else 0
+        values: list[tuple[str, float]] = []
+        for index, row in enumerate(rows[start:], start=start):
+            try:
+                value = float(row[series_index].replace(",", "."))
+            except (ValueError, IndexError):
+                continue
+            label = row[0] if row and series_index != 0 else str(index - start + 1)
+            values.append((label or str(index - start + 1), value))
+        return header, values
+
+    def _edit_chart_settings(self, item: PageObject) -> None:
+        source = next(
+            (candidate for candidate in self.document.objects if candidate.object_id == item.source_id),
+            None,
+        )
+        rows = self._ensure_table_cells(source) if source and source.kind == "table" else []
+        headers = [str(cell.get("text", "")) or f"Colonne {index + 1}" for index, cell in enumerate(rows[0])] if rows else ["Valeurs"]
+        dialog = tk.Toplevel(self)
+        dialog.title("Paramètres du graphique")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        body = ttk.Frame(dialog, padding=14)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Titre").grid(row=0, column=0, sticky="w", pady=4)
+        title_var = tk.StringVar(value=item.chart_title)
+        ttk.Entry(body, textvariable=title_var, width=34).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(body, text="Série de valeurs").grid(row=1, column=0, sticky="w", pady=4)
+        series_var = tk.StringVar(value=headers[min(max(0, item.chart_series_index), len(headers) - 1)])
+        ttk.Combobox(body, textvariable=series_var, values=headers, state="readonly", width=31).grid(row=1, column=1, sticky="ew", pady=4)
+        legend_var = tk.BooleanVar(value=item.chart_show_legend)
+        values_var = tk.BooleanVar(value=item.chart_show_values)
+        ttk.Checkbutton(body, text="Afficher la légende", variable=legend_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="Afficher les valeurs", variable=values_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+
+        def apply() -> None:
+            self._checkpoint()
+            item.chart_title = title_var.get().strip()
+            item.chart_series_index = headers.index(series_var.get()) if series_var.get() in headers else 0
+            item.chart_show_legend = legend_var.get()
+            item.chart_show_values = values_var.get()
+            dialog.destroy()
+            self._render()
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side="left", padx=4)
+        ttk.Button(buttons, text="Appliquer", command=apply).pack(side="left", padx=4)
+        dialog.bind("<Return>", lambda _event: apply())
+        center_window(dialog, 480, 260)
 
     def _draw_chart_preview(self, item: PageObject, x: float, y: float, width: float, height: float, tags: tuple[str, str]) -> None:
         source = next((candidate for candidate in self.document.objects if candidate.object_id == item.source_id), None)
@@ -5053,32 +5229,46 @@ class DocumentEditorWindow(tk.Toplevel):
             if source and source.kind == "table"
             else []
         )
-        values: list[tuple[str, float]] = []
-        for index, row in enumerate(rows):
-            try:
-                values.append((row[0] or str(index + 1), float(row[-1].replace(",", "."))))
-            except (ValueError, IndexError):
-                continue
+        series_name, values = self._chart_values(rows, item.chart_series_index)
         self.canvas.create_rectangle(x, y, x + width, y + height, fill="white", outline="#72879C", tags=tags)
         if not values:
             self.canvas.create_text(x + width / 2, y + height / 2, text="Aucune donnée numérique", tags=tags)
             return
         colors = ("#2368AF", "#E8642E", "#45A37D", "#F0B738", "#875CB5")
+        top = y + 8
+        if item.chart_title:
+            self.canvas.create_text(x + width / 2, top, text=item.chart_title, anchor="n", font=("Sans", 10, "bold"), tags=tags)
+            top += 20
         if item.fill == "pie":
             total = sum(abs(value) for _, value in values) or 1
             start = 0.0
-            size = min(width, height) * 0.75
-            for index, (_label, value) in enumerate(values):
+            legend_width = width * 0.32 if item.chart_show_legend else 0
+            size = min(width - legend_width, height - (top - y)) * 0.72
+            pie_left = x + 8 + (width - legend_width - size) / 2
+            pie_top = top + (height - (top - y) - size) / 2
+            for index, (label, value) in enumerate(values):
                 extent = 360 * abs(value) / total
-                self.canvas.create_arc(x + (width - size) / 2, y + (height - size) / 2, x + (width + size) / 2, y + (height + size) / 2, start=start, extent=extent, fill=colors[index % len(colors)], outline="white", tags=tags)
+                self.canvas.create_arc(pie_left, pie_top, pie_left + size, pie_top + size, start=start, extent=extent, fill=colors[index % len(colors)], outline="white", tags=tags)
+                if item.chart_show_legend:
+                    legend_x, legend_y = x + width - legend_width + 8, top + index * 18
+                    self.canvas.create_rectangle(legend_x, legend_y + 2, legend_x + 10, legend_y + 12, fill=colors[index % len(colors)], outline="", tags=tags)
+                    suffix = f" — {value:g}" if item.chart_show_values else ""
+                    self.canvas.create_text(legend_x + 14, legend_y, text=f"{label}{suffix}", anchor="nw", font=("Sans", 8), tags=tags)
                 start += extent
         else:
+            if item.chart_show_legend and series_name:
+                self.canvas.create_text(
+                    x + width - 8, top, text=series_name, anchor="ne",
+                    font=("Sans", 8, "italic"), tags=tags,
+                )
             maximum = max(abs(value) for _, value in values) or 1
             gap = width / len(values)
             for index, (label, value) in enumerate(values):
                 bar_height = (height - 30) * abs(value) / maximum
                 self.canvas.create_rectangle(x + index * gap + 5, y + height - 20 - bar_height, x + (index + 1) * gap - 5, y + height - 20, fill=colors[index % len(colors)], outline="", tags=tags)
                 self.canvas.create_text(x + (index + 0.5) * gap, y + height - 10, text=label[:8], font=("Sans", 7), tags=tags)
+                if item.chart_show_values:
+                    self.canvas.create_text(x + (index + 0.5) * gap, y + height - 24 - bar_height, text=f"{value:g}", font=("Sans", 8), tags=tags)
 
     def _make_list(self, numbered: bool) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":
@@ -5502,6 +5692,12 @@ class DocumentEditorWindow(tk.Toplevel):
             self.selected = clicked
             self.selected_indices = {clicked}
             self.after_idle(lambda: self._start_inline_table_cell_editor(item, row, column))
+            return "break"
+        if clicked is not None and self.document.objects[clicked].kind == "chart":
+            item = self.document.objects[clicked]
+            self.selected = clicked
+            self.selected_indices = {clicked}
+            self.after_idle(lambda: self._edit_chart_settings(item))
             return "break"
         if self._last_clicked_index is not None and self._last_clicked_index < len(self.document.objects):
             self.selected = self._last_clicked_index
@@ -11534,7 +11730,34 @@ class DocumentEditorWindow(tk.Toplevel):
         if int(getattr(event, "state", 0)) & 0x0001:
             self.canvas.xview_scroll(units, "units")
         else:
+            before = self.canvas.yview()
             self.canvas.yview_scroll(units, "units")
+            after = self.canvas.yview()
+            at_edge = (direction > 0 and after[0] <= 0.0001) or (
+                direction < 0 and after[1] >= 0.9999
+            )
+            moved = any(abs(first - second) > 1e-6 for first, second in zip(before, after, strict=True))
+            if not at_edge or moved:
+                self._page_edge_wheel = None
+            else:
+                event_time = int(getattr(event, "time", 0))
+                previous = self._page_edge_wheel
+                count = (
+                    previous[1] + 1
+                    if previous and previous[0] == direction and event_time - previous[2] < 900
+                    else 1
+                )
+                self._page_edge_wheel = (direction, count, event_time)
+                target = self.current_page - 1 if direction > 0 else self.current_page + 1
+                if 0 <= target < self.document.page_count:
+                    if count == 1:
+                        self.status.configure(
+                            text="Fin de page — continuez la molette pour changer de page."
+                        )
+                    else:
+                        self._page_edge_wheel = None
+                        self._change_page(-1 if direction > 0 else 1)
+                        self.canvas.yview_moveto(1.0 if direction > 0 else 0.0)
         return "break"
 
     def _zoom_page_width(self) -> None:

@@ -89,6 +89,10 @@ class PageObject:
     table_border_ranges: list[dict[str, float]] = field(default_factory=list)
     points: list[list[float]] = field(default_factory=list)
     dimension_refs: list[dict[str, object]] = field(default_factory=list)
+    chart_title: str = ""
+    chart_series_index: int = 1
+    chart_show_legend: bool = True
+    chart_show_values: bool = True
 
 
 @dataclass
@@ -375,7 +379,7 @@ def _draw_object(
     elif item.kind == "chart":
         source = next((candidate for candidate in objects if candidate.object_id == item.source_id), None)
         if source is not None:
-            _draw_chart(page, rectangle, source, item.fill)
+            _draw_chart(page, rectangle, source, item)
     elif item.kind == "image" and Path(item.image_path).is_file():
         page.insert_image(rectangle, filename=item.image_path, keep_proportion=True, overlay=True)
         if item.border_width > 0:
@@ -1066,27 +1070,45 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
         )
 
 
-def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject, chart_type: str) -> None:
+def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject, chart: PageObject) -> None:
     rows = evaluate_table_cells(source.table_cells) if source.table_cells else evaluate_table(source.text)
+    columns = max((len(row) for row in rows), default=1)
+    series_index = min(max(0, chart.chart_series_index), columns - 1)
+    header = rows[0][series_index] if rows and series_index < len(rows[0]) else ""
+    first_is_header = bool(rows and any(
+        value and not value.replace(",", ".").replace("-", "", 1).isdigit()
+        for value in rows[0]
+    ))
     labels: list[str] = []
     values: list[float] = []
-    for index, row in enumerate(rows):
+    for index, row in enumerate(rows[1:] if first_is_header else rows):
         if not row:
             continue
         try:
-            value = float(row[-1].replace(",", "."))
-        except ValueError:
+            value = float(row[series_index].replace(",", "."))
+        except (ValueError, IndexError):
             continue
-        labels.append(row[0] or str(index + 1))
+        labels.append((row[0] if series_index != 0 else "") or str(index + 1))
         values.append(value)
     if not values:
         page.insert_textbox(rectangle, "Aucune donnée numérique", fontsize=10, align=1, overlay=True)
         return
     colors = ((0.14, 0.41, 0.69), (0.91, 0.39, 0.18), (0.27, 0.64, 0.49), (0.94, 0.72, 0.22), (0.53, 0.36, 0.71))
-    if chart_type == "pie":
+    top = rectangle.y0
+    if chart.chart_title:
+        page.insert_textbox(
+            pymupdf.Rect(rectangle.x0, top, rectangle.x1, top + 18),
+            chart.chart_title, fontsize=10, align=1, overlay=True,
+        )
+        top += 18
+    if chart.fill == "pie":
         total = sum(abs(value) for value in values) or 1
-        center = rectangle.tl + (rectangle.width / 2, rectangle.height / 2)
-        radius = min(rectangle.width, rectangle.height) * 0.38
+        legend_width = rectangle.width * 0.32 if chart.chart_show_legend else 0
+        center = pymupdf.Point(
+            rectangle.x0 + (rectangle.width - legend_width) / 2,
+            top + (rectangle.y1 - top) / 2,
+        )
+        radius = min(rectangle.width - legend_width, rectangle.y1 - top) * 0.36
         angle = 0.0
         for index, value in enumerate(values):
             sweep = 360 * abs(value) / total
@@ -1099,6 +1121,14 @@ def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject,
             shape.draw_polyline(points)
             shape.finish(color=colors[index % len(colors)], fill=colors[index % len(colors)])
             shape.commit(overlay=True)
+            if chart.chart_show_legend:
+                legend = labels[index]
+                if chart.chart_show_values:
+                    legend += f" — {value:g}"
+                page.insert_text(
+                    pymupdf.Point(rectangle.x1 - legend_width + 6, top + 12 + index * 14),
+                    legend, fontsize=7, overlay=True,
+                )
             angle += sweep
     else:
         maximum = max(abs(value) for value in values) or 1
@@ -1109,6 +1139,15 @@ def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject,
             bar = pymupdf.Rect(rectangle.x0 + index * gap + 5, baseline - bar_height, rectangle.x0 + (index + 1) * gap - 5, baseline)
             page.draw_rect(bar, color=colors[index % len(colors)], fill=colors[index % len(colors)], overlay=True)
             page.insert_textbox(pymupdf.Rect(bar.x0, baseline + 2, bar.x1, rectangle.y1), label[:12], fontsize=7, align=1, overlay=True)
+            if chart.chart_show_values:
+                page.insert_textbox(
+                    pymupdf.Rect(bar.x0, bar.y0 - 12, bar.x1, bar.y0),
+                    f"{value:g}", fontsize=7, align=1, overlay=True,
+                )
+        if chart.chart_show_legend and header:
+            page.insert_text(
+                pymupdf.Point(rectangle.x1 - 60, top + 10), header, fontsize=7, overlay=True,
+            )
 
 
 def _rgb(value: str) -> tuple[float, float, float]:
