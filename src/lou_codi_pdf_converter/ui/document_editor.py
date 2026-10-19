@@ -34,10 +34,12 @@ from ..services.canvas_document import (
     PageObject,
     export_canvas_pdf,
     flowed_text_context,
+    fitted_table_cell_text,
     flowed_text_for_object,
     pages_for_object,
     resolve_dynamic_text,
     table_cell_colors,
+    table_grid_offsets,
     text_frame_line_capacity,
     text_frame_line_height,
     wrapped_text_lines,
@@ -525,6 +527,101 @@ def parse_tabular_clipboard(value: str) -> list[list[dict[str, str]]]:
         [{"text": row[column] if column < len(row) else ""} for column in range(columns)]
         for row in rows
     ]
+
+
+class SpreadsheetClipboardHTMLParser(HTMLParser):
+    """Read the editable grid and common Office styles from clipboard HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[dict[str, object]]] = []
+        self.column_widths: list[float] = []
+        self.row_heights: list[float] = []
+        self._row: list[dict[str, object]] | None = None
+        self._cell: dict[str, object] | None = None
+        self._parts: list[str] = []
+        self._cell_width = 0.0
+        self._row_height = 0.0
+
+    @staticmethod
+    def _length(value: str) -> float:
+        match = re.search(r"([0-9.]+)\s*(px|pt)?", value, re.I)
+        if not match:
+            return 0.0
+        number = float(match.group(1))
+        return number * 0.75 if (match.group(2) or "px").lower() == "px" else number
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = {name.lower(): value or "" for name, value in attrs}
+        style_source = attributes.get("style", "")
+        declarations = {
+            name.strip().lower(): value.strip()
+            for declaration in style_source.split(";") if ":" in declaration
+            for name, value in [declaration.split(":", 1)]
+        }
+        if tag.lower() == "tr":
+            self._row = []
+            self._row_height = self._length(declarations.get("height", attributes.get("height", "")))
+        elif tag.lower() in {"td", "th"} and self._row is not None:
+            self._parts = []
+            self._cell_width = self._length(declarations.get("width", attributes.get("width", "")))
+            formula = next((attributes.get(name, "") for name in (
+                "data-formula", "data-sheets-formula", "formula", "x:fmla"
+            ) if attributes.get(name)), "")
+            cell: dict[str, object] = {"text": formula}
+            rich = RichClipboardHTMLParser._css_style(style_source)
+            cell.update({key: value for key, value in rich.items() if key != "highlight"})
+            background = declarations.get("background-color") or declarations.get("background")
+            if background:
+                cell["fill"] = safe_pillow_color(background, "#FFFFFF")
+            align = declarations.get("text-align", attributes.get("align", "")).lower()
+            if align in {"left", "center", "right"}:
+                cell["horizontal_align"] = align
+            vertical = declarations.get("vertical-align", attributes.get("valign", "")).lower()
+            if vertical in {"top", "middle", "bottom"}:
+                cell["vertical_align"] = vertical
+            border = declarations.get("border", "")
+            border_width = self._length(border)
+            if border_width:
+                cell["border_width"] = border_width
+            color_match = re.search(r"(#[0-9a-f]{3,8}|rgb\([^)]*\))", border, re.I)
+            if color_match:
+                cell["border_color"] = safe_pillow_color(color_match.group(1), "#72879C")
+            self._cell = cell
+        elif tag.lower() == "br" and self._cell is not None:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._parts.append(normalize_external_text(data))
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in {"td", "th"} and self._cell is not None and self._row is not None:
+            if not str(self._cell.get("text", "")).startswith("="):
+                self._cell["text"] = "".join(self._parts).strip()
+            self._row.append(self._cell)
+            column = len(self._row) - 1
+            while len(self.column_widths) <= column:
+                self.column_widths.append(0.0)
+            self.column_widths[column] = max(self.column_widths[column], self._cell_width)
+            self._cell = None
+        elif tag.lower() == "tr" and self._row is not None:
+            self.rows.append(self._row)
+            self.row_heights.append(self._row_height)
+            self._row = None
+
+
+def parse_tabular_clipboard_html(
+    value: str,
+) -> tuple[list[list[dict[str, object]]], list[float], list[float]]:
+    parser = SpreadsheetClipboardHTMLParser()
+    parser.feed(extract_clipboard_html(value))
+    columns = max((len(row) for row in parser.rows), default=0)
+    if not parser.rows or columns < 2:
+        return [], [], []
+    for row in parser.rows:
+        row.extend({"text": ""} for _ in range(columns - len(row)))
+    return parser.rows, parser.column_widths, parser.row_heights
 
 
 def objects_bounds(objects: list[PageObject]) -> tuple[float, float, float, float]:
@@ -2965,25 +3062,50 @@ class DocumentEditorWindow(tk.Toplevel):
             cells = self._ensure_table_cells(item)
             rows = evaluate_table_cells(cells)
             columns = max((len(row) for row in rows), default=1)
-            rh, cw = h / max(1, len(rows)), w / max(1, columns)
+            row_offsets = table_grid_offsets(item.table_row_heights, len(rows), h)
+            column_offsets = table_grid_offsets(item.table_column_widths, columns, w)
             for row_index, row in enumerate(rows):
                 for column_index in range(columns):
                     merge = self._table_merge_for_cell(item, row_index, column_index)
                     if merge and (row_index, column_index) != (merge[0], merge[1]):
                         continue
                     row_span, column_span = (merge[2], merge[3]) if merge else (1, 1)
-                    cx, cy = x + column_index * cw, y + row_index * rh
-                    cell_w, cell_h = cw * column_span, rh * row_span
-                    cell_fill, cell_text_color = table_cell_colors(item.table_style, row_index)
+                    cx = x + column_offsets[column_index]
+                    cy = y + row_offsets[row_index]
+                    cell_w = column_offsets[column_index + column_span] - column_offsets[column_index]
+                    cell_h = row_offsets[row_index + row_span] - row_offsets[row_index]
+                    metadata = cells[row_index][column_index]
+                    default_fill, cell_text_color = table_cell_colors(item.table_style, row_index)
+                    cell_fill = str(metadata.get("fill", default_fill))
                     self.canvas.create_rectangle(
                         cx, cy, cx + cell_w, cy + cell_h,
-                        fill=cell_fill, outline="", tags=tags,
+                        fill=cell_fill,
+                        outline=str(metadata.get("border_color", "")),
+                        width=max(0, round(float(metadata.get("border_width", 0) or 0) * self.zoom)),
+                        tags=tags,
                     )
                     value = row[column_index] if column_index < len(row) else ""
-                    metadata = cells[row_index][column_index]
                     image_path = metadata.get("image_path", "")
                     vertical_align = metadata.get("vertical_align", "top")
                     horizontal_align = metadata.get("horizontal_align", "left")
+                    cell_font_size = float(metadata.get("font_size", item.font_size) or item.font_size)
+                    value, cell_font_size = fitted_table_cell_text(
+                        value,
+                        cell_w / self.zoom,
+                        cell_h / self.zoom,
+                        cell_font_size,
+                        bold=bool(metadata.get("bold", False)),
+                        italic=bool(metadata.get("italic", False)),
+                    )
+                    cell_font_style = " ".join(
+                        name
+                        for name, enabled in (
+                            ("bold", metadata.get("bold")),
+                            ("italic", metadata.get("italic")),
+                            ("underline", metadata.get("underline")),
+                        )
+                        if enabled
+                    ) or "normal"
                     text_x = cx + 4 if horizontal_align == "left" else cx + cell_w / 2 if horizontal_align == "center" else cx + cell_w - 4
                     text_y = cy + 3 if vertical_align == "top" else cy + cell_h / 2 if vertical_align == "middle" else cy + cell_h - 3
                     text_anchor = {
@@ -3005,8 +3127,8 @@ class DocumentEditorWindow(tk.Toplevel):
                     hyperlink = metadata.get("hyperlink", "")
                     self.canvas.create_text(
                         text_x, text_y, text=value, anchor=text_anchor, width=max(5, cell_w - 8), justify=horizontal_align,
-                        fill="#7FDBFF" if hyperlink and row_index == 0 and item.table_style != "plain" else "#1769AA" if hyperlink else cell_text_color,
-                        font=("Sans", max(7, round(item.font_size * self.zoom)), "underline" if hyperlink else "normal"),
+                        fill="#7FDBFF" if hyperlink and row_index == 0 and item.table_style != "plain" else "#1769AA" if hyperlink else str(metadata.get("color", cell_text_color)),
+                        font=("Sans", max(5, round(cell_font_size * self.zoom)), "underline" if hyperlink else cell_font_style),
                         tags=tags,
                     )
                     active_cell = self._active_table_cell
@@ -3029,20 +3151,20 @@ class DocumentEditorWindow(tk.Toplevel):
             border_color = item.border_color
             if inner_width:
                 for column in range(1, columns):
-                    grid_x = x + column * cw
+                    grid_x = x + column_offsets[column]
                     for row in range(len(rows)):
                         if not self._table_grid_hidden(item, row, column - 1, row, column):
-                            self.canvas.create_line(grid_x, y + row * rh, grid_x, y + (row + 1) * rh, fill=border_color, width=inner_width, tags=tags)
+                            self.canvas.create_line(grid_x, y + row_offsets[row], grid_x, y + row_offsets[row + 1], fill=border_color, width=inner_width, tags=tags)
                 for row in range(1, len(rows)):
-                    grid_y = y + row * rh
+                    grid_y = y + row_offsets[row]
                     row_width = item.table_row_border_widths.get(str(row - 1), item.table_inner_border_width)
                     for column in range(columns):
                         if not self._table_grid_hidden(item, row - 1, column, row, column):
-                            self.canvas.create_line(x + column * cw, grid_y, x + (column + 1) * cw, grid_y, fill=border_color, width=max(1, round(row_width * self.zoom)), tags=tags)
+                            self.canvas.create_line(x + column_offsets[column], grid_y, x + column_offsets[column + 1], grid_y, fill=border_color, width=max(1, round(row_width * self.zoom)), tags=tags)
             for row_text, row_width in item.table_row_border_widths.items():
                 row = int(row_text)
                 if 0 <= row < len(rows):
-                    for grid_y in (y + row * rh, y + (row + 1) * rh):
+                    for grid_y in (y + row_offsets[row], y + row_offsets[row + 1]):
                         self.canvas.create_line(x, grid_y, x + w, grid_y, fill=border_color, width=max(1, round(row_width * self.zoom)), tags=tags)
             for border_range in item.table_border_ranges:
                 left = int(border_range.get("left", 0))
@@ -3051,8 +3173,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 bottom = int(border_range.get("bottom", top))
                 line_width = max(1, round(float(border_range.get("width", 1.5)) * self.zoom))
                 self.canvas.create_rectangle(
-                    x + left * cw, y + top * rh,
-                    x + (right + 1) * cw, y + (bottom + 1) * rh,
+                    x + column_offsets[left], y + row_offsets[top],
+                    x + column_offsets[right + 1], y + row_offsets[bottom + 1],
                     fill="", outline=border_color, width=line_width, tags=tags,
                 )
             if item.table_outer_border_width > 0:
@@ -6127,11 +6249,27 @@ class DocumentEditorWindow(tk.Toplevel):
         toolbar_height = link_toolbar.winfo_reqheight()
         page_right = self.page_x + self._page_size()[0] * self.zoom
         page_bottom = self.page_y + self._page_size()[1] * self.zoom
-        toolbar_x = max(self.page_x, min(x, page_right - toolbar_width))
+        visible_left = self.canvas.canvasx(0)
+        visible_top = self.canvas.canvasy(0)
+        visible_right = self.canvas.canvasx(self.canvas.winfo_width())
+        visible_bottom = self.canvas.canvasy(self.canvas.winfo_height())
+        toolbar_x = max(
+            self.page_x,
+            visible_left,
+            min(x, page_right - toolbar_width, visible_right - toolbar_width),
+        )
         toolbar_y = y - toolbar_height - 6
-        if toolbar_y < self.page_y:
+        if toolbar_y < max(self.page_y, visible_top):
             toolbar_y = y + max(35, item.height * self.zoom) + 6
-        toolbar_y = max(self.page_y, min(toolbar_y, page_bottom - toolbar_height))
+        toolbar_y = max(
+            self.page_y,
+            visible_top,
+            min(
+                toolbar_y,
+                page_bottom - toolbar_height,
+                visible_bottom - toolbar_height,
+            ),
+        )
         self.canvas.create_window(
             toolbar_x,
             toolbar_y,
@@ -6495,8 +6633,11 @@ class DocumentEditorWindow(tk.Toplevel):
         columns = max(1, max((len(row) for row in cells), default=1))
         page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
         page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
-        column = min(columns - 1, max(0, int((page_x - item.x) / max(1e-9, item.width) * columns)))
-        row = min(rows - 1, max(0, int((page_y - item.y) / max(1e-9, item.height) * rows)))
+        column_offsets = table_grid_offsets(item.table_column_widths, columns, item.width)
+        row_offsets = table_grid_offsets(item.table_row_heights, rows, item.height)
+        local_x, local_y = page_x - item.x, page_y - item.y
+        column = next((index for index in range(columns) if local_x < column_offsets[index + 1]), columns - 1)
+        row = next((index for index in range(rows) if local_y < row_offsets[index + 1]), rows - 1)
         merge = self._table_merge_for_cell(item, row, column)
         return (merge[0], merge[1]) if merge else (row, column)
 
@@ -6529,10 +6670,12 @@ class DocumentEditorWindow(tk.Toplevel):
         cell = cells[row][column]
         rows = len(cells)
         columns = max(len(candidate) for candidate in cells)
-        cell_width = item.width * self.zoom / columns
-        cell_height = item.height * self.zoom / rows
-        cell_x = self.page_x + item.x * self.zoom + column * cell_width
-        cell_y = self.page_y + item.y * self.zoom + row * cell_height
+        column_offsets = table_grid_offsets(item.table_column_widths, columns, item.width * self.zoom)
+        row_offsets = table_grid_offsets(item.table_row_heights, rows, item.height * self.zoom)
+        cell_width = column_offsets[column + 1] - column_offsets[column]
+        cell_height = row_offsets[row + 1] - row_offsets[row]
+        cell_x = self.page_x + item.x * self.zoom + column_offsets[column]
+        cell_y = self.page_y + item.y * self.zoom + row_offsets[row]
         page_width, page_height = self._page_size()
         editor_width, editor_height = table_cell_editor_size(
             cell_width,
@@ -6573,6 +6716,13 @@ class DocumentEditorWindow(tk.Toplevel):
             tags=("inline-editor",),
         )
         toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
+        tk.Label(
+            toolbar,
+            text=f"Cellule {row + 1},{column + 1}",
+            bg="#D8E4F0",
+            fg="#193B66",
+            padx=6,
+        ).pack(side="left", padx=2, pady=2)
         tk.Button(
             toolbar, text="🔗 Lien", relief="flat",
             command=lambda: self._set_table_cell_link(item, row, column),
@@ -6633,8 +6783,27 @@ class DocumentEditorWindow(tk.Toplevel):
         tk.Button(
             toolbar, text="✓ Terminer", relief="flat", command=self._commit_inline_editor,
         ).pack(side="left", padx=2, pady=2)
+        toolbar.update_idletasks()
+        toolbar_width = toolbar.winfo_reqwidth()
+        toolbar_height = toolbar.winfo_reqheight()
+        visible_left = self.canvas.canvasx(0)
+        visible_top = self.canvas.canvasy(0)
+        visible_right = self.canvas.canvasx(self.canvas.winfo_width())
+        toolbar_x = max(
+            self.page_x,
+            visible_left,
+            min(x, page_right - toolbar_width, visible_right - toolbar_width),
+        )
+        toolbar_y = y - toolbar_height - 4
+        if toolbar_y < max(self.page_y, visible_top):
+            toolbar_y = y + editor_height + 4
+        toolbar_y = max(self.page_y, visible_top, min(toolbar_y, page_bottom - toolbar_height))
         self.canvas.create_window(
-            x, max(self.page_y, y - 31), window=toolbar, anchor="nw", tags=("inline-editor",)
+            toolbar_x,
+            toolbar_y,
+            window=toolbar,
+            anchor="nw",
+            tags=("inline-editor",),
         )
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor() or "break")
         widget.bind("<Escape>", lambda _event: self._commit_inline_editor() or "break")
@@ -6891,26 +7060,42 @@ class DocumentEditorWindow(tk.Toplevel):
             self.status.configure(text="Un tableau doit conserver au moins une colonne.")
             return
         self._checkpoint()
-        old_row_height = item.height / max(1, rows)
-        old_column_width = item.width / max(1, columns)
+        old_row_height = (
+            item.table_row_heights[row]
+            if len(item.table_row_heights) == rows
+            else item.height / max(1, rows)
+        )
+        old_column_width = (
+            item.table_column_widths[column]
+            if len(item.table_column_widths) == columns
+            else item.width / max(1, columns)
+        )
         if operation.startswith("insert_row"):
             index = row if operation.endswith("before") else row + 1
             cells.insert(index, [self._empty_table_cell() for _ in range(columns)])
+            if len(item.table_row_heights) == rows:
+                item.table_row_heights.insert(index, old_row_height)
             item.height += old_row_height
             row = index
         elif operation == "delete_row":
             cells.pop(row)
+            if len(item.table_row_heights) == rows:
+                item.table_row_heights.pop(row)
             item.height = max(24.0, item.height - old_row_height)
             row = min(row, len(cells) - 1)
         elif operation.startswith("insert_column"):
             index = column if operation.endswith("before") else column + 1
             for candidate in cells:
                 candidate.insert(index, self._empty_table_cell())
+            if len(item.table_column_widths) == columns:
+                item.table_column_widths.insert(index, old_column_width)
             item.width += old_column_width
             column = index
         elif operation == "delete_column":
             for candidate in cells:
                 candidate.pop(column)
+            if len(item.table_column_widths) == columns:
+                item.table_column_widths.pop(column)
             item.width = max(24.0, item.width - old_column_width)
             column = min(column, len(cells[0]) - 1)
         else:
@@ -7541,8 +7726,8 @@ class DocumentEditorWindow(tk.Toplevel):
             ):
                 selection = self._editing_selection_range
                 if selection is None:
-                    start_index = widget.index("insert linestart")
-                    end_index = widget.index("insert lineend")
+                    start_index = widget.index("insert display linestart")
+                    end_index = widget.index("insert display lineend")
                 else:
                     start_offset, end_offset = selection
                     start_index = widget.index(f"1.0 + {start_offset} chars linestart")
@@ -8235,14 +8420,24 @@ class DocumentEditorWindow(tk.Toplevel):
         if text_value == "LOUCODI_OBJECTS" and self._object_clipboard:
             self._paste_objects()
             return
-        table_cells = parse_tabular_clipboard(text_value)
+        rich_table_cells: list[list[dict[str, object]]] = []
+        column_widths: list[float] = []
+        row_heights: list[float] = []
+        html_value = self._clipboard_html()
+        if html_value:
+            rich_table_cells, column_widths, row_heights = parse_tabular_clipboard_html(html_value)
+        table_cells = rich_table_cells or parse_tabular_clipboard(text_value)
         if table_cells:
             rows, columns = len(table_cells), len(table_cells[0])
+            natural_width = sum(column_widths) if any(column_widths) else columns * 105.0
+            natural_height = sum(row_heights) if any(row_heights) else rows * 38.0
             self._add_object(PageObject(
                 "table", self.current_page, 70, 80,
-                min(500.0, max(180.0, columns * 105.0)),
-                min(520.0, max(70.0, rows * 38.0)),
+                min(500.0, max(180.0, natural_width)),
+                min(520.0, max(70.0, natural_height)),
                 table_cells=table_cells, font_size=10,
+                table_column_widths=column_widths,
+                table_row_heights=row_heights,
             ))
             self.status.configure(text=f"Tableau modifiable collé : {rows} ligne(s) × {columns} colonne(s).")
             return

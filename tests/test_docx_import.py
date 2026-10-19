@@ -86,6 +86,10 @@ def test_docx_import_keeps_tables_merges_and_cell_images_editable(
     document = Document()
     document.add_paragraph("Texte avant le tableau")
     table = document.add_table(rows=2, cols=2)
+    table.columns[0].width = Pt(90)
+    table.columns[1].width = Pt(180)
+    table.rows[0].height = Pt(24)
+    table.rows[1].height = Pt(48)
     heading = table.cell(0, 0).merge(table.cell(0, 1))
     heading.text = "En-tête fusionné"
     heading.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -107,6 +111,8 @@ def test_docx_import_keeps_tables_merges_and_cell_images_editable(
     assert imported_table.table_cells[1][0]["text"] == "Valeur modifiable"
     assert imported_table.table_cells[0][1]["text"] == ""
     assert imported_table.table_merges == [[0, 0, 1, 2]]
+    assert imported_table.table_column_widths == [90.0, 180.0]
+    assert imported_table.table_row_heights == [24.0, 48.0]
     cell_image = Path(imported_table.table_cells[1][1]["image_path"])
     assert cell_image.is_file()
     assert Image.open(cell_image).size == (80, 40)

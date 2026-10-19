@@ -37,6 +37,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     draw_styled_rectangle,
     edge_coincidence_translation,
     extract_clipboard_html,
+    fitted_table_cell_text,
     expanded_group_indices,
     inline_editor_font_size,
     inline_editor_padding,
@@ -47,6 +48,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     objects_bounds,
     paragraph_alignment_at,
     parse_tabular_clipboard,
+    parse_tabular_clipboard_html,
     parse_rich_clipboard_html,
     proportional_resize,
     point_hits_rotation_handle,
@@ -1281,6 +1283,23 @@ def test_pdf_export_rotates_text_and_its_border_without_losing_content(tmp_path:
         assert page.get_drawings()
 
 
+def test_pdf_export_retries_a_tight_word_text_frame_instead_of_leaving_it_blank(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "cadre-serre.pdf"
+    document = CanvasDocument(objects=[PageObject(
+        "text", 0, 20, 20, 220, 28,
+        text="Une première ligne assez longue\nUne deuxième ligne assez longue",
+        font_size=12,
+        text_line_height=12,
+    )])
+
+    export_canvas_pdf(document, target)
+
+    with pymupdf.open(target) as pdf:
+        assert "Une première ligne" in pdf[0].get_text()
+
+
 def test_layout_rich_objects_use_quarter_turns_for_guided_rotation() -> None:
     assert rotation_step_for_objects([PageObject("text", 0, 0, 0, 100, 40)], 15) == 15
     assert rotation_step_for_objects([PageObject("table", 0, 0, 0, 100, 40)], 5) == 90
@@ -1356,6 +1375,40 @@ def test_spreadsheet_clipboard_becomes_an_editable_table() -> None:
         ["Écrou", "8"],
     ]
     assert parse_tabular_clipboard("Un texte ordinaire") == []
+
+
+def test_spreadsheet_html_clipboard_keeps_formula_styles_and_dimensions() -> None:
+    html = """
+    <table><tr style="height:24pt">
+      <td style="width:90pt;background-color:#fff2cc;font-weight:bold;border:2px solid #000000">A</td>
+      <td style="width:72pt;text-align:right" data-formula="=A1+2">3</td>
+    </tr></table>
+    """
+
+    cells, widths, heights = parse_tabular_clipboard_html(html)
+
+    assert cells[0][0]["text"] == "A"
+    assert cells[0][0]["bold"] is True
+    assert str(cells[0][0]["fill"]).upper() == "#FFF2CC"
+    assert cells[0][0]["border_width"] == 1.5
+    assert cells[0][1]["text"] == "=A1+2"
+    assert cells[0][1]["horizontal_align"] == "right"
+    assert widths == [90.0, 72.0]
+    assert heights == [24.0]
+
+
+def test_verbose_table_cell_is_fitted_and_clipped_to_its_own_rectangle() -> None:
+    text, size = fitted_table_cell_text(
+        "Informations financières très longues qui ne doivent pas déborder",
+        70,
+        18,
+        12,
+        bold=True,
+    )
+
+    assert size == 4
+    assert text.endswith("…")
+    assert text.count("\n") == 1
 
 
 def test_image_rotation_and_symmetry_are_baked_into_pixels(tmp_path: Path) -> None:

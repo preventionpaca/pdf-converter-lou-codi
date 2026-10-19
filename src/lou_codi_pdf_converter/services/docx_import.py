@@ -9,6 +9,8 @@ from pathlib import Path
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml.ns import qn
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from .canvas_document import (
     A4_HEIGHT,
@@ -16,6 +18,7 @@ from .canvas_document import (
     CanvasDocument,
     PageObject,
     text_frame_line_capacity,
+    text_frame_line_height,
     wrapped_text_lines,
 )
 
@@ -168,22 +171,32 @@ def _embedded_image_queues(source: object) -> dict[str, deque[dict[str, object]]
 def _table_cell_data(
     table: object,
     image_queues: dict[str, deque[dict[str, object]]],
-) -> tuple[list[list[dict[str, str]]], list[list[int]], float]:
+) -> tuple[
+    list[list[dict[str, object]]],
+    list[list[int]],
+    float,
+    list[float],
+    list[float],
+]:
     """Convert a Word table to Lou Còdi's editable grid and merge metadata."""
     rows = list(getattr(table, "rows", ()))
     column_count = max((len(row.cells) for row in rows), default=1)
-    cells: list[list[dict[str, str]]] = []
-    anchors: dict[int, tuple[int, int]] = {}
-    coordinates: dict[int, set[tuple[int, int]]] = defaultdict(set)
+    cells: list[list[dict[str, object]]] = []
+    # Key by the actual XML cell, not ``id(cell._tc)``.  The temporary
+    # python-docx wrappers are released between rows and CPython can reuse an
+    # integer id immediately, which used to merge unrelated cells and erase
+    # their contents in complex forms.
+    anchors: dict[object, tuple[int, int]] = {}
+    coordinates: dict[object, set[tuple[int, int]]] = defaultdict(set)
     font_sizes: list[float] = []
     for row_index, row in enumerate(rows):
-        output_row: list[dict[str, str]] = []
+        output_row: list[dict[str, object]] = []
         for column_index in range(column_count):
             if column_index >= len(row.cells):
                 output_row.append({"text": "", "hyperlink": "", "image_path": ""})
                 continue
             cell = row.cells[column_index]
-            cell_key = id(cell._tc)
+            cell_key = cell._tc
             coordinates[cell_key].add((row_index, column_index))
             anchor = anchors.setdefault(cell_key, (row_index, column_index))
             if anchor != (row_index, column_index):
@@ -211,13 +224,44 @@ def _table_cell_data(
                     size = getattr(run.font, "size", None)
                     if size is not None:
                         font_sizes.append(float(size.pt))
+            visible_run = next(
+                (
+                    (paragraph, run)
+                    for paragraph in cell.paragraphs
+                    for run in paragraph.runs
+                    if run.text.strip()
+                ),
+                None,
+            )
+            cell_style = (
+                _run_style(
+                    visible_run[1],
+                    visible_run[0],
+                    paragraph_defaults=_style_font_defaults(visible_run[0].style),
+                )
+                if visible_run
+                else {}
+            )
+            if visible_run:
+                direct_size = getattr(visible_run[1].font, "size", None)
+                style_size = _style_font_defaults(visible_run[0].style).get("size")
+                if direct_size is None and style_size is None:
+                    # Word table templates often inherit an 8 pt base size.
+                    # Treating an unspecified run as 12 pt made labels such as
+                    # “N° SIRET” overflow across several rows.
+                    cell_style["font_size"] = 8.0
             output_row.append(
                 {
-                    "text": cell.text,
+                    "text": cell.text.lstrip("\n"),
                     "hyperlink": "",
                     "image_path": image_path,
                     "horizontal_align": horizontal,
                     "vertical_align": vertical,
+                    "font_size": cell_style.get("font_size", 9.0),
+                    "bold": bool(cell_style.get("bold", False)),
+                    "italic": bool(cell_style.get("italic", False)),
+                    "underline": bool(cell_style.get("underline", False)),
+                    "color": str(cell_style.get("color", "#000000")),
                 }
             )
         cells.append(output_row)
@@ -236,10 +280,22 @@ def _table_cell_data(
         }:
             merges.append([top, left, bottom - top + 1, right - left + 1])
     typical_font_size = sorted(font_sizes)[len(font_sizes) // 2] if font_sizes else 9.0
+    column_widths = [
+        float(column.width.pt) if column.width is not None else 1.0
+        for column in getattr(table, "columns", ())
+    ]
+    row_heights = [
+        float(row.height.pt) if row.height is not None else 0.0
+        for row in rows
+    ]
+    if not row_heights or any(height <= 0 for height in row_heights):
+        row_heights = []
     return (
         cells or [[{"text": "", "hyperlink": "", "image_path": ""}]],
         merges,
         typical_font_size,
+        column_widths,
+        row_heights,
     )
 
 
@@ -287,8 +343,9 @@ def _imported_table_objects(
         scale = min(1.0, available / max(1.0, sum(estimates)))
         cursor_y = margin_top
         for index, estimate in zip(indices, estimates, strict=True):
-            cells, merges, font_size = converted[index]
-            table_height = max(40.0, estimate * scale)
+            cells, merges, font_size, column_widths, row_heights = converted[index]
+            source_height = sum(row_heights) if row_heights else estimate
+            table_height = max(40.0, source_height * scale)
             result.append(
                 PageObject(
                     "table",
@@ -304,6 +361,8 @@ def _imported_table_objects(
                     font_size=font_size,
                     table_cells=cells,
                     table_merges=merges,
+                    table_column_widths=column_widths,
+                    table_row_heights=row_heights,
                 )
             )
             cursor_y += table_height + 12.0
@@ -366,6 +425,7 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
     counters: dict[str, int] = {}
     text_length = 0
     character_style_cache: dict[str, dict[str, object]] = {}
+    paragraph_ranges: dict[object, tuple[int, int]] = {}
     alignment_names = {0: "left", 1: "center", 2: "right", 3: "justify", 4: "justify"}
     for paragraph in source.paragraphs:
         if parts:
@@ -413,6 +473,7 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
                 parts.append(spacer)
                 text_length += len(spacer)
         paragraph_end = text_length
+        paragraph_ranges[paragraph._p] = (paragraph_start, paragraph_end)
         alignment = alignment_names.get(int(paragraph.alignment), "left") if paragraph.alignment is not None else "left"
         if alignment != "left" and paragraph_end > paragraph_start:
             alignments.append(
@@ -427,6 +488,232 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
         font_family=base_family, font_size=base_size,
         text_styles=styles, paragraph_alignments=alignments,
     )
+    # Plain documents keep a single linked text flow.  When tables are present,
+    # however, a full-page flow followed by independently positioned tables
+    # necessarily overlaps.  Compose the Word body in source order instead.
+    if source.tables:
+        converted_tables = {
+            table._tbl: _table_cell_data(table, image_queues)
+            for table in source.tables
+        }
+        blocks: list[tuple[str, object]] = []
+        paragraph_group: list[Paragraph] = []
+
+        def flush_paragraphs() -> None:
+            if paragraph_group:
+                blocks.append(("text", list(paragraph_group)))
+                paragraph_group.clear()
+
+        for block in source.iter_inner_content():
+            if isinstance(block, Paragraph):
+                paragraph_group.append(block)
+            elif isinstance(block, Table):
+                flush_paragraphs()
+                blocks.append(("table", block))
+        flush_paragraphs()
+
+        objects: list[PageObject] = []
+        page = 0
+        cursor_y = margin_top
+        content_bottom = page_height - margin_bottom
+        block_gap = 8.0
+
+        def next_page() -> None:
+            nonlocal page, cursor_y
+            page += 1
+            cursor_y = margin_top
+
+        for kind, value in blocks:
+            if kind == "table":
+                (
+                    cells,
+                    merges,
+                    table_font_size,
+                    column_widths,
+                    row_heights,
+                ) = converted_tables[value._tbl]
+                estimated = _estimated_table_height(cells, table_font_size)
+                maximum_height = max(40.0, content_bottom - margin_top)
+                table_height = min(
+                    sum(row_heights) if row_heights else estimated,
+                    maximum_height,
+                )
+                if cursor_y > margin_top and cursor_y + table_height > content_bottom:
+                    next_page()
+                objects.append(
+                    PageObject(
+                        "table",
+                        page,
+                        margin_left,
+                        cursor_y,
+                        width,
+                        table_height,
+                        text="\n".join(
+                            "\t".join(
+                                cell.get("text", "").replace("\n", " ")
+                                for cell in row
+                            )
+                            for row in cells
+                        ),
+                        font_size=table_font_size,
+                        table_cells=cells,
+                        table_merges=merges,
+                        table_column_widths=column_widths,
+                        table_row_heights=row_heights,
+                    )
+                )
+                cursor_y += table_height + block_gap
+                if cursor_y >= content_bottom - 20.0:
+                    next_page()
+                continue
+
+            paragraphs = value
+            ranges = [paragraph_ranges[paragraph._p] for paragraph in paragraphs]
+            group_start, group_end = ranges[0][0], ranges[-1][1]
+            group_text = text[group_start:group_end]
+            if not group_text.strip():
+                cursor_y = min(content_bottom, cursor_y + base_size * 1.35)
+                continue
+
+            group_styles = [
+                {
+                    **style,
+                    "start": max(0, int(style["start"]) - group_start),
+                    "end": min(group_end, int(style["end"])) - group_start,
+                }
+                for style in styles
+                if int(style["end"]) > group_start and int(style["start"]) < group_end
+            ]
+            group_alignments = [
+                {
+                    **alignment,
+                    "start": max(0, int(alignment["start"]) - group_start),
+                    "end": min(group_end, int(alignment["end"])) - group_start,
+                }
+                for alignment in alignments
+                if int(alignment["end"]) > group_start
+                and int(alignment["start"]) < group_end
+            ]
+            group_family, group_size = _dominant_text_metrics(group_styles)
+            exact_line_heights = [
+                float(paragraph.paragraph_format.line_spacing.pt)
+                for paragraph in paragraphs
+                if getattr(paragraph.paragraph_format.line_spacing, "pt", None)
+                is not None
+            ]
+            group_line_height = (
+                sorted(exact_line_heights)[len(exact_line_heights) // 2]
+                if exact_line_heights
+                else 0.0
+            )
+            # TextMaker/Word compatibility documents commonly declare 8–8.5 pt
+            # glyphs with an exact 8.5 pt leading.  Pillow/Tk measure those glyphs
+            # wider than Word does, which otherwise creates an artificial extra
+            # page.  Preserve the declared leading and compensate only the glyph
+            # metrics used by Lou Còdi's editable text flow.
+            if group_line_height and len(group_text) > 1000:
+                metric_scale = 0.88
+                group_size *= metric_scale
+                for style in group_styles:
+                    style["font_size"] = max(
+                        1.0,
+                        float(style.get("font_size", group_size)) * metric_scale,
+                    )
+            measuring_frame = PageObject(
+                "text",
+                page,
+                margin_left,
+                cursor_y,
+                width,
+                max(24.0, content_bottom - cursor_y),
+                text=group_text,
+                fill="transparent",
+                border_width=0,
+                font_family=group_family,
+                font_size=group_size,
+                text_styles=group_styles,
+                paragraph_alignments=group_alignments,
+                text_line_height=group_line_height,
+            )
+            line_count = max(1, len(wrapped_text_lines(group_text, measuring_frame)))
+            line_height = text_frame_line_height(measuring_frame)
+            remaining_lines = line_count
+            group_frames: list[tuple[PageObject, int]] = []
+            while remaining_lines > 0:
+                available_height = content_bottom - cursor_y
+                capacity = max(0, int((available_height - 8.0) / line_height))
+                if capacity < 1:
+                    next_page()
+                    continue
+                used_lines = min(remaining_lines, capacity)
+                frame_height = min(
+                    available_height,
+                    max(24.0, used_lines * line_height + 8.0),
+                )
+                frame = PageObject(
+                    "text",
+                    page,
+                    margin_left,
+                    cursor_y,
+                    width,
+                    frame_height,
+                    text=group_text if not group_frames else "",
+                    fill="transparent",
+                    border_width=0,
+                    font_family=group_family,
+                    font_size=group_size,
+                    text_styles=group_styles if not group_frames else [],
+                    paragraph_alignments=group_alignments if not group_frames else [],
+                    text_line_height=group_line_height,
+                )
+                if group_frames:
+                    group_frames[-1][0].flow_next_id = frame.object_id
+                group_frames.append((frame, used_lines))
+                objects.append(frame)
+                remaining_lines -= used_lines
+                cursor_y += frame_height + block_gap
+                if remaining_lines > 0 or cursor_y >= content_bottom - 20.0:
+                    next_page()
+
+            group_images = [
+                image
+                for image in image_placements
+                if group_start <= int(image["position"]) <= group_end
+            ]
+            for image in group_images:
+                relative_position = max(0, int(image["position"]) - group_start)
+                preceding_lines = max(
+                    0,
+                    len(wrapped_text_lines(group_text[:relative_position], measuring_frame)) - 1,
+                )
+                consumed = 0
+                target_frame = group_frames[-1][0]
+                line_on_frame = 0
+                for frame, frame_lines in group_frames:
+                    if preceding_lines < consumed + frame_lines:
+                        target_frame = frame
+                        line_on_frame = preceding_lines - consumed
+                        break
+                    consumed += frame_lines
+                objects.append(
+                    PageObject(
+                        "image",
+                        target_frame.page,
+                        margin_left,
+                        target_frame.y + line_on_frame * line_height,
+                        float(image["width"]),
+                        float(image["height"]),
+                        image_path=str(image["path"]),
+                    )
+                )
+
+        return CanvasDocument(
+            page_width=page_width,
+            page_height=page_height,
+            page_count=max(1, max((item.page for item in objects), default=0) + 1),
+            objects=objects,
+        )
+
     line_count = max(1, len(wrapped_text_lines(text, prototype)))
     capacity, page_count = _fit_nearly_empty_last_page(prototype, line_count)
     frames = [prototype]

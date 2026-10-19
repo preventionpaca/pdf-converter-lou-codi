@@ -77,7 +77,10 @@ class PageObject:
     text_links: list[dict[str, object]] = field(default_factory=list)
     text_styles: list[dict[str, object]] = field(default_factory=list)
     paragraph_alignments: list[dict[str, object]] = field(default_factory=list)
-    table_cells: list[list[dict[str, str]]] = field(default_factory=list)
+    text_line_height: float = 0.0
+    table_cells: list[list[dict[str, object]]] = field(default_factory=list)
+    table_column_widths: list[float] = field(default_factory=list)
+    table_row_heights: list[float] = field(default_factory=list)
     table_style: str = "plain"
     table_outer_border_width: float = 1.5
     table_inner_border_width: float = 0.6
@@ -416,18 +419,28 @@ def _draw_object(
             else:
                 family = {"Serif": "tiro", "Monospace": "cour"}.get(style_source.font_family, "helv")
                 font_name = "hebi" if style_source.bold and style_source.italic else "hebo" if style_source.bold else "heit" if style_source.italic else family
-            page.insert_textbox(
-                rectangle,
-                rendered_text,
-                fontsize=max(6, style_source.font_size),
-                fontname=font_name,
-                fontfile=font_file,
-                color=_rgb(style_source.color),
-                align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(style_source.align, 0),
-                rotate=0,
-                morph=morph,
-                overlay=True,
-            )
+            # PyMuPDF's built-in font metrics are slightly taller than the
+            # exact line spacing used by Word / TextMaker.  A textbox that is
+            # only a fraction of a point too short is otherwise rejected in
+            # full, leaving a completely blank legal-text frame.  Retry with
+            # the smallest necessary reduction instead of losing its content.
+            text_font_size = max(6.0, style_source.font_size)
+            while text_font_size >= 4.0:
+                spare_height = page.insert_textbox(
+                    rectangle,
+                    rendered_text,
+                    fontsize=text_font_size,
+                    fontname=font_name,
+                    fontfile=font_file,
+                    color=_rgb(style_source.color),
+                    align={"left": 0, "center": 1, "right": 2, "justify": 3}.get(style_source.align, 0),
+                    rotate=0,
+                    morph=morph,
+                    overlay=True,
+                )
+                if spare_height >= 0:
+                    break
+                text_font_size -= 0.25
             if style_source.underline or style_source.strikethrough:
                 for text_line in (line.strip() for line in rendered_text.splitlines()):
                     if not text_line:
@@ -639,7 +652,76 @@ def _text_fits(text: str, frame: PageObject) -> bool:
 
 def text_frame_line_height(frame: PageObject) -> float:
     """Return the text leading used consistently by flow and canvas preview."""
-    return max(7.0, frame.font_size * 1.35)
+    return max(1.0, frame.text_line_height or frame.font_size * 1.35)
+
+
+def table_grid_offsets(values: list[float], count: int, total: float) -> list[float]:
+    """Return normalized grid boundaries, preserving imported Word dimensions."""
+    usable = [max(0.0, float(value)) for value in values[:count]]
+    if len(usable) != count or sum(usable) <= 0:
+        usable = [1.0] * max(1, count)
+    scale = total / sum(usable)
+    offsets = [0.0]
+    for value in usable:
+        offsets.append(offsets[-1] + value * scale)
+    offsets[-1] = total
+    return offsets
+
+
+def fitted_table_cell_text(
+    value: str,
+    width: float,
+    height: float,
+    font_size: float,
+    *,
+    bold: bool = False,
+    italic: bool = False,
+) -> tuple[str, float]:
+    """Fit an editable cell value without allowing it to paint over neighbours."""
+    available_width = max(4.0, width - 6.0)
+    available_height = max(4.0, height - 4.0)
+    requested = max(4.0, float(font_size))
+
+    def wrap(size: float) -> list[str]:
+        font = _text_flow_font("Sans-serif", size, bold, italic)
+        lines: list[str] = []
+        for paragraph in value.replace("\t", " ").split("\n"):
+            if not paragraph:
+                lines.append("")
+                continue
+            current = ""
+            for word in paragraph.split(" "):
+                candidate = word if not current else f"{current} {word}"
+                if font.getlength(candidate) <= available_width:
+                    current = candidate
+                elif not current:
+                    fragment = ""
+                    for character in word:
+                        if fragment and font.getlength(fragment + character) > available_width:
+                            lines.append(fragment)
+                            fragment = character
+                        else:
+                            fragment += character
+                    current = fragment
+                else:
+                    lines.append(current)
+                    current = word
+            lines.append(current)
+        return lines or [""]
+
+    size = requested
+    lines = wrap(size)
+    while size > 4.0 and len(lines) * size * 1.2 > available_height:
+        size = max(4.0, size - 0.5)
+        lines = wrap(size)
+    capacity = max(1, int(available_height / max(1.0, size * 1.2)))
+    if len(lines) > capacity:
+        lines = lines[:capacity]
+        last = lines[-1].rstrip()
+        while last and _text_flow_font("Sans-serif", size, bold, italic).getlength(f"{last}…") > available_width:
+            last = last[:-1]
+        lines[-1] = f"{last.rstrip()}…"
+    return "\n".join(lines), size
 
 
 def text_frame_line_capacity(frame: PageObject) -> int:
@@ -837,8 +919,8 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
     if not rows:
         return
     columns = max(len(row) for row in rows)
-    row_height = rectangle.height / len(rows)
-    column_width = rectangle.width / columns
+    row_offsets = table_grid_offsets(item.table_row_heights, len(rows), rectangle.height)
+    column_offsets = table_grid_offsets(item.table_column_widths, columns, rectangle.width)
     for row_index, row in enumerate(rows):
         for column_index in range(columns):
             merge = _table_merge_for_cell(item, row_index, column_index)
@@ -846,13 +928,12 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                 continue
             row_span, column_span = (merge[2], merge[3]) if merge else (1, 1)
             cell = pymupdf.Rect(
-                rectangle.x0 + column_index * column_width,
-                rectangle.y0 + row_index * row_height,
-                rectangle.x0 + (column_index + column_span) * column_width,
-                rectangle.y0 + (row_index + row_span) * row_height,
+                rectangle.x0 + column_offsets[column_index],
+                rectangle.y0 + row_offsets[row_index],
+                rectangle.x0 + column_offsets[column_index + column_span],
+                rectangle.y0 + row_offsets[row_index + row_span],
             )
-            cell_fill, text_color = table_cell_colors(item.table_style, row_index)
-            page.draw_rect(cell, color=None, fill=_rgb(cell_fill), overlay=True)
+            default_fill, text_color = table_cell_colors(item.table_style, row_index)
             value = row[column_index] if column_index < len(row) else ""
             metadata = (
                 item.table_cells[row_index][column_index]
@@ -860,9 +941,31 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                 and column_index < len(item.table_cells[row_index])
                 else {}
             )
+            cell_fill = str(metadata.get("fill", default_fill))
+            cell_border_width = float(metadata.get("border_width", 0) or 0)
+            cell_border_color = str(metadata.get("border_color", item.border_color))
+            page.draw_rect(
+                cell,
+                color=_rgb(cell_border_color) if cell_border_width else None,
+                fill=_rgb(cell_fill),
+                width=max(0.1, cell_border_width),
+                overlay=True,
+            )
             image_path = metadata.get("image_path", "")
             horizontal_align = metadata.get("horizontal_align", "left")
             vertical_align = metadata.get("vertical_align", "top")
+            cell_font_size = float(metadata.get("font_size", item.font_size) or item.font_size)
+            cell_color = str(metadata.get("color", text_color) or text_color)
+            cell_bold = bool(metadata.get("bold", False))
+            cell_italic = bool(metadata.get("italic", False))
+            value, cell_font_size = fitted_table_cell_text(
+                value,
+                cell.width,
+                cell.height,
+                cell_font_size,
+                bold=cell_bold,
+                italic=cell_italic,
+            )
             text_cell = cell + (3, 2, -3, -2)
             if image_path and Path(image_path).is_file():
                 image_bottom = cell.y0 + cell.height * (0.62 if value else 0.92)
@@ -873,18 +976,37 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                     overlay=True,
                 )
                 text_cell = pymupdf.Rect(cell.x0 + 3, image_bottom + 1, cell.x1 - 3, cell.y1 - 2)
-            line_count = max(1, value.count("\n") + 1)
-            estimated_height = line_count * item.font_size * 1.2
-            if vertical_align == "middle":
-                text_cell.y0 += max(0, (text_cell.height - estimated_height) / 2)
-            elif vertical_align == "bottom":
-                text_cell.y0 += max(0, text_cell.height - estimated_height)
-            page.insert_textbox(
-                text_cell, value, fontsize=item.font_size,
-                align={"left": 0, "center": 1, "right": 2}.get(horizontal_align, 0),
-                color=_rgb(text_color),
-                overlay=True,
+            font_name = (
+                "hebi" if cell_bold and cell_italic else
+                "hebo" if cell_bold else
+                "heit" if cell_italic else
+                "helv"
             )
+            lines = value.split("\n")
+            line_height = cell_font_size * 1.2
+            block_height = len(lines) * line_height
+            start_y = text_cell.y0 + cell_font_size
+            if vertical_align == "middle":
+                start_y += max(0.0, (text_cell.height - block_height) / 2)
+            elif vertical_align == "bottom":
+                start_y += max(0.0, text_cell.height - block_height)
+            for line_number, line in enumerate(lines):
+                line_width = pymupdf.get_text_length(
+                    line, fontname=font_name, fontsize=cell_font_size
+                )
+                line_x = text_cell.x0
+                if horizontal_align == "center":
+                    line_x += max(0.0, (text_cell.width - line_width) / 2)
+                elif horizontal_align == "right":
+                    line_x += max(0.0, text_cell.width - line_width)
+                page.insert_text(
+                    pymupdf.Point(line_x, start_y + line_number * line_height),
+                    line,
+                    fontsize=cell_font_size,
+                    fontname=font_name,
+                    color=_rgb(cell_color),
+                    overlay=True,
+                )
             hyperlink = metadata.get("hyperlink", "").strip()
             if hyperlink:
                 page.draw_line(
@@ -896,28 +1018,28 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
     border_color = _rgb(item.border_color)
     if item.table_inner_border_width > 0:
         for column in range(1, columns):
-            x = rectangle.x0 + column * column_width
+            x = rectangle.x0 + column_offsets[column]
             for row in range(len(rows)):
                 if not _table_grid_hidden(item, row, column - 1, row, column):
                     page.draw_line(
-                        pymupdf.Point(x, rectangle.y0 + row * row_height),
-                        pymupdf.Point(x, rectangle.y0 + (row + 1) * row_height),
+                        pymupdf.Point(x, rectangle.y0 + row_offsets[row]),
+                        pymupdf.Point(x, rectangle.y0 + row_offsets[row + 1]),
                         color=border_color, width=item.table_inner_border_width, overlay=True,
                     )
         for row in range(1, len(rows)):
-            y = rectangle.y0 + row * row_height
+            y = rectangle.y0 + row_offsets[row]
             width = item.table_row_border_widths.get(str(row - 1), item.table_inner_border_width)
             for column in range(columns):
                 if not _table_grid_hidden(item, row - 1, column, row, column):
                     page.draw_line(
-                        pymupdf.Point(rectangle.x0 + column * column_width, y),
-                        pymupdf.Point(rectangle.x0 + (column + 1) * column_width, y),
+                        pymupdf.Point(rectangle.x0 + column_offsets[column], y),
+                        pymupdf.Point(rectangle.x0 + column_offsets[column + 1], y),
                         color=border_color, width=width, overlay=True,
                     )
     for row_text, width in item.table_row_border_widths.items():
         row = int(row_text)
         if 0 <= row < len(rows):
-            for y in (rectangle.y0 + row * row_height, rectangle.y0 + (row + 1) * row_height):
+            for y in (rectangle.y0 + row_offsets[row], rectangle.y0 + row_offsets[row + 1]):
                 page.draw_line(
                     pymupdf.Point(rectangle.x0, y), pymupdf.Point(rectangle.x1, y),
                     color=border_color, width=width, overlay=True,
@@ -929,10 +1051,10 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
         bottom = int(border_range.get("bottom", top))
         page.draw_rect(
             pymupdf.Rect(
-                rectangle.x0 + left * column_width,
-                rectangle.y0 + top * row_height,
-                rectangle.x0 + (right + 1) * column_width,
-                rectangle.y0 + (bottom + 1) * row_height,
+                rectangle.x0 + column_offsets[left],
+                rectangle.y0 + row_offsets[top],
+                rectangle.x0 + column_offsets[right + 1],
+                rectangle.y0 + row_offsets[bottom + 1],
             ),
             color=border_color,
             width=float(border_range.get("width", 1.5)),
