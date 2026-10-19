@@ -5182,6 +5182,12 @@ class DocumentEditorWindow(tk.Toplevel):
             values.append((label or str(index - start + 1), value))
         return header, values
 
+    @classmethod
+    def _chart_series(
+        cls, rows: list[list[str]], series_indices: list[int]
+    ) -> list[tuple[str, list[tuple[str, float]]]]:
+        return [cls._chart_values(rows, index) for index in series_indices]
+
     def _edit_chart_settings(self, item: PageObject) -> None:
         source = next(
             (candidate for candidate in self.document.objects if candidate.object_id == item.source_id),
@@ -5198,29 +5204,51 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Label(body, text="Titre").grid(row=0, column=0, sticky="w", pady=4)
         title_var = tk.StringVar(value=item.chart_title)
         ttk.Entry(body, textvariable=title_var, width=34).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(body, text="Série de valeurs").grid(row=1, column=0, sticky="w", pady=4)
-        series_var = tk.StringVar(value=headers[min(max(0, item.chart_series_index), len(headers) - 1)])
-        ttk.Combobox(body, textvariable=series_var, values=headers, state="readonly", width=31).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(body, text="Séries de valeurs").grid(row=1, column=0, sticky="nw", pady=4)
+        series_list = tk.Listbox(body, selectmode="extended", exportselection=False, height=min(6, len(headers)))
+        series_list.grid(row=1, column=1, sticky="ew", pady=4)
+        for header in headers:
+            series_list.insert("end", header)
+        selected_series = item.chart_series_indices or [item.chart_series_index]
+        for index in selected_series:
+            if 0 <= index < len(headers):
+                series_list.selection_set(index)
+        if not series_list.curselection() and headers:
+            series_list.selection_set(min(1, len(headers) - 1))
+        ttk.Label(
+            body,
+            text=(
+                "Ctrl + clic pour choisir plusieurs colonnes. "
+                "Un camembert utilise une seule série."
+            ),
+            foreground="#52677A",
+        ).grid(row=2, column=1, sticky="w", pady=(0, 6))
         legend_var = tk.BooleanVar(value=item.chart_show_legend)
         values_var = tk.BooleanVar(value=item.chart_show_values)
-        ttk.Checkbutton(body, text="Afficher la légende", variable=legend_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=4)
-        ttk.Checkbutton(body, text="Afficher les valeurs", variable=values_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="Afficher la légende", variable=legend_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(body, text="Afficher les valeurs", variable=values_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
 
         def apply() -> None:
             self._checkpoint()
             item.chart_title = title_var.get().strip()
-            item.chart_series_index = headers.index(series_var.get()) if series_var.get() in headers else 0
+            chosen = [int(index) for index in series_list.curselection()]
+            if not chosen:
+                chosen = [min(1, len(headers) - 1)]
+            if item.fill == "pie" and len(chosen) > 1:
+                chosen = chosen[:1]
+            item.chart_series_indices = chosen
+            item.chart_series_index = chosen[0]
             item.chart_show_legend = legend_var.get()
             item.chart_show_values = values_var.get()
             dialog.destroy()
             self._render()
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side="left", padx=4)
         ttk.Button(buttons, text="Appliquer", command=apply).pack(side="left", padx=4)
         dialog.bind("<Return>", lambda _event: apply())
-        center_window(dialog, 480, 260)
+        center_window(dialog, 520, 330)
 
     def _draw_chart_preview(self, item: PageObject, x: float, y: float, width: float, height: float, tags: tuple[str, str]) -> None:
         source = next((candidate for candidate in self.document.objects if candidate.object_id == item.source_id), None)
@@ -5229,7 +5257,9 @@ class DocumentEditorWindow(tk.Toplevel):
             if source and source.kind == "table"
             else []
         )
-        series_name, values = self._chart_values(rows, item.chart_series_index)
+        selected_series = item.chart_series_indices or [item.chart_series_index]
+        series = self._chart_series(rows, selected_series)
+        series_name, values = series[0] if series else ("", [])
         self.canvas.create_rectangle(x, y, x + width, y + height, fill="white", outline="#72879C", tags=tags)
         if not values:
             self.canvas.create_text(x + width / 2, y + height / 2, text="Aucune donnée numérique", tags=tags)
@@ -5256,19 +5286,30 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.canvas.create_text(legend_x + 14, legend_y, text=f"{label}{suffix}", anchor="nw", font=("Sans", 8), tags=tags)
                 start += extent
         else:
-            if item.chart_show_legend and series_name:
-                self.canvas.create_text(
-                    x + width - 8, top, text=series_name, anchor="ne",
-                    font=("Sans", 8, "italic"), tags=tags,
-                )
-            maximum = max(abs(value) for _, value in values) or 1
-            gap = width / len(values)
-            for index, (label, value) in enumerate(values):
-                bar_height = (height - 30) * abs(value) / maximum
-                self.canvas.create_rectangle(x + index * gap + 5, y + height - 20 - bar_height, x + (index + 1) * gap - 5, y + height - 20, fill=colors[index % len(colors)], outline="", tags=tags)
-                self.canvas.create_text(x + (index + 0.5) * gap, y + height - 10, text=label[:8], font=("Sans", 7), tags=tags)
-                if item.chart_show_values:
-                    self.canvas.create_text(x + (index + 0.5) * gap, y + height - 24 - bar_height, text=f"{value:g}", font=("Sans", 8), tags=tags)
+            all_values = [abs(value) for _name, entries in series for _label, value in entries]
+            maximum = max(all_values, default=1) or 1
+            categories = values
+            gap = width / max(1, len(categories))
+            series_count = max(1, len(series))
+            bar_gap = max(4.0, gap - 10) / series_count
+            for category_index, (label, _value) in enumerate(categories):
+                for series_index, (_name, entries) in enumerate(series):
+                    if category_index >= len(entries):
+                        continue
+                    value = entries[category_index][1]
+                    bar_height = (height - 42 - (top - y)) * abs(value) / maximum
+                    left = x + category_index * gap + 5 + series_index * bar_gap
+                    right = left + max(2, bar_gap - 3)
+                    self.canvas.create_rectangle(left, y + height - 20 - bar_height, right, y + height - 20, fill=colors[series_index % len(colors)], outline="", tags=tags)
+                    if item.chart_show_values:
+                        self.canvas.create_text((left + right) / 2, y + height - 24 - bar_height, text=f"{value:g}", font=("Sans", 7), tags=tags)
+                self.canvas.create_text(x + (category_index + 0.5) * gap, y + height - 10, text=label[:10], font=("Sans", 7), tags=tags)
+            if item.chart_show_legend:
+                legend_x = x + 8
+                for series_index, (name, _entries) in enumerate(series):
+                    self.canvas.create_rectangle(legend_x, top + 2, legend_x + 9, top + 11, fill=colors[series_index % len(colors)], outline="", tags=tags)
+                    self.canvas.create_text(legend_x + 12, top, text=name or f"Série {series_index + 1}", anchor="nw", font=("Sans", 7), tags=tags)
+                    legend_x += max(55, len(name) * 6 + 24)
 
     def _make_list(self, numbered: bool) -> None:
         if self.selected is None or self.document.objects[self.selected].kind != "text":

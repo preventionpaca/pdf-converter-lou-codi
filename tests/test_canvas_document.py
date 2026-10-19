@@ -1430,6 +1430,16 @@ def test_chart_uses_first_column_as_labels_and_selected_numeric_series() -> None
     assert header == "Notes"
     assert values == [("Alice", 12.0), ("Bob", 15.0)]
 
+    series = DocumentEditorWindow._chart_series(
+        [["Élève", "Notes", "Absences"], ["Alice", "12", "1"], ["Bob", "15", "3"]],
+        [1, 2],
+    )
+
+    assert series == [
+        ("Notes", [("Alice", 12.0), ("Bob", 15.0)]),
+        ("Absences", [("Alice", 1.0), ("Bob", 3.0)]),
+    ]
+
 
 def test_verbose_table_cell_is_fitted_and_clipped_to_its_own_rectangle() -> None:
     text, size = fitted_table_cell_text(

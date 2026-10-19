@@ -91,6 +91,7 @@ class PageObject:
     dimension_refs: list[dict[str, object]] = field(default_factory=list)
     chart_title: str = ""
     chart_series_index: int = 1
+    chart_series_indices: list[int] = field(default_factory=list)
     chart_show_legend: bool = True
     chart_show_values: bool = True
 
@@ -1073,24 +1074,33 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
 def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject, chart: PageObject) -> None:
     rows = evaluate_table_cells(source.table_cells) if source.table_cells else evaluate_table(source.text)
     columns = max((len(row) for row in rows), default=1)
-    series_index = min(max(0, chart.chart_series_index), columns - 1)
-    header = rows[0][series_index] if rows and series_index < len(rows[0]) else ""
     first_is_header = bool(rows and any(
         value and not value.replace(",", ".").replace("-", "", 1).isdigit()
         for value in rows[0]
     ))
-    labels: list[str] = []
-    values: list[float] = []
-    for index, row in enumerate(rows[1:] if first_is_header else rows):
-        if not row:
-            continue
-        try:
-            value = float(row[series_index].replace(",", "."))
-        except (ValueError, IndexError):
-            continue
-        labels.append((row[0] if series_index != 0 else "") or str(index + 1))
-        values.append(value)
-    if not values:
+    selected_indices = chart.chart_series_indices or [chart.chart_series_index]
+    selected_indices = list(dict.fromkeys(
+        min(max(0, index), columns - 1) for index in selected_indices
+    ))
+    if chart.fill == "pie":
+        selected_indices = selected_indices[:1]
+    series: list[tuple[str, list[tuple[str, float]]]] = []
+    data_rows = rows[1:] if first_is_header else rows
+    for series_index in selected_indices:
+        header = rows[0][series_index] if first_is_header and series_index < len(rows[0]) else ""
+        entries: list[tuple[str, float]] = []
+        for index, row in enumerate(data_rows):
+            if not row:
+                continue
+            try:
+                value = float(row[series_index].replace(",", "."))
+            except (ValueError, IndexError):
+                continue
+            label = (row[0] if series_index != 0 else "") or str(index + 1)
+            entries.append((label, value))
+        if entries:
+            series.append((header, entries))
+    if not series:
         page.insert_textbox(rectangle, "Aucune donnée numérique", fontsize=10, align=1, overlay=True)
         return
     colors = ((0.14, 0.41, 0.69), (0.91, 0.39, 0.18), (0.27, 0.64, 0.49), (0.94, 0.72, 0.22), (0.53, 0.36, 0.71))
@@ -1102,6 +1112,9 @@ def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject,
         )
         top += 18
     if chart.fill == "pie":
+        _series_name, entries = series[0]
+        labels = [label for label, _value in entries]
+        values = [value for _label, value in entries]
         total = sum(abs(value) for value in values) or 1
         legend_width = rectangle.width * 0.32 if chart.chart_show_legend else 0
         center = pymupdf.Point(
@@ -1131,23 +1144,50 @@ def _draw_chart(page: pymupdf.Page, rectangle: pymupdf.Rect, source: PageObject,
                 )
             angle += sweep
     else:
-        maximum = max(abs(value) for value in values) or 1
-        gap = rectangle.width / max(1, len(values))
+        categories = series[0][1]
+        maximum = max(
+            (abs(value) for _name, entries in series for _label, value in entries),
+            default=1,
+        ) or 1
+        gap = rectangle.width / max(1, len(categories))
+        series_count = max(1, len(series))
+        bar_gap = max(4.0, gap - 10) / series_count
         baseline = rectangle.y1 - 18
-        for index, (label, value) in enumerate(zip(labels, values)):
-            bar_height = (rectangle.height - 35) * abs(value) / maximum
-            bar = pymupdf.Rect(rectangle.x0 + index * gap + 5, baseline - bar_height, rectangle.x0 + (index + 1) * gap - 5, baseline)
-            page.draw_rect(bar, color=colors[index % len(colors)], fill=colors[index % len(colors)], overlay=True)
-            page.insert_textbox(pymupdf.Rect(bar.x0, baseline + 2, bar.x1, rectangle.y1), label[:12], fontsize=7, align=1, overlay=True)
-            if chart.chart_show_values:
-                page.insert_textbox(
-                    pymupdf.Rect(bar.x0, bar.y0 - 12, bar.x1, bar.y0),
-                    f"{value:g}", fontsize=7, align=1, overlay=True,
-                )
-        if chart.chart_show_legend and header:
-            page.insert_text(
-                pymupdf.Point(rectangle.x1 - 60, top + 10), header, fontsize=7, overlay=True,
+        for category_index, (label, _value) in enumerate(categories):
+            for series_index, (_name, entries) in enumerate(series):
+                if category_index >= len(entries):
+                    continue
+                value = entries[category_index][1]
+                bar_height = (rectangle.y1 - top - 35) * abs(value) / maximum
+                left = rectangle.x0 + category_index * gap + 5 + series_index * bar_gap
+                bar = pymupdf.Rect(left, baseline - bar_height, left + max(2, bar_gap - 3), baseline)
+                color = colors[series_index % len(colors)]
+                page.draw_rect(bar, color=color, fill=color, overlay=True)
+                if chart.chart_show_values:
+                    page.insert_textbox(
+                        pymupdf.Rect(bar.x0, bar.y0 - 12, bar.x1, bar.y0),
+                        f"{value:g}", fontsize=7, align=1, overlay=True,
+                    )
+            page.insert_textbox(
+                pymupdf.Rect(
+                    rectangle.x0 + category_index * gap,
+                    baseline + 2,
+                    rectangle.x0 + (category_index + 1) * gap,
+                    rectangle.y1,
+                ),
+                label[:12], fontsize=7, align=1, overlay=True,
             )
+        if chart.chart_show_legend:
+            legend_x = rectangle.x0 + 6
+            for series_index, (name, _entries) in enumerate(series):
+                color = colors[series_index % len(colors)]
+                page.draw_rect(
+                    pymupdf.Rect(legend_x, top + 2, legend_x + 8, top + 10),
+                    color=color, fill=color, overlay=True,
+                )
+                label = name or f"Série {series_index + 1}"
+                page.insert_text(pymupdf.Point(legend_x + 11, top + 9), label, fontsize=7, overlay=True)
+                legend_x += max(50, len(label) * 4 + 22)
 
 
 def _rgb(value: str) -> tuple[float, float, float]:
