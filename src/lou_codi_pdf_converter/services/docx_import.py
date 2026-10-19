@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import math
+import tempfile
+import uuid
+from collections import defaultdict, deque
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 
 from .canvas_document import (
     A4_HEIGHT,
@@ -85,8 +89,50 @@ def _paragraph_prefix(paragraph: object, counters: dict[str, int]) -> str:
     return "• "
 
 
+def _embedded_image_queues(source: object) -> dict[str, deque[dict[str, object]]]:
+    """Extract inline or floating pictures, preserving their Word display size."""
+    directory = Path(tempfile.mkdtemp(prefix="lou-codi-docx-import-"))
+    images: dict[str, deque[dict[str, object]]] = defaultdict(deque)
+    body = getattr(getattr(source, "element", None), "body", None)
+    for blip in body.xpath(".//a:blip") if body is not None else ():
+        try:
+            relationship_id = blip.get(qn("r:embed"))
+            part = source.part.related_parts[relationship_id]
+            container = blip.getparent()
+            while container is not None and container.tag not in {
+                qn("wp:inline"), qn("wp:anchor")
+            }:
+                container = container.getparent()
+            extents = container.xpath("./wp:extent") if container is not None else []
+            extent = extents[0] if extents else None
+            width = float(extent.get("cx")) / 12700.0 if extent is not None else 144.0
+            height = float(extent.get("cy")) / 12700.0 if extent is not None else 96.0
+            suffix = Path(str(getattr(part, "filename", ""))).suffix.lower()
+            if not suffix:
+                suffix = {
+                    "image/jpeg": ".jpg",
+                    "image/png": ".png",
+                    "image/gif": ".gif",
+                    "image/tiff": ".tiff",
+                    "image/bmp": ".bmp",
+                    "image/webp": ".webp",
+                }.get(str(getattr(part, "content_type", "")).lower(), ".bin")
+            target = directory / f"{uuid.uuid4().hex}{suffix}"
+            target.write_bytes(part.blob)
+            images[relationship_id].append(
+                {
+                    "path": str(target),
+                    "width": max(1.0, width),
+                    "height": max(1.0, height),
+                }
+            )
+        except (AttributeError, KeyError, OSError, TypeError, ValueError):
+            continue
+    return images
+
+
 def import_docx_as_canvas(path: Path) -> CanvasDocument:
-    """Import DOCX text, lists and character formatting into linked canvas frames."""
+    """Import DOCX text, pictures, lists and formatting into editable objects."""
     source = Document(path)
     section = source.sections[0] if source.sections else None
     page_width = float(section.page_width.pt) if section and section.page_width else A4_WIDTH
@@ -101,6 +147,8 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
     parts: list[str] = []
     styles: list[dict[str, object]] = []
     alignments: list[dict[str, object]] = []
+    image_placements: list[dict[str, object]] = []
+    image_queues = _embedded_image_queues(source)
     counters: dict[str, int] = {}
     alignment_names = {0: "left", 1: "center", 2: "right", 3: "justify", 4: "justify"}
     for paragraph in source.paragraphs:
@@ -111,12 +159,28 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
         parts.append(prefix)
         for run in paragraph.runs:
             value = run.text.replace("\v", "\n").replace("\f", "\n")
-            if not value:
-                continue
-            start = sum(len(part) for part in parts)
-            parts.append(value)
-            end = start + len(value)
-            styles.append({"start": start, "end": end, **_run_style(run, paragraph)})
+            if value:
+                start = sum(len(part) for part in parts)
+                parts.append(value)
+                end = start + len(value)
+                styles.append({"start": start, "end": end, **_run_style(run, paragraph)})
+            for blip in run._r.xpath(".//a:blip"):
+                relationship_id = blip.get(qn("r:embed"))
+                if not relationship_id or not image_queues[relationship_id]:
+                    continue
+                image = image_queues[relationship_id].popleft()
+                display_width = min(width, float(image["width"]))
+                display_height = float(image["height"]) * display_width / float(image["width"])
+                image_placements.append(
+                    {
+                        **image,
+                        "width": display_width,
+                        "height": display_height,
+                        "position": sum(len(part) for part in parts),
+                    }
+                )
+                # Reserve the picture's vertical space in the linked text flow.
+                parts.append("\n" * max(1, math.ceil(display_height / 15.0)))
         paragraph_end = sum(len(part) for part in parts)
         alignment = alignment_names.get(int(paragraph.alignment), "left") if paragraph.alignment is not None else "left"
         if alignment != "left" and paragraph_end > paragraph_start:
@@ -140,9 +204,28 @@ def import_docx_as_canvas(path: Path) -> CanvasDocument:
             fill="transparent", border_width=0,
         ))
         frames[-2].flow_next_id = frames[-1].object_id
+    image_objects: list[PageObject] = []
+    for image in image_placements:
+        preceding_lines = max(
+            0,
+            len(wrapped_text_lines(text[: int(image["position"])], prototype)) - 1,
+        )
+        page = min(page_count - 1, preceding_lines // capacity)
+        line_on_page = preceding_lines % capacity
+        image_objects.append(
+            PageObject(
+                "image",
+                page,
+                margin_left,
+                margin_top + line_on_page * 15.0,
+                float(image["width"]),
+                float(image["height"]),
+                image_path=str(image["path"]),
+            )
+        )
     return CanvasDocument(
         page_width=page_width,
         page_height=page_height,
         page_count=page_count,
-        objects=frames,
+        objects=frames + image_objects,
     )

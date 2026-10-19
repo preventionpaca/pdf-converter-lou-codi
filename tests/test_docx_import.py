@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from docx import Document
-from docx.enum.text import WD_COLOR_INDEX, WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.shared import Pt, RGBColor
+from PIL import Image
 
 from lou_codi_pdf_converter.services.docx_import import import_docx_as_canvas
 
@@ -43,3 +44,28 @@ def test_docx_import_keeps_text_lists_and_character_styles(tmp_path: Path) -> No
         {"start": 0, "end": 15, "align": "center"}
     ]
     assert imported.page_count >= 1
+
+
+def test_docx_import_keeps_images_as_editable_independent_objects(tmp_path: Path) -> None:
+    picture = tmp_path / "illustration.png"
+    Image.new("RGB", (240, 120), "#E83E8C").save(picture)
+    source = tmp_path / "source-avec-image.docx"
+    document = Document()
+    document.add_paragraph("Texte avant l’image")
+    paragraph = document.add_paragraph()
+    paragraph.add_run().add_picture(str(picture), width=Pt(180))
+    document.add_paragraph("Texte après l’image")
+    document.save(source)
+
+    imported = import_docx_as_canvas(source)
+
+    text_objects = [item for item in imported.objects if item.kind == "text"]
+    image_objects = [item for item in imported.objects if item.kind == "image"]
+    assert "Texte avant l’image" in text_objects[0].text
+    assert "Texte après l’image" in text_objects[0].text
+    assert len(image_objects) == 1
+    assert Path(image_objects[0].image_path).is_file()
+    assert Image.open(image_objects[0].image_path).size == (240, 120)
+    assert image_objects[0].width == 180
+    assert image_objects[0].height == 90
+    assert image_objects[0].page == 0

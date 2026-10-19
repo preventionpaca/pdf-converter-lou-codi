@@ -11250,7 +11250,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.selected_indices.clear()
         self.status.configure(
             text=(
-                f"DOCX importé : {files[0].name}. Texte, listes et styles de caractères "
+                f"DOCX importé : {files[0].name}. Textes, listes, styles et images "
                 "sont modifiables dans Document Studio."
             )
         )
