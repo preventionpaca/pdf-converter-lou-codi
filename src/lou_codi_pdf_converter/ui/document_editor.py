@@ -1808,7 +1808,6 @@ class DocumentEditorWindow(tk.Toplevel):
             ("measurements", "Mesures et cotations"),
             ("table", "Tableau"),
             ("media", "Image, lien et masque"),
-            ("text_zone_style", "Apparence de la zone de texte"),
             ("shape_style", "Apparence des formes"),
             ("technical", "Technique"),
         ):
@@ -2482,7 +2481,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if palette_context != self._last_palette_context:
             contextual = {
                 "general": set(),
-                "text": {"text_zone_style"},
+                "text": set(),
                 "table": set(),
                 "media": {"shape_style"},
                 "technical": {"shape_style", "technical"},
@@ -5354,6 +5353,11 @@ class DocumentEditorWindow(tk.Toplevel):
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
+        # The complete text-zone appearance controls now live in the inline
+        # toolbar.  Keep the former floating palette out of the way so two UI
+        # surfaces cannot mutate the same frame while it is being edited.
+        self.palette_visible_vars["text_zone_style"].set(False)
+        self._set_palette_visibility("text_zone_style")
         x = self.page_x + item.x * self.zoom
         y = self.page_y + item.y * self.zoom
         widget = tk.Text(
@@ -5552,12 +5556,40 @@ class DocumentEditorWindow(tk.Toplevel):
         tool(secondary, "🖌✓", self._apply_format, "Appliquer la mise en forme")
         tool(secondary, "🔗", self._set_selected_hyperlink, "Ajouter ou modifier un lien")
         tool(secondary, "✕🔗", self._remove_selected_hyperlink, "Retirer le lien")
+        border = tk.Menubutton(secondary, text="Bordure ▾", relief="flat", padx=6)
+        border_menu = tk.Menu(border, tearoff=False)
+        border_menu.add_command(label="Sans bordure", command=lambda: self._set_border_width_value(0))
+        for label, width in (("Fine — 0,5", 0.5), ("Normale — 1,5", 1.5), ("Épaisse — 3", 3.0), ("Très épaisse — 5", 5.0)):
+            border_menu.add_command(
+                label=label, command=lambda value=width: self._set_border_width_value(value)
+            )
+        border_menu.add_separator()
+        border_menu.add_command(label="Continue", command=lambda: self._set_border_style_value("solid"))
+        border_menu.add_command(label="Tirets", command=lambda: self._set_border_style_value("dashed"))
+        border_menu.add_command(label="Pointillée", command=lambda: self._set_border_style_value("dotted"))
+        border_menu.add_separator()
+        border_menu.add_command(label="Couleur…", command=lambda: self._choose_color("border_color"))
+        border.configure(menu=border_menu)
+        border.pack(side="left", padx=2, pady=2)
+        tool(secondary, "−1°", lambda: self._rotate_selected_degrees(-1), "Tourner la zone d’un degré vers la gauche")
+        tool(secondary, "+1°", lambda: self._rotate_selected_degrees(1), "Tourner la zone d’un degré vers la droite")
+        tool(secondary, "∠°", self._ask_absolute_angle, "Saisir l’angle exact de la zone")
         tool(secondary, "🤖", self._open_chatgpt_for_selected, "Ouvrir ChatGPT")
         tool(secondary, "Coller IA", self._paste_chatgpt_result, "Coller le résultat de ChatGPT")
         tool(secondary, "✓ Terminer", self._commit_inline_editor, "Terminer l’édition")
+        link_toolbar.update_idletasks()
+        toolbar_width = link_toolbar.winfo_reqwidth()
+        toolbar_height = link_toolbar.winfo_reqheight()
+        page_right = self.page_x + self._page_size()[0] * self.zoom
+        page_bottom = self.page_y + self._page_size()[1] * self.zoom
+        toolbar_x = max(self.page_x, min(x, page_right - toolbar_width))
+        toolbar_y = y - toolbar_height - 6
+        if toolbar_y < self.page_y:
+            toolbar_y = y + max(35, item.height * self.zoom) + 6
+        toolbar_y = max(self.page_y, min(toolbar_y, page_bottom - toolbar_height))
         self.canvas.create_window(
-            max(self.page_x, min(x, self.page_x + self._page_size()[0] * self.zoom - 760)),
-            max(self.page_y, y - 72),
+            toolbar_x,
+            toolbar_y,
             window=link_toolbar,
             anchor="nw", tags=("inline-editor",),
         )
