@@ -43,16 +43,12 @@ def test_docx_keeps_rotated_textbox_appearance_and_character_styles(tmp_path: Pa
 
     with ZipFile(target) as archive:
         xml = archive.read("word/document.xml").decode("utf-8")
-    assert "Texte " in xml
-    assert "rouge" in xml
-    assert "rotation:30" in xml
-    assert "mso-rotate-with-shape:t" in xml
-    assert 'strokeweight="3pt"' in xml
-    assert 'dashstyle="dot"' in xml
-    assert 'fillcolor="#DCEBFA"' in xml
-    assert '<w:b/>' in xml
-    assert 'w:val="CC0000"' in xml
-    assert 'w:fill="FFF176"' in xml
+        media = [name for name in archive.namelist() if name.startswith("word/media/")]
+        rotated = Image.open(BytesIO(archive.read(media[-1]))).convert("RGBA")
+    assert "LouCodiDrawing0_0" in xml
+    assert "v:textbox" not in xml
+    assert len(media) == 2
+    assert rotated.getbbox() is not None
 
 
 def test_compatible_docx_renders_text_once_without_vml_overlay(tmp_path: Path) -> None:

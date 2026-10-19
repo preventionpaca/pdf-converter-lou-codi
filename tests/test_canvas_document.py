@@ -132,6 +132,31 @@ def test_office_html_clipboard_keeps_styles_and_lists() -> None:
     assert rich_clipboard_matches_plain(text, "Titre\n· Premier point\n· Second point")
 
 
+def test_office_html_clipboard_reads_css_classes_and_ignores_list_marker_glyphs() -> None:
+    html = """
+    <html><head><style>
+      .titre { font-weight: 700; font-style: italic; text-decoration: underline; }
+      .rouge { color: #cc0000; }
+    </style></head><body>
+      <p class="titre">Titre important</p>
+      <ul><li><span style="mso-list:Ignore">\uf0b7<span>&nbsp;</span></span>
+      <span class="rouge"><b>Premier point</b></span></li></ul>
+    </body></html>
+    """
+
+    text, styles = parse_rich_clipboard_html(html)
+
+    assert text == "Titre important\n• Premier point"
+    title = next(run for run in styles if text[run["start"] : run["end"]] == "Titre important")
+    point = next(run for run in styles if "Premier point" in text[run["start"] : run["end"]])
+    assert title["bold"] is True
+    assert title["italic"] is True
+    assert title["underline"] is True
+    assert point["bold"] is True
+    assert point["color"] == "#cc0000"
+    assert "\uf0b7" not in text
+
+
 def test_plain_paste_removes_office_bullets_symbol_font_and_indentation() -> None:
     source = "\t\uf0b7\tPremier point\n    • Deuxième point\n\tTexte ordinaire"
 

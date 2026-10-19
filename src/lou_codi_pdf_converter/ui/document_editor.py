@@ -200,6 +200,55 @@ class RichClipboardHTMLParser(HTMLParser):
         self.styles: list[dict[str, object]] = []
         self._length = 0
         self._stack: list[dict[str, object]] = [{}]
+        self._class_styles: dict[str, dict[str, object]] = {}
+        self._inside_style = False
+        self._style_source: list[str] = []
+        self._ignored_depth = 0
+
+    @staticmethod
+    def _css_style(css: str) -> dict[str, object]:
+        declarations = {
+            name.strip().lower(): value.strip()
+            for declaration in css.split(";")
+            if ":" in declaration
+            for name, value in [declaration.split(":", 1)]
+        }
+        style: dict[str, object] = {}
+        weight = declarations.get("font-weight", "").lower()
+        if weight == "bold" or (weight.isdigit() and int(weight) >= 600):
+            style["bold"] = True
+        if declarations.get("font-style", "").lower() in {"italic", "oblique"}:
+            style["italic"] = True
+        decoration = declarations.get("text-decoration", "").lower()
+        if "underline" in decoration:
+            style["underline"] = True
+        if "line-through" in decoration:
+            style["strikethrough"] = True
+        family = declarations.get("font-family", "").strip(" '\"").split(",", 1)[0]
+        if family:
+            style["font_family"] = (
+                "Monospace" if "courier" in family.lower() or "mono" in family.lower()
+                else "Serif" if "times" in family.lower() or "serif" in family.lower()
+                else "Sans-serif"
+            )
+        size_match = re.match(r"([0-9.]+)\s*pt", declarations.get("font-size", ""))
+        if size_match:
+            style["font_size"] = max(1.0, float(size_match.group(1)))
+        if declarations.get("color"):
+            style["color"] = safe_pillow_color(declarations["color"], "#000000")
+        background = declarations.get("background-color") or declarations.get("background")
+        if background:
+            style["highlight"] = safe_pillow_color(background, "", allow_transparent=True)
+        return style
+
+    def _read_stylesheet(self) -> None:
+        source = "".join(self._style_source)
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", source):
+            style = self._css_style(body)
+            if not style:
+                continue
+            for class_name in re.findall(r"\.([A-Za-z_][\w-]*)", selector):
+                self._class_styles.setdefault(class_name, {}).update(style)
 
     def _newline(self) -> None:
         if self.parts and not self.parts[-1].endswith("\n"):
@@ -208,6 +257,16 @@ class RichClipboardHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
+        if tag == "style":
+            self._inside_style = True
+            self._style_source = []
+            return
+        if tag in {"title", "script"}:
+            self._ignored_depth += 1
+            return
+        if self._ignored_depth:
+            self._ignored_depth += 1
+            return
         if tag in self._blocks:
             self._newline()
         if tag == "li":
@@ -226,36 +285,36 @@ class RichClipboardHTMLParser(HTMLParser):
             style["strikethrough"] = True
         attributes = {name.lower(): value or "" for name, value in attrs}
         css = attributes.get("style", "")
-        declarations = {
-            name.strip().lower(): value.strip()
-            for declaration in css.split(";")
-            if ":" in declaration
-            for name, value in [declaration.split(":", 1)]
-        }
-        family = declarations.get("font-family", "").strip(" '\"").split(",", 1)[0]
-        if family:
-            style["font_family"] = (
-                "Monospace" if "courier" in family.lower() or "mono" in family.lower()
-                else "Serif" if "times" in family.lower() or "serif" in family.lower()
-                else "Sans-serif"
-            )
-        size_match = re.match(r"([0-9.]+)\s*pt", declarations.get("font-size", ""))
-        if size_match:
-            style["font_size"] = max(1.0, float(size_match.group(1)))
-        if declarations.get("color"):
-            style["color"] = safe_pillow_color(declarations["color"], "#000000")
-        background = declarations.get("background-color") or declarations.get("background")
-        if background:
-            style["highlight"] = safe_pillow_color(background, "", allow_transparent=True)
+        if "mso-list:ignore" in css.replace(" ", "").lower():
+            self._ignored_depth = 1
+            return
+        for class_name in attributes.get("class", "").split():
+            style.update(self._class_styles.get(class_name, {}))
+        style.update(self._css_style(css))
         self._stack.append(style)
 
     def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag == "style":
+            self._inside_style = False
+            self._read_stylesheet()
+            return
+        if self._ignored_depth:
+            self._ignored_depth -= 1
+            return
         if len(self._stack) > 1:
             self._stack.pop()
-        if tag.lower() in self._blocks:
+        if tag in self._blocks:
             self._newline()
 
     def handle_data(self, data: str) -> None:
+        if self._inside_style:
+            self._style_source.append(data)
+            return
+        if self._ignored_depth:
+            return
+        if not data.strip() and ("\n" in data or "\r" in data):
+            return
         value = normalize_external_text(data)
         if not value:
             return

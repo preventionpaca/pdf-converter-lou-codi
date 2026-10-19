@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import tempfile
 from html import escape
 from pathlib import Path
@@ -118,6 +119,35 @@ def export_editable_docx(
                                 if int(run.get("start", 0)) < flow_end
                                 and int(run.get("end", 0)) > flow_offset
                             ]
+                        if not math.isclose(float(styled_item.rotation) % 360, 0.0, abs_tol=1e-6):
+                            # Word and OnlyOffice disagree on VML's
+                            # mso-rotate-with-shape flag.  Render only rotated
+                            # text frames as a transparent overlay so the DOCX
+                            # keeps the exact canvas appearance; ordinary text
+                            # frames remain fully editable VML text boxes.
+                            styled_item.text = flowed_text
+                            styled_item.flow_next_id = ""
+                            object_image = temporary / f"text-{page_number + 1}-{index + 1}.png"
+                            left, top, width, height = _render_object_png(
+                                styled_item, object_image
+                            )
+                            relationship_id, _image = document.part.get_or_add_image(
+                                str(object_image)
+                            )
+                            paragraph._p.append(
+                                _picture_overlay_xml(
+                                    styled_item,
+                                    page_number,
+                                    index,
+                                    relationship_id,
+                                    left,
+                                    top,
+                                    width,
+                                    height,
+                                    None,
+                                )
+                            )
+                            continue
                         link_relationships = [
                             (
                                 int(link.get("start", 0)),
@@ -168,10 +198,27 @@ def export_editable_docx(
 
 def _render_object_png(item: PageObject, target: Path) -> tuple[float, float, float, float]:
     clone = copy.deepcopy(item)
-    left = min(clone.x, clone.x + clone.width)
-    top = min(clone.y, clone.y + clone.height)
-    right = max(clone.x, clone.x + clone.width)
-    bottom = max(clone.y, clone.y + clone.height)
+    x1, x2 = sorted((clone.x, clone.x + clone.width))
+    y1, y2 = sorted((clone.y, clone.y + clone.height))
+    if not math.isclose(float(clone.rotation) % 360, 0.0, abs_tol=1e-6):
+        centre_x, centre_y = (x1 + x2) / 2, (y1 + y2) / 2
+        angle = math.radians(float(clone.rotation))
+        cosine, sine = math.cos(angle), math.sin(angle)
+        corners = []
+        for x, y in ((x1, y1), (x2, y1), (x2, y2), (x1, y2)):
+            offset_x, offset_y = x - centre_x, y - centre_y
+            corners.append(
+                (
+                    centre_x + offset_x * cosine - offset_y * sine,
+                    centre_y + offset_x * sine + offset_y * cosine,
+                )
+            )
+        left = min(point[0] for point in corners)
+        top = min(point[1] for point in corners)
+        right = max(point[0] for point in corners)
+        bottom = max(point[1] for point in corners)
+    else:
+        left, top, right, bottom = x1, y1, x2, y2
     padding = 4.0
     width = max(8.0, right - left)
     height = max(8.0, bottom - top)
