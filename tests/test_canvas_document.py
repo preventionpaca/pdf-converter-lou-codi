@@ -947,6 +947,52 @@ def test_text_preview_rotates_the_rendered_pixels_not_only_the_selection_frame(
     assert rendered.getbbox() is not None
 
 
+def test_text_preview_tolerates_malformed_imported_formatting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    editor = object.__new__(DocumentEditorWindow)
+    editor.zoom = 1.0
+    item = PageObject(
+        "text", 0, 0, 0, 100, 40,
+        text="Texte importé", rotation=90,
+        fill="couleur inconnue", border_color="",
+        text_styles=[{
+            "start": "début", "end": None, "font_size": "grand",
+            "color": "pas-une-couleur", "highlight": "invalide",
+        }],
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.ImageTk.PhotoImage",
+        lambda image: image,
+    )
+
+    rendered = editor._text_preview(item, item.text, 100, 40)
+
+    assert rendered.size == (40, 100)
+    assert rendered.getbbox() is not None
+
+
+def test_emergency_text_preview_still_clips_and_rotates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    editor = object.__new__(DocumentEditorWindow)
+    editor.zoom = 1.0
+    item = PageObject(
+        "text", 0, 0, 0, 120, 35,
+        text="Première ligne\nDeuxième ligne\nTexte qui ne doit pas déborder",
+        rotation=90,
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.ImageTk.PhotoImage",
+        lambda image: image,
+    )
+
+    rendered = editor._basic_text_preview(item, item.text, 120, 35)
+
+    assert rendered.size == (35, 120)
+    assert rendered.getbbox() is not None
+
+
 def test_pdf_export_rotates_text_and_its_border_without_losing_content(tmp_path: Path) -> None:
     target = tmp_path / "texte-tourne.pdf"
     document = CanvasDocument(objects=[PageObject(

@@ -19,7 +19,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 import pymupdf
-from PIL import Image, ImageDraw, ImageFont, ImageGrab, ImageOps, ImageTk
+from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageGrab, ImageOps, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
 from ..paths import module_output_directory
@@ -76,6 +76,36 @@ from .windowing import center_window, make_modal, maximize_window
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
+
+
+def safe_pillow_color(value: object, fallback: str, *, allow_transparent: bool = False) -> str:
+    """Return a Pillow-compatible colour without trusting imported rich-text data."""
+    candidate = str(value or "").strip()
+    if allow_transparent and candidate.lower() in {"", "none", "transparent"}:
+        return ""
+    try:
+        ImageColor.getrgb(candidate)
+    except (TypeError, ValueError):
+        return fallback
+    return candidate
+
+
+def safe_number(value: object, fallback: float, *, minimum: float | None = None) -> float:
+    """Coerce values loaded from old/imported documents to a finite number."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = fallback
+    if not math.isfinite(number):
+        number = fallback
+    return max(minimum, number) if minimum is not None else number
+
+
+def safe_text_offset(value: object, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def normalize_external_text(value: str) -> str:
@@ -2824,42 +2854,19 @@ class DocumentEditorWindow(tk.Toplevel):
                     x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags
                 )
             except Exception as exc:
-                # Une police ou un caractère exotique ne doit jamais faire
-                # disparaître l'objet ni interrompre le rendu de la page.
+                # Même un ancien document mal formé doit rester borné par son
+                # cadre et tourner avec lui. L'ancien secours Canvas dessinait
+                # tout le texte sans découpage et sans rotation.
                 print(
-                    f"Lou Còdi: aperçu texte simplifié ({type(exc).__name__})",
+                    f"Lou Còdi: aperçu texte simplifié ({type(exc).__name__}: {exc})",
                     file=sys.stderr,
                 )
-                dash = (
-                    (5, 3)
-                    if item.border_style == "dashed"
-                    else (1, 3) if item.border_style == "dotted" else None
+                picture = self._basic_text_preview(
+                    render_item, displayed_text, max(1, round(w)), max(1, round(h))
                 )
-                self.canvas.create_rectangle(
-                    x,
-                    y,
-                    x + w,
-                    y + h,
-                    fill="" if item.fill.lower() in {"", "none", "transparent"} else item.fill,
-                    outline=item.border_color if item.border_width > 0 else "",
-                    width=max(1, round(item.border_width * self.zoom)),
-                    dash=dash,
-                    tags=tags,
-                )
-                self.canvas.create_text(
-                    x + 4,
-                    y + 4,
-                    text=displayed_text,
-                    anchor="nw",
-                    width=max(5, w - 8),
-                    justify=item.align if item.align != "justify" else "left",
-                    fill=item.color,
-                    font=(
-                        self._tk_font_family(item.font_family),
-                        max(7, round(item.font_size * self.zoom)),
-                        "bold" if item.bold else "normal",
-                    ),
-                    tags=tags,
+                self._overlay_images.append(picture)
+                self.canvas.create_image(
+                    x + w / 2, y + h / 2, image=picture, anchor="center", tags=tags
                 )
             if item.kind == "text" and emphasized:
                 selection_points = [
@@ -3001,8 +3008,42 @@ class DocumentEditorWindow(tk.Toplevel):
     def _text_preview(self, item: PageObject, text: str, width: int, height: int) -> ImageTk.PhotoImage:
         """Render a flat text frame, then rotate its transparent bitmap around its centre."""
         render_item = copy.copy(item)
-        render_width, render_height = width, height
-        transparent = render_item.fill.lower() in {"", "none", "transparent"}
+        render_item.font_size = safe_number(render_item.font_size, 12.0, minimum=1.0)
+        render_item.border_width = safe_number(render_item.border_width, 0.0, minimum=0.0)
+        render_item.rotation = safe_number(render_item.rotation, 0.0)
+        render_item.font_family = str(render_item.font_family or "Sans-serif")
+        render_item.color = safe_pillow_color(render_item.color, "#000000")
+        render_item.border_color = safe_pillow_color(render_item.border_color, "#000000")
+        render_item.fill = safe_pillow_color(render_item.fill, "#FFFFFF", allow_transparent=True)
+        render_item.text_styles = [
+            {
+                **run,
+                "start": safe_text_offset(run.get("start", 0)),
+                "end": safe_text_offset(run.get("end", 0)),
+            }
+            for run in render_item.text_styles
+            if isinstance(run, dict)
+        ]
+        render_item.text_links = [
+            {
+                **run,
+                "start": safe_text_offset(run.get("start", 0)),
+                "end": safe_text_offset(run.get("end", 0)),
+            }
+            for run in render_item.text_links
+            if isinstance(run, dict)
+        ]
+        render_item.paragraph_alignments = [
+            {
+                **run,
+                "start": safe_text_offset(run.get("start", 0)),
+                "end": safe_text_offset(run.get("end", 0)),
+            }
+            for run in render_item.paragraph_alignments
+            if isinstance(run, dict)
+        ]
+        render_width, render_height = max(1, width), max(1, height)
+        transparent = not render_item.fill
         image = Image.new("RGBA", (render_width, render_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         if not transparent:
@@ -3035,17 +3076,17 @@ class DocumentEditorWindow(tk.Toplevel):
             line_end = line_start + len(line)
             boundaries = {line_start, line_end}
             for link in render_item.text_links:
-                boundaries.add(max(line_start, min(line_end, int(link.get("start", 0)))))
-                boundaries.add(max(line_start, min(line_end, int(link.get("end", 0)))))
+                boundaries.add(max(line_start, min(line_end, safe_text_offset(link.get("start", 0)))))
+                boundaries.add(max(line_start, min(line_end, safe_text_offset(link.get("end", 0)))))
             for style_run in render_item.text_styles:
-                boundaries.add(max(line_start, min(line_end, int(style_run.get("start", 0)))))
-                boundaries.add(max(line_start, min(line_end, int(style_run.get("end", 0)))))
+                boundaries.add(max(line_start, min(line_end, safe_text_offset(style_run.get("start", 0)))))
+                boundaries.add(max(line_start, min(line_end, safe_text_offset(style_run.get("end", 0)))))
             ordered = sorted(boundaries)
             fragments: list[tuple[str, dict[str, object], ImageFont.FreeTypeFont | ImageFont.ImageFont, bool, float]] = []
             for start, end in pairwise(ordered):
                 fragment = text[start:end]
                 fragment_style = text_style_at(render_item, start)
-                fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
+                fragment_size = max(7, round(safe_number(fragment_style.get("font_size"), render_item.font_size, minimum=1.0) * self.zoom))
                 try:
                     fragment_file = _font_file(
                         str(fragment_style["font_family"]),
@@ -3056,8 +3097,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 except (OSError, TypeError):
                     fragment_font = font
                 linked = any(
-                    int(link.get("start", 0)) < end
-                    and int(link.get("end", 0)) > start
+                    safe_text_offset(link.get("start", 0)) < end
+                    and safe_text_offset(link.get("end", 0)) > start
                     and link.get("hyperlink")
                     for link in render_item.text_links
                 )
@@ -3081,9 +3122,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 render_width, actual_line_width, padding, line_alignment
             )
             for fragment, fragment_style, fragment_font, linked, fragment_width in fragments:
-                fragment_size = max(7, round(float(fragment_style["font_size"]) * self.zoom))
-                color = "#1769AA" if linked else str(fragment_style["color"])
-                highlight = str(fragment_style.get("highlight", ""))
+                fragment_size = max(7, round(safe_number(fragment_style.get("font_size"), render_item.font_size, minimum=1.0) * self.zoom))
+                color = "#1769AA" if linked else safe_pillow_color(fragment_style.get("color"), render_item.color)
+                highlight = safe_pillow_color(
+                    fragment_style.get("highlight"), "", allow_transparent=True
+                )
                 displayed_width = fragment_width + fragment.count(" ") * extra_space
                 if highlight:
                     draw.rectangle(
@@ -3103,14 +3146,14 @@ class DocumentEditorWindow(tk.Toplevel):
                     underline_y = min(render_height - 1, py + fragment_size + 2)
                     draw.line(
                         (cursor_x, underline_y, cursor_x + displayed_width, underline_y),
-                        fill="#1769AA" if linked else str(fragment_style["color"]),
+                        fill="#1769AA" if linked else color,
                         width=max(1, round(self.zoom)),
                     )
                 if fragment_style["strikethrough"]:
                     strike_y = min(render_height - 1, py + fragment_size * 0.55)
                     draw.line(
                         (cursor_x, strike_y, cursor_x + displayed_width, strike_y),
-                        fill=str(fragment_style["color"]), width=max(1, round(self.zoom)),
+                        fill=color, width=max(1, round(self.zoom)),
                     )
                 cursor_x += displayed_width
             search_from = max(search_from, line_end)
@@ -3118,6 +3161,54 @@ class DocumentEditorWindow(tk.Toplevel):
         if rotation:
             image = image.rotate(
                 -rotation,
+                expand=True,
+                resample=Image.Resampling.BICUBIC,
+                fillcolor=(0, 0, 0, 0),
+            )
+        return ImageTk.PhotoImage(image)
+
+    def _basic_text_preview(
+        self, item: PageObject, text: str, width: int, height: int
+    ) -> ImageTk.PhotoImage:
+        """Last-resort preview that still clips and rotates the complete frame."""
+        render_item = copy.copy(item)
+        render_item.font_size = safe_number(render_item.font_size, 12.0, minimum=1.0)
+        render_item.border_width = safe_number(render_item.border_width, 0.0, minimum=0.0)
+        render_item.rotation = safe_number(render_item.rotation, 0.0)
+        render_item.color = safe_pillow_color(render_item.color, "#000000")
+        render_item.border_color = safe_pillow_color(render_item.border_color, "#000000")
+        render_item.fill = safe_pillow_color(render_item.fill, "#FFFFFF", allow_transparent=True)
+        width, height = max(1, width), max(1, height)
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        if render_item.fill:
+            draw.rectangle((0, 0, width - 1, height - 1), fill=render_item.fill)
+        border_width = max(0, round(render_item.border_width * self.zoom))
+        if border_width:
+            draw_styled_rectangle(
+                draw,
+                (border_width // 2, border_width // 2, width - 1 - border_width // 2, height - 1 - border_width // 2),
+                color=render_item.border_color,
+                width=max(1, border_width),
+                style=render_item.border_style if render_item.border_style in {"solid", "dashed", "dotted"} else "solid",
+            )
+        font_size = max(7, round(render_item.font_size * self.zoom))
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", font_size)
+        except OSError:
+            font = ImageFont.load_default()
+        line_height = max(1, round(font_size * 1.25))
+        y = max(2, round(4 * self.zoom))
+        for line in text.splitlines() or [""]:
+            if y + line_height > height:
+                break
+            # Pillow clips at the image boundary: text cannot spill into the
+            # following linked frame even in this emergency renderer.
+            draw.text((max(2, round(4 * self.zoom)), y), line, font=font, fill=render_item.color)
+            y += line_height
+        if render_item.rotation % 360:
+            image = image.rotate(
+                -(render_item.rotation % 360),
                 expand=True,
                 resample=Image.Resampling.BICUBIC,
                 fillcolor=(0, 0, 0, 0),
