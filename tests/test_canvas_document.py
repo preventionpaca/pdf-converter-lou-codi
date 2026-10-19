@@ -1,5 +1,6 @@
 import copy
 import math
+import re
 import zipfile
 from itertools import pairwise
 from pathlib import Path
@@ -35,12 +36,14 @@ from lou_codi_pdf_converter.ui.document_editor import (
     driving_dimension_translation,
     draw_styled_rectangle,
     edge_coincidence_translation,
+    extract_clipboard_html,
     expanded_group_indices,
     inline_editor_font_size,
     inline_editor_padding,
     merge_mirrored_outlines,
     normalize_external_text,
     normalize_plain_paste,
+    normalize_rich_plain_fallback,
     objects_bounds,
     paragraph_alignment_at,
     parse_tabular_clipboard,
@@ -192,6 +195,37 @@ def test_office_html_clipboard_keeps_styles_and_lists() -> None:
     assert rich_clipboard_matches_plain(text, "Titre\n· Premier point\n· Second point")
 
 
+def test_office_cf_html_header_does_not_disable_rich_paste() -> None:
+    html = '<html><body><p><b>Saisie Word</b> <u>soulignée</u></p></body></html>'
+    header = (
+        "Version:1.0\r\n"
+        "StartHTML:0000000105\r\n"
+        "EndHTML:0000000178\r\n"
+        "StartFragment:0000000117\r\n"
+        "EndFragment:0000000164\r\n"
+    )
+    payload = header + html
+    start = len(header)
+    payload = re.sub(
+        r"StartHTML:\d+",
+        f"StartHTML:{start:010d}",
+        payload,
+    )
+    payload = re.sub(
+        r"EndHTML:\d+",
+        f"EndHTML:{len(payload):010d}",
+        payload,
+    )
+
+    extracted = extract_clipboard_html(payload)
+    text, styles = parse_rich_clipboard_html(payload)
+
+    assert extracted == html
+    assert text == "Saisie Word soulignée"
+    assert any(run.get("bold") for run in styles)
+    assert any(run.get("underline") for run in styles)
+
+
 def test_office_html_clipboard_reads_css_classes_and_ignores_list_marker_glyphs() -> None:
     html = """
     <html><head><style>
@@ -228,6 +262,14 @@ def test_plain_paste_removes_office_bullets_symbol_font_and_indentation() -> Non
     source = "\t\uf0b7\tPremier point\n    • Deuxième point\n\tTexte ordinaire"
 
     assert normalize_plain_paste(source) == "Premier point\nDeuxième point\nTexte ordinaire"
+
+
+def test_rich_paste_fallback_replaces_office_symbol_bullets_without_squares() -> None:
+    source = "·\uf0b7« Premier point »\n\uf0a7 Deuxième point"
+
+    assert normalize_rich_plain_fallback(source) == (
+        "• « Premier point »\n• Deuxième point"
+    )
 
 
 def test_styled_rectangle_draws_real_gaps_for_dashed_and_dotted_borders() -> None:

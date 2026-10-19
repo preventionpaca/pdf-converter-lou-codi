@@ -351,6 +351,7 @@ class RichClipboardHTMLParser(HTMLParser):
 
 
 def parse_rich_clipboard_html(value: str) -> tuple[str, list[dict[str, object]]]:
+    value = extract_clipboard_html(value)
     parser = RichClipboardHTMLParser()
     parser.feed(value)
     text = "".join(parser.parts)
@@ -366,6 +367,25 @@ def parse_rich_clipboard_html(value: str) -> tuple[str, list[dict[str, object]]]
         if int(run["end"]) - leading > 0 and int(run["start"]) - leading < len(text)
     ]
     return text, [run for run in styles if run["end"] > run["start"]]
+
+
+def extract_clipboard_html(value: str) -> str:
+    """Remove the CF_HTML transport header used by Word and some Office ports."""
+    match_start = re.search(r"(?im)^StartHTML:\s*(\d+)", value)
+    match_end = re.search(r"(?im)^EndHTML:\s*(\d+)", value)
+    if match_start:
+        start = int(match_start.group(1))
+        end = int(match_end.group(1)) if match_end else len(value)
+        if 0 <= start < end <= len(value):
+            return value[start:end]
+    fragment_start = value.find("<!--StartFragment-->")
+    fragment_end = value.find("<!--EndFragment-->")
+    if fragment_start >= 0 and fragment_end > fragment_start:
+        return value[
+            fragment_start + len("<!--StartFragment-->") : fragment_end
+        ]
+    html_start = value.lower().find("<html")
+    return value[html_start:] if html_start >= 0 else value
 
 
 def rich_clipboard_matches_plain(rich_text: str, plain_text: str) -> bool:
@@ -392,12 +412,31 @@ def normalize_external_text(value: str) -> str:
     value = value.replace("\v", "\n").replace("\f", "\n")
     value = value.replace("\u2028", "\n").replace("\u2029", "\n")
     value = value.replace("\u00a0", " ")
+    value = value.translate(
+        {
+            ord("\uf0b7"): "•",
+            ord("\uf0a7"): "▪",
+            ord("\uf0d8"): "➢",
+        }
+    )
     value = unicodedata.normalize("NFC", value)
     return "".join(
         character
         for character in value
         if character in "\n\t" or not unicodedata.category(character).startswith("C")
     )
+
+
+def normalize_rich_plain_fallback(value: str) -> str:
+    """Keep lists readable when an Office clipboard exposes no usable HTML."""
+    cleaned: list[str] = []
+    marker = re.compile(r"^([\t ]*)[·•▪◦‣⁃●○■□◆◇➢➤]+[\t ]*")
+    for line in normalize_external_text(value).split("\n"):
+        match = marker.match(line)
+        if match:
+            line = f"{match.group(1)}• {line[match.end():]}"
+        cleaned.append(line)
+    return "\n".join(cleaned)
 
 
 def normalize_plain_paste(value: str) -> str:
@@ -3410,9 +3449,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 fragment_size = max(7, round(safe_number(fragment_style.get("font_size"), render_item.font_size, minimum=1.0) * self.zoom))
                 try:
                     fragment_file = _font_file(
-                        str(fragment_style["font_family"]),
-                        bool(fragment_style["bold"]),
-                        bool(fragment_style["italic"]),
+                        str(fragment_style.get("font_family", render_item.font_family)),
+                        bool(fragment_style.get("bold", render_item.bold)),
+                        bool(fragment_style.get("italic", render_item.italic)),
                     )
                     fragment_font = ImageFont.truetype(fragment_file, fragment_size) if fragment_file else font
                 except (OSError, TypeError):
@@ -3463,14 +3502,18 @@ class DocumentEditorWindow(tk.Toplevel):
                             character_x += extra_space
                 else:
                     draw.text((cursor_x, py), fragment, font=fragment_font, fill=color)
-                if linked or fragment_style["underline"]:
+                if linked or bool(fragment_style.get("underline", render_item.underline)):
                     underline_y = min(render_height - 1, py + fragment_size + 2)
                     draw.line(
                         (cursor_x, underline_y, cursor_x + displayed_width, underline_y),
                         fill="#1769AA" if linked else color,
                         width=max(1, round(self.zoom)),
                     )
-                if fragment_style["strikethrough"]:
+                if bool(
+                    fragment_style.get(
+                        "strikethrough", render_item.strikethrough
+                    )
+                ):
                     strike_y = min(render_height - 1, py + fragment_size * 0.55)
                     draw.line(
                         (cursor_x, strike_y, cursor_x + displayed_width, strike_y),
@@ -7068,8 +7111,11 @@ class DocumentEditorWindow(tk.Toplevel):
             value = rich_text
         else:
             rich_styles = []
-            if not rich:
-                value = normalize_plain_paste(value)
+            value = (
+                normalize_rich_plain_fallback(value)
+                if rich
+                else normalize_plain_paste(value)
+            )
         if not value or value == "LOUCODI_OBJECTS":
             return "break"
         widget = event.widget if event is not None else self._editing_widget
@@ -7115,17 +7161,66 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _clipboard_html(self) -> str:
         """Read the rich clipboard target, including Linux office fallbacks."""
-        try:
-            value = self.selection_get(selection="CLIPBOARD", type="text/html")
-            if value:
-                return str(value)
-        except tk.TclError:
-            pass
+        target_names = [
+            "text/html",
+            "text/html;charset=utf-8",
+            "text/html;charset=UTF-8",
+            "HTML Format",
+        ]
+        for target in target_names:
+            try:
+                value = self.selection_get(selection="CLIPBOARD", type=target)
+                if value:
+                    return str(value)
+            except tk.TclError:
+                continue
         commands: list[list[str]] = []
         if shutil.which("wl-paste"):
-            commands.append(["wl-paste", "--no-newline", "--type", "text/html"])
+            try:
+                available = subprocess.run(
+                    ["wl-paste", "--list-types"],
+                    capture_output=True,
+                    check=True,
+                    timeout=2,
+                    text=True,
+                ).stdout.splitlines()
+            except (OSError, subprocess.SubprocessError):
+                available = []
+            target_names = [
+                target
+                for target in available
+                if "html" in target.casefold()
+            ] or ["text/html"]
+            commands.extend(
+                ["wl-paste", "--no-newline", "--type", target]
+                for target in target_names
+            )
         if shutil.which("xclip"):
-            commands.append(["xclip", "-selection", "clipboard", "-t", "text/html", "-o"])
+            try:
+                available = subprocess.run(
+                    [
+                        "xclip",
+                        "-selection",
+                        "clipboard",
+                        "-t",
+                        "TARGETS",
+                        "-o",
+                    ],
+                    capture_output=True,
+                    check=True,
+                    timeout=2,
+                ).stdout.decode("utf-8", errors="replace").splitlines()
+            except (OSError, subprocess.SubprocessError):
+                available = []
+            target_names = [
+                target
+                for target in available
+                if "html" in target.casefold()
+            ] or ["text/html"]
+            commands.extend(
+                ["xclip", "-selection", "clipboard", "-t", target, "-o"]
+                for target in target_names
+            )
         for command in commands:
             try:
                 result = subprocess.run(
