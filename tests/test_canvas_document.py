@@ -35,6 +35,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     expanded_group_indices,
     merge_mirrored_outlines,
     normalize_external_text,
+    normalize_plain_paste,
     objects_bounds,
     paragraph_alignment_at,
     parse_tabular_clipboard,
@@ -68,6 +69,12 @@ def test_office_html_clipboard_keeps_styles_and_lists() -> None:
     assert any(run.get("italic") and text[run["start"] : run["end"]] == "Premier point" for run in styles)
     assert any(run.get("font_family") == "Serif" and run.get("font_size") == 14 for run in styles)
     assert rich_clipboard_matches_plain(text, "Titre\n· Premier point\n· Second point")
+
+
+def test_plain_paste_removes_office_bullets_symbol_font_and_indentation() -> None:
+    source = "\t\uf0b7\tPremier point\n    • Deuxième point\n\tTexte ordinaire"
+
+    assert normalize_plain_paste(source) == "Premier point\nDeuxième point\nTexte ordinaire"
 
 
 def test_styled_rectangle_draws_real_gaps_for_dashed_and_dotted_borders() -> None:

@@ -234,6 +234,17 @@ def normalize_external_text(value: str) -> str:
     )
 
 
+def normalize_plain_paste(value: str) -> str:
+    """Produce genuinely unformatted text, without office list indentation."""
+    value = normalize_external_text(value)
+    cleaned: list[str] = []
+    for line in value.split("\n"):
+        line = line.replace("\uf0b7", "").replace("\uf0a7", "")
+        line = re.sub(r"^[\t ]*[•·▪◦‣⁃●○■□◆◇➢➤]+[\t ]*", "", line)
+        cleaned.append(line.lstrip("\t "))
+    return "\n".join(cleaned)
+
+
 def draw_styled_rectangle(
     draw: ImageDraw.ImageDraw,
     box: tuple[int, int, int, int],
@@ -6838,12 +6849,12 @@ class DocumentEditorWindow(tk.Toplevel):
         rich_text = ""
         rich_styles: list[dict[str, object]] = []
         if rich:
-            try:
-                html_value = self.selection_get(selection="CLIPBOARD", type="text/html")
-                if html_value:
-                    rich_text, rich_styles = parse_rich_clipboard_html(str(html_value))
-            except (tk.TclError, UnicodeError, ValueError):
-                pass
+            html_value = self._clipboard_html()
+            if html_value:
+                try:
+                    rich_text, rich_styles = parse_rich_clipboard_html(html_value)
+                except (UnicodeError, ValueError):
+                    pass
         try:
             value = normalize_external_text(self.clipboard_get())
         except tk.TclError:
@@ -6852,6 +6863,8 @@ class DocumentEditorWindow(tk.Toplevel):
             value = rich_text
         else:
             rich_styles = []
+            if not rich:
+                value = normalize_plain_paste(value)
         if not value or value == "LOUCODI_OBJECTS":
             return "break"
         widget = event.widget if event is not None else self._editing_widget
@@ -6894,6 +6907,30 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _paste_plain_text_widget(self) -> str:
         return self._paste_clean_text_widget(rich=False) or "break"
+
+    def _clipboard_html(self) -> str:
+        """Read the rich clipboard target, including Linux office fallbacks."""
+        try:
+            value = self.selection_get(selection="CLIPBOARD", type="text/html")
+            if value:
+                return str(value)
+        except tk.TclError:
+            pass
+        commands: list[list[str]] = []
+        if shutil.which("wl-paste"):
+            commands.append(["wl-paste", "--no-newline", "--type", "text/html"])
+        if shutil.which("xclip"):
+            commands.append(["xclip", "-selection", "clipboard", "-t", "text/html", "-o"])
+        for command in commands:
+            try:
+                result = subprocess.run(
+                    command, capture_output=True, check=True, timeout=2
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.stdout:
+                return result.stdout.decode("utf-8", errors="replace")
+        return ""
 
     def _redraw_text_chain(self, root: PageObject) -> None:
         chain_ids = {root.object_id}
@@ -7630,11 +7667,42 @@ class DocumentEditorWindow(tk.Toplevel):
             self.status.configure(text="Sélectionnez un ou plusieurs objets à copier.")
             return
         self._object_clipboard = [copy.deepcopy(self.document.objects[index]) for index in indices]
+        if len(self._object_clipboard) == 1 and self._object_clipboard[0].kind == "image":
+            if self._copy_image_to_system_clipboard(self._object_clipboard[0]):
+                self.status.configure(
+                    text="Image copiée comme PNG : vous pouvez la coller dans Pinta, OnlyOffice ou Lou Còdi."
+                )
+                return
         self.clipboard_clear()
         self.clipboard_append("LOUCODI_OBJECTS")
         self.status.configure(
             text=f"{len(self._object_clipboard)} objet(s) copié(s). Changez de page puis utilisez Coller."
         )
+
+    def _copy_image_to_system_clipboard(self, item: PageObject) -> bool:
+        """Expose a Lou Còdi image as a standard PNG clipboard target on Linux."""
+        try:
+            with Image.open(item.image_path) as source:
+                stream = io.BytesIO()
+                source.save(stream, format="PNG")
+                payload = stream.getvalue()
+        except (OSError, ValueError):
+            return False
+        commands: list[list[str]] = []
+        if shutil.which("wl-copy"):
+            commands.append(["wl-copy", "--type", "image/png"])
+        if shutil.which("xclip"):
+            commands.append(["xclip", "-selection", "clipboard", "-t", "image/png", "-i"])
+        for command in commands:
+            try:
+                subprocess.run(
+                    command, input=payload, check=True, timeout=3,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            return True
+        return False
 
     def _copy_shortcut(self, _event: object = None) -> str | None:
         if isinstance(self.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
