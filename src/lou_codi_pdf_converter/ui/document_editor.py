@@ -24,7 +24,7 @@ import pymupdf
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageGrab, ImageOps, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
-from ..paths import downloads_directory, module_output_directory
+from ..paths import collision_free_target, downloads_directory, module_output_directory
 from ..services.canvas_document import (
     A4_HEIGHT,
     A4_WIDTH,
@@ -57,6 +57,13 @@ from ..services.font_catalog import (
     installed_families,
     normalize_font_name,
     refresh_font_catalog,
+)
+from ..services.email_share import (
+    EmailSettings,
+    email_command,
+    load_email_settings,
+    open_email_draft,
+    save_email_settings,
 )
 from ..services.docx_canvas import export_editable_docx
 from ..services.docx_import import import_docx_as_canvas
@@ -1553,6 +1560,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Aa Polices", self._show_font_catalog, "Afficher les polices installées et leurs équivalences"),
             ("📦 Polices", self._show_bundled_fonts, "Voir les polices réellement livrées avec Lou Còdi"),
             ("OCR", self._ocr_pdf_page, "Reconnaître le texte de la page PDF scannée"),
+            ("✉ PDF", self._email_pdf, "Exporter en PDF et préparer un message avec pièce jointe"),
         ), color="#DDF3E7")
         self._buttons(layout, (
             ("▯", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
@@ -2113,6 +2121,7 @@ class DocumentEditorWindow(tk.Toplevel):
             label="Exporter en DOCX modifiable…",
             command=self._export_docx,
         )
+        file_menu.add_command(label="Envoyer le PDF par e-mail…", command=self._email_pdf)
         file_menu.add_command(label="Imprimer…", command=self._print, accelerator="Ctrl+P")
         file_menu.add_separator()
         file_menu.add_command(label="Fermer", command=self._request_close)
@@ -2157,6 +2166,8 @@ class DocumentEditorWindow(tk.Toplevel):
         tools_menu.add_command(label="Pipette typographique PDF…", command=self._start_pdf_font_picker)
         tools_menu.add_command(label="Catalogue des polices…", command=self._show_font_catalog)
         tools_menu.add_command(label="Polices livrées avec Lou Còdi…", command=self._show_bundled_fonts)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Réglages d’envoi par e-mail…", command=self._configure_email)
         tools_menu.add_separator()
         tools_menu.add_command(label="Reconnaître le texte de la page PDF (OCR)…", command=self._ocr_pdf_page)
         menu.add_cascade(label="Outils", menu=tools_menu)
@@ -12746,6 +12757,111 @@ class DocumentEditorWindow(tk.Toplevel):
     def _choose_export(self, extension: str, label: str) -> Path | None:
         stem = self.project_path.stem if self.project_path else "nouveau_document"
         return choose_save_path(self, document_destination(), stem, extension)
+
+    def _email_settings_dialog(self, *, prepare: bool) -> None:
+        settings = load_email_settings()
+        dialog = tk.Toplevel(self)
+        dialog.title("Préparer l’envoi du document" if prepare else "Réglages d’envoi par e-mail")
+        dialog.geometry("720x640")
+        dialog.configure(bg=BACKGROUND)
+        tk.Label(
+            dialog,
+            text="Envoi du document par e-mail",
+            bg=NAVY,
+            fg="white",
+            font=("Sans", 17, "bold"),
+            padx=20,
+            pady=12,
+        ).pack(fill="x")
+        form = ttk.Frame(dialog, padding=18)
+        form.pack(fill="both", expand=True)
+        ttk.Label(
+            form,
+            text=(
+                "Lou Còdi prépare un brouillon dans votre messagerie. "
+                "Il ne conserve aucun mot de passe et n’envoie jamais le message automatiquement."
+            ),
+            wraplength=670,
+        ).pack(anchor="w", pady=(0, 12))
+        recipient = tk.StringVar(value=settings.recipient)
+        subject = tk.StringVar(value=settings.subject)
+        ttk.Label(form, text="Destinataire par défaut").pack(anchor="w")
+        ttk.Entry(form, textvariable=recipient).pack(fill="x", pady=(2, 10))
+        ttk.Label(form, text="Objet — {document} sera remplacé par le nom du PDF").pack(anchor="w")
+        ttk.Entry(form, textvariable=subject).pack(fill="x", pady=(2, 10))
+        ttk.Label(form, text="Message").pack(anchor="w")
+        body = tk.Text(form, height=10, wrap="word", font=("Sans", 11))
+        body.pack(fill="both", expand=True, pady=(2, 10))
+        body.insert("1.0", settings.body)
+        ttk.Label(form, text="Signature").pack(anchor="w")
+        signature = tk.Text(form, height=5, wrap="word", font=("Sans", 11))
+        signature.pack(fill="x", pady=(2, 10))
+        signature.insert("1.0", settings.signature)
+
+        def current_settings() -> EmailSettings:
+            return EmailSettings(
+                recipient=recipient.get().strip(),
+                subject=subject.get().strip() or "Document {document}",
+                body=body.get("1.0", "end-1c"),
+                signature=signature.get("1.0", "end-1c"),
+            )
+
+        def save_only() -> None:
+            save_email_settings(current_settings())
+            self.status.configure(text="Réglages d’envoi enregistrés localement.")
+
+        def prepare_message() -> None:
+            email_settings = current_settings()
+            save_email_settings(email_settings)
+            self._commit_inline_editor(render=False)
+            directory = document_destination() / "Envois par e-mail"
+            directory.mkdir(parents=True, exist_ok=True)
+            stem = self.project_path.stem if self.project_path else "nouveau_document"
+            target = collision_free_target(directory, stem, ".pdf")
+            try:
+                export_canvas_pdf(self.document, target)
+                supports_attachment = email_command(email_settings, target) is not None
+                opened = open_email_draft(email_settings, target)
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                messagebox.showerror("Préparation impossible", str(exc), parent=dialog)
+                return
+            if not opened:
+                messagebox.showerror(
+                    "Messagerie indisponible",
+                    f"Le PDF a été créé ici :\n{target}",
+                    parent=dialog,
+                )
+                return
+            if not supports_attachment:
+                open_path(target.parent)
+                messagebox.showinfo(
+                    "Pièce jointe à ajouter",
+                    "La messagerie a été ouverte, mais ce système ne permet pas d’ajouter "
+                    "automatiquement la pièce jointe. Le dossier du PDF a donc aussi été ouvert.",
+                    parent=dialog,
+                )
+            self.last_export = target
+            self.status.configure(text=f"Brouillon préparé avec le PDF : {target.name}")
+            dialog.destroy()
+
+        actions = ttk.Frame(form)
+        actions.pack(fill="x", pady=(6, 0))
+        ttk.Button(actions, text="Annuler", command=dialog.destroy).pack(side="right")
+        if prepare:
+            ttk.Button(
+                actions,
+                text="Exporter et préparer le message",
+                command=prepare_message,
+                style="Primary.TButton",
+            ).pack(side="right", padx=8)
+        ttk.Button(actions, text="Enregistrer les réglages", command=save_only).pack(side="left")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+
+    def _configure_email(self) -> None:
+        self._email_settings_dialog(prepare=False)
+
+    def _email_pdf(self) -> None:
+        self._email_settings_dialog(prepare=True)
 
     def _export_pdf(self) -> None:
         self._commit_inline_editor(render=False)
