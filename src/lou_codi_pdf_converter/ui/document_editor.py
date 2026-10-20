@@ -1146,6 +1146,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.configure(bg=BACKGROUND)
         self.document = CanvasDocument()
         self._saved_document = copy.deepcopy(self.document)
+        self._document_tabs: list[dict[str, object]] = []
+        self._active_document_tab = 0
         self.project_path: Path | None = None
         self.last_export: Path | None = None
         self.current_page = 0
@@ -1265,6 +1267,9 @@ class DocumentEditorWindow(tk.Toplevel):
         if icon is not None:
             self.iconphoto(False, icon)
         self._build()
+        self._document_tabs.append({})
+        self._store_active_document_tab("Nouveau document")
+        self._refresh_document_tabs()
         self._apply_toolbar_size()
         if project_path is not None:
             loaded = CanvasDocument.load(project_path)
@@ -1280,6 +1285,8 @@ class DocumentEditorWindow(tk.Toplevel):
                     else f"Projet ouvert : {project_path.name}"
                 )
             )
+            self._store_active_document_tab(project_path.name)
+            self._refresh_document_tabs()
         self.protocol("WM_DELETE_WINDOW", self._request_close)
         self._toggle_properties_panel()
         translate_widget_tree(self)
@@ -1320,6 +1327,9 @@ class DocumentEditorWindow(tk.Toplevel):
             padx=12,
             pady=4,
         ).pack(side="right", padx=(0, 8))
+
+        self.document_tab_bar = tk.Frame(self, bg="#D5DFEA", padx=8, pady=3)
+        self.document_tab_bar.pack(fill="x")
         tk.Button(
             header,
             text="▦  Ruban",
@@ -1343,6 +1353,7 @@ class DocumentEditorWindow(tk.Toplevel):
         diagrams = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         technical = ttk.Frame(self.ribbon, style="App.TFrame", padding=(12, 7))
         self.ribbon.add(insertion, text="Insérer")
+        self.ribbon.add(formatting, text="Texte")
         self.ribbon.add(table_tools, text="Tableau")
         self.ribbon.add(tools, text="Outils")
         self.ribbon.add(layout, text="Mise en page")
@@ -1379,6 +1390,12 @@ class DocumentEditorWindow(tk.Toplevel):
         self.font_family_combo.pack(side="left", padx=2)
         self.font_family_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
         self.font_family_combo.bind("<Return>", lambda _event: self._apply_font_family())
+        ttk.Button(
+            formatting,
+            text="Polices…",
+            command=self._show_font_catalog,
+            style="EditorTool.TButton",
+        ).pack(side="left", padx=(3, 6))
         self.font_sample = ttk.Label(formatting, style="Body.TLabel")
         self.font_sample.pack(side="left", padx=(3, 5))
         self.font_family_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_font_sample(), add="+")
@@ -1511,6 +1528,9 @@ class DocumentEditorWindow(tk.Toplevel):
             ("📏", self._start_measurement, "Mesurer librement deux points"),
             ("┊↔┊", self._start_dimension_measurement, "Créer une cote avec lignes de rappel"),
             ("∠", self._start_angle_measurement, "Mesurer un angle intérieur avec trois points"),
+            ("🔎 Police PDF", self._start_pdf_font_picker, "Détecter la police, la taille et la couleur dans le PDF"),
+            ("Aa Polices", self._show_font_catalog, "Afficher les polices installées et leurs équivalences"),
+            ("OCR", self._ocr_pdf_page, "Reconnaître le texte de la page PDF scannée"),
         ), color="#DDF3E7")
         self._buttons(layout, (
             ("▯", lambda: self._set_orientation("portrait"), "Page en orientation portrait"),
@@ -2804,15 +2824,137 @@ class DocumentEditorWindow(tk.Toplevel):
         self.selected_indices.clear()
         self._render()
 
-    def _new(self) -> None:
-        self._checkpoint()
-        self.document = CanvasDocument()
-        self.project_path = None
-        self.current_page = 0
+    def _store_active_document_tab(self, title: str | None = None) -> None:
+        if not getattr(self, "_document_tabs", None):
+            return
+        tab = self._document_tabs[self._active_document_tab]
+        tab.update(
+            document=self.document,
+            saved_document=self._saved_document,
+            project_path=self.project_path,
+            last_export=self.last_export,
+            current_page=self.current_page,
+            zoom=self.zoom,
+            undo_stack=self.undo_stack,
+            redo_stack=self.redo_stack,
+        )
+        if title is not None:
+            tab["title"] = title
+
+    def _restore_document_tab(self, index: int) -> None:
+        tab = self._document_tabs[index]
+        self.document = tab["document"]  # type: ignore[assignment]
+        self._saved_document = tab["saved_document"]  # type: ignore[assignment]
+        self.project_path = tab.get("project_path")  # type: ignore[assignment]
+        self.last_export = tab.get("last_export")  # type: ignore[assignment]
+        self.current_page = int(tab.get("current_page", 0))
+        self.zoom = float(tab.get("zoom", 1.15))
+        self.undo_stack = tab["undo_stack"]  # type: ignore[assignment]
+        self.redo_stack = tab["redo_stack"]  # type: ignore[assignment]
         self.selected = None
         self.selected_indices.clear()
-        self.status.configure(text="Nouvelle page A4")
+
+    def _switch_document_tab(self, index: int) -> None:
+        if index == self._active_document_tab or not 0 <= index < len(self._document_tabs):
+            return
+        self._commit_inline_editor(render=False)
+        self._store_active_document_tab()
+        self._active_document_tab = index
+        self._restore_document_tab(index)
+        self._refresh_document_tabs()
+        self.status.configure(text=f"Document actif : {self._document_tabs[index].get('title', 'Document')}")
         self._render()
+
+    def _open_document_tab(
+        self,
+        document: CanvasDocument,
+        title: str,
+        *,
+        project_path: Path | None = None,
+        saved_document: CanvasDocument | None = None,
+    ) -> None:
+        self._commit_inline_editor(render=False)
+        self._store_active_document_tab()
+        self.document = document
+        self._saved_document = copy.deepcopy(saved_document if saved_document is not None else document)
+        self.project_path = project_path
+        self.last_export = None
+        self.current_page = 0
+        self.zoom = 1.15
+        self.undo_stack = []
+        self.redo_stack = []
+        self.selected = None
+        self.selected_indices.clear()
+        self._document_tabs.append({})
+        self._active_document_tab = len(self._document_tabs) - 1
+        self._store_active_document_tab(title)
+        self._refresh_document_tabs()
+        self._render()
+
+    def _refresh_document_tabs(self) -> None:
+        if not hasattr(self, "document_tab_bar"):
+            return
+        for child in self.document_tab_bar.winfo_children():
+            child.destroy()
+        for index, tab in enumerate(self._document_tabs):
+            active = index == self._active_document_tab
+            tk.Button(
+                self.document_tab_bar,
+                text=str(tab.get("title", f"Document {index + 1}")),
+                command=lambda selected=index: self._switch_document_tab(selected),
+                bg="#FFFFFF" if active else "#BFCBDA",
+                fg=NAVY,
+                relief="sunken" if active else "raised",
+                padx=12,
+                pady=3,
+            ).pack(side="left", padx=(0, 3))
+        tk.Button(
+            self.document_tab_bar,
+            text="＋",
+            command=self._new,
+            bg="#E4ECF4",
+            fg=NAVY,
+            relief="flat",
+            padx=10,
+        ).pack(side="left", padx=2)
+        tk.Button(
+            self.document_tab_bar,
+            text="× Fermer l’onglet",
+            command=self._close_document_tab,
+            bg="#E4ECF4",
+            fg="#7A2730",
+            relief="flat",
+            padx=8,
+        ).pack(side="right")
+
+    def _close_document_tab(self) -> None:
+        self._commit_inline_editor(render=False)
+        if self._has_unsaved_changes():
+            choice = messagebox.askyesnocancel(
+                "Document non enregistré",
+                "Enregistrer ce document avant de fermer son onglet ?",
+                parent=self,
+            )
+            if choice is None or choice and not self._save():
+                return
+        if len(self._document_tabs) == 1:
+            self.document = CanvasDocument()
+            self._saved_document = copy.deepcopy(self.document)
+            self.project_path = None
+            self.current_page = 0
+            self.undo_stack = []
+            self.redo_stack = []
+            self._store_active_document_tab("Nouveau document")
+        else:
+            del self._document_tabs[self._active_document_tab]
+            self._active_document_tab = min(self._active_document_tab, len(self._document_tabs) - 1)
+            self._restore_document_tab(self._active_document_tab)
+        self._refresh_document_tabs()
+        self._render()
+
+    def _new(self) -> None:
+        self._open_document_tab(CanvasDocument(), "Nouveau document")
+        self.status.configure(text="Nouvelle page A4")
 
     def _import_pdf(self) -> None:
         files = choose_documents(self, {".pdf"})
@@ -2824,13 +2966,11 @@ class DocumentEditorWindow(tk.Toplevel):
         except (OSError, RuntimeError, ValueError) as exc:
             messagebox.showerror("PDF illisible", str(exc), parent=self)
             return
-        self._checkpoint()
-        self.document = CanvasDocument(source_pdf=str(files[0]), page_count=max(1, count))
-        self.current_page = 0
-        self.selected = None
-        self.selected_indices.clear()
+        self._open_document_tab(
+            CanvasDocument(source_pdf=str(files[0]), page_count=max(1, count)),
+            files[0].name,
+        )
         self.status.configure(text=f"PDF importé comme document complet : {files[0].name}")
-        self._render()
 
     def _page_size(self) -> tuple[float, float]:
         if self.document.source_pdf and Path(self.document.source_pdf).is_file():
@@ -12226,6 +12366,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.document.save(path)
         self.project_path = path
         self._saved_document = copy.deepcopy(self.document)
+        self._store_active_document_tab(path.name)
+        self._refresh_document_tabs()
         self.status.configure(text=f"Projet enregistré : {path.name}")
 
     def _save_as_template(self) -> bool:
@@ -12293,8 +12435,20 @@ class DocumentEditorWindow(tk.Toplevel):
         except (OSError, ValueError, TypeError, KeyError) as exc:
             messagebox.showerror("Document illisible", str(exc), parent=self)
             return
-        self._checkpoint()
-        self._use_loaded_document(loaded, files[0])
+        opened_from_template = loaded.is_template
+        loaded.is_template = False
+        self._open_document_tab(
+            loaded,
+            files[0].name,
+            project_path=None if opened_from_template else files[0],
+        )
+        self.status.configure(
+            text=(
+                f"Nouveau document créé depuis le modèle {files[0].name}."
+                if opened_from_template
+                else f"Projet ouvert : {files[0].name}"
+            )
+        )
 
     def _import_docx(self) -> None:
         files = choose_documents(
@@ -12309,19 +12463,13 @@ class DocumentEditorWindow(tk.Toplevel):
         except (OSError, ValueError, TypeError, KeyError) as exc:
             messagebox.showerror("DOCX illisible", str(exc), parent=self)
             return
-        self._checkpoint()
-        self.document = loaded
-        self.project_path = None
-        self._saved_document = copy.deepcopy(loaded)
-        self.current_page, self.selected = 0, None
-        self.selected_indices.clear()
+        self._open_document_tab(loaded, files[0].name)
         self.status.configure(
             text=(
                 f"DOCX importé : {files[0].name}. Textes, listes, styles et images "
                 "sont modifiables dans Document Studio."
             )
         )
-        self._render()
 
     def _append_docx(self) -> None:
         files = choose_documents(self, {".docx"}, initial_directory=document_destination())

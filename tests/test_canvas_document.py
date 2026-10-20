@@ -89,6 +89,35 @@ def test_append_canvas_document_remaps_pages_and_relationships() -> None:
     assert first.objects[0].group == first.objects[1].group != "g"
 
 
+def test_document_tabs_keep_independent_documents_and_history() -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    first = CanvasDocument(objects=[PageObject("text", 0, 1, 2, 3, 4, text="Premier")])
+    second = CanvasDocument(objects=[PageObject("text", 0, 1, 2, 3, 4, text="Second")])
+    editor.document = first
+    editor._saved_document = copy.deepcopy(first)
+    editor.project_path = Path("premier.cod")
+    editor.last_export = None
+    editor.current_page = 0
+    editor.zoom = 1.15
+    editor.undo_stack = []
+    editor.redo_stack = []
+    editor.selected = None
+    editor.selected_indices = set()
+    editor._document_tabs = [{}, {"document": second}]
+    editor._active_document_tab = 0
+
+    editor._store_active_document_tab("Premier")
+    editor._document_tabs[1].update(
+        saved_document=copy.deepcopy(second), project_path=None, last_export=None,
+        current_page=0, zoom=0.8, undo_stack=[], redo_stack=[], title="Second",
+    )
+    editor._restore_document_tab(1)
+
+    assert editor.document.objects[0].text == "Second"
+    assert editor.zoom == 0.8
+    assert editor.project_path is None
+
+
 def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None:
     ranges = [
         {"start": 0, "end": 5, "bold": True},
