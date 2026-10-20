@@ -1217,6 +1217,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_selection_range: tuple[int, int] | None = None
         self._editing_drag_anchor: str | None = None
         self._editing_text_context_menu: tk.Menu | None = None
+        self._inline_font_family_combo: ttk.Combobox | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -6823,35 +6824,26 @@ class DocumentEditorWindow(tk.Toplevel):
 
         tool(primary, "↶", self._undo_inline_text, "Annuler")
         tool(primary, "↷", self._redo_inline_text, "Rétablir")
-        family_names = BUILTIN_FONT_FAMILIES
-        families = tk.Menubutton(
+        families = ttk.Combobox(
             primary,
             textvariable=self.font_family_var,
-            relief="flat",
-            width=16,
-            anchor="w",
-            padx=5,
+            values=available_font_families(),
+            width=19,
         )
-        family_menu = tk.Menu(families, tearoff=False)
+        self._inline_font_family_combo = families
 
-        def choose_family(name: str) -> None:
-            self.font_family_var.set(name)
+        def choose_family(_event: object = None) -> None:
             self._apply_font_family()
             self._update_font_sample()
 
-        for family_name in family_names:
-            family_menu.add_command(
-                label=f"{family_name}   AaBb 123",
-                font=(self._tk_font_family(family_name), 12),
-                command=lambda selected=family_name: choose_family(selected),
-            )
-        families.configure(menu=family_menu)
         families.pack(side="left", padx=2, pady=2)
         families.bind(
             "<ButtonPress-1>",
             lambda _event, current=widget: self._preserve_inline_text_selection(current),
             add="+",
         )
+        families.bind("<<ComboboxSelected>>", choose_family)
+        families.bind("<Return>", choose_family)
         tool(
             primary,
             "Aa+",
@@ -8306,6 +8298,7 @@ class DocumentEditorWindow(tk.Toplevel):
         table_cell = self._editing_table_cell
         table_original = self._editing_table_original
         self._editing_widget = None
+        self._inline_font_family_combo = None
         dialog = self._editing_dialog
         self._editing_dialog = None
         self._editing_object_id = ""
@@ -12610,6 +12603,11 @@ class DocumentEditorWindow(tk.Toplevel):
             self.font_family_combo.configure(
                 values=available_font_families()
             )
+            if (
+                self._inline_font_family_combo is not None
+                and self._inline_font_family_combo.winfo_exists()
+            ):
+                self._inline_font_family_combo.configure(values=available_font_families())
             first_name = installed[0].stem
             search.set(closest_family(first_name, tuple(families)) or first_name)
             refresh()
