@@ -45,6 +45,13 @@ déjà installé sur l’ordinateur, il est détecté automatiquement pour les c
 fidèles, PowerPoint, OpenDocument, les anciens formats et les mises en page complexes.
 LibreOffice reste un logiciel indépendant et n’est pas inclus dans les paquets Lou Còdi.
 
+Dans Document Studio, un DOCX peut être ouvert comme document courant ou inséré à la
+suite des pages existantes. Les PDF conservent leur rendu d’origine ; une pipette
+typographique relève la police, la taille, la couleur et le style d’un texte sélectionnable.
+Le catalogue de polices inventorie les familles installées, propose la plus proche si la
+police manque et ouvre sa recherche sur Google Fonts. L’OCR des pages scannées reste
+facultatif et n’est activé que si Tesseract est disponible sur l’ordinateur.
+
 L’installation complète ajoute le raccourci et les dossiers de travail.
 L’installation personnalisée permet de désactiver ces éléments facultatifs ; le cœur de
 l’application et ses bibliothèques PDF sont toujours installés.

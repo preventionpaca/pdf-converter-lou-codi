@@ -14,6 +14,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     FLOW_BREAK_TOKEN,
     CanvasDocument,
     PageObject,
+    append_canvas_document,
     export_canvas_pdf,
     flowed_text_context,
     flowed_text_for_object,
@@ -67,6 +68,25 @@ from lou_codi_pdf_converter.ui.document_editor import (
     transform_object_assembly,
     union_axis_aligned_rectangles,
 )
+
+
+def test_append_canvas_document_remaps_pages_and_relationships() -> None:
+    first = CanvasDocument(page_count=2)
+    root = PageObject("text", 0, 10, 10, 100, 30, text="A", group="g")
+    child = PageObject(
+        "text", 1, 10, 10, 100, 30, text="B", group="g", source_id=root.object_id
+    )
+    root.flow_next_id = child.object_id
+    second = CanvasDocument(page_count=2, objects=[root, child])
+
+    append_canvas_document(first, second)
+
+    assert first.page_count == 4
+    assert [item.page for item in first.objects] == [2, 3]
+    assert first.objects[0].object_id != root.object_id
+    assert first.objects[0].flow_next_id == first.objects[1].object_id
+    assert first.objects[1].source_id == first.objects[0].object_id
+    assert first.objects[0].group == first.objects[1].group != "g"
 
 
 def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None:

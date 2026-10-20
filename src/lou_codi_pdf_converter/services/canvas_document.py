@@ -16,6 +16,7 @@ from pathlib import Path
 import pymupdf
 from PIL import ImageFont
 
+from .font_catalog import font_file as system_font_file
 from .table_formulas import evaluate_table, evaluate_table_cells
 
 A4_WIDTH = 595.28
@@ -217,6 +218,29 @@ class CanvasDocument:
             is_template=bool(data.get("is_template", False)),
             objects=[PageObject(**item) for item in object_values],
         )
+
+
+def append_canvas_document(target: CanvasDocument, source: CanvasDocument) -> None:
+    """Append editable pages while keeping every object relationship unique."""
+    if target.source_pdf or source.source_pdf:
+        raise ValueError("L’insertion à la suite d’un fond PDF n’est pas encore prise en charge.")
+    page_offset = target.page_count
+    copies = [PageObject(**asdict(item)) for item in source.objects]
+    id_map = {item.object_id: uuid.uuid4().hex for item in copies}
+    group_map: dict[str, str] = {}
+    for item in copies:
+        old_id = item.object_id
+        item.object_id = id_map[old_id]
+        item.page += page_offset
+        if item.source_id:
+            item.source_id = id_map.get(item.source_id, item.source_id)
+        if item.flow_next_id:
+            item.flow_next_id = id_map.get(item.flow_next_id, item.flow_next_id)
+        if item.group:
+            group_map.setdefault(item.group, uuid.uuid4().hex)
+            item.group = group_map[item.group]
+    target.objects.extend(copies)
+    target.page_count += source.page_count
 
 
 def export_canvas_pdf(document: CanvasDocument, target: Path) -> None:
@@ -1370,9 +1394,14 @@ def _font_file(family: str, bold: bool, italic: bool) -> str | None:
         "Flèches": {"Regular": "DejaVuSans.ttf", "Bold": "DejaVuSans-Bold.ttf", "Italic": "DejaVuSans-Oblique.ttf", "BoldItalic": "DejaVuSans-BoldOblique.ttf"},
     }
     bundled_root = Path(__file__).resolve().parents[1] / "assets" / "fonts"
-    bundled = bundled_root / bundled_names.get(family, bundled_names["Sans-serif"])[style]
-    if bundled.is_file():
-        return str(bundled)
+    bundled_family = bundled_names.get(family)
+    if bundled_family is not None:
+        bundled = bundled_root / bundled_family[style]
+        if bundled.is_file():
+            return str(bundled)
+    custom = system_font_file(family, bold=bold, italic=italic)
+    if custom is not None:
+        return str(custom)
     if sys.platform == "win32":
         fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
         names = {

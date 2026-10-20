@@ -33,6 +33,7 @@ from ..services.canvas_document import (
     TEXT_FRAME_VERTICAL_PADDING,
     CanvasDocument,
     PageObject,
+    append_canvas_document,
     export_canvas_pdf,
     flowed_text_context,
     fitted_table_cell_text,
@@ -49,6 +50,7 @@ from ..services.canvas_document import (
     wrapped_text_ranges,
     _font_file,
 )
+from ..services.font_catalog import closest_family, installed_families, normalize_font_name
 from ..services.docx_canvas import export_editable_docx
 from ..services.docx_import import import_docx_as_canvas
 from ..services.destinations import (
@@ -1222,6 +1224,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._text_draw_start: tuple[float, float] | None = None
         self._modifier_keys: set[str] = set()
         self._context_menu_visible = False
+        self._pdf_font_pick_mode = False
         self._pending_corner_treatment: tuple[int, str, float] | None = None
         self._pending_edge_snap: dict[str, object] | None = None
         self._pending_driving_dimension: dict[str, object] | None = None
@@ -1367,18 +1370,18 @@ class DocumentEditorWindow(tk.Toplevel):
         ), color="#DCEBFA")
         ttk.Label(formatting, text="Police", style="Body.TLabel").pack(side="left", padx=(10, 3))
         self.font_family_var = tk.StringVar(value="Sans-serif")
-        font_family = ttk.Combobox(
+        self.font_family_combo = ttk.Combobox(
             formatting,
             textvariable=self.font_family_var,
-            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles"),
-            state="readonly",
+            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles") + installed_families(),
             width=14,
         )
-        font_family.pack(side="left", padx=2)
-        font_family.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
+        self.font_family_combo.pack(side="left", padx=2)
+        self.font_family_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_font_family())
+        self.font_family_combo.bind("<Return>", lambda _event: self._apply_font_family())
         self.font_sample = ttk.Label(formatting, style="Body.TLabel")
         self.font_sample.pack(side="left", padx=(3, 5))
-        font_family.bind("<<ComboboxSelected>>", lambda _event: self._update_font_sample(), add="+")
+        self.font_family_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_font_sample(), add="+")
         self._font_sample_image: ImageTk.PhotoImage | None = None
         self._update_font_sample()
         ttk.Label(formatting, text="Taille", style="Body.TLabel").pack(side="left", padx=(10, 3))
@@ -2047,6 +2050,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Nouveau depuis un modèle…", self._load_template, ""),
             ("Importer un PDF…", self._import_pdf, ""),
             ("Importer un DOCX…", self._import_docx, ""),
+            ("Insérer un DOCX à la suite…", self._append_docx, ""),
             ("Enregistrer", self._save, "Ctrl+S"),
             ("Enregistrer sous…", self._save_as, "Ctrl+Maj+S"),
             ("Enregistrer comme modèle…", self._save_as_template, ""),
@@ -2107,6 +2111,12 @@ class DocumentEditorWindow(tk.Toplevel):
         view_menu.add_command(label="Zoom avant", command=lambda: self._set_zoom(0.1), accelerator="Ctrl++")
         view_menu.add_command(label="Zoom arrière", command=lambda: self._set_zoom(-0.1), accelerator="Ctrl+-")
         menu.add_cascade(label="Affichage", menu=view_menu)
+        tools_menu = tk.Menu(menu, tearoff=False)
+        tools_menu.add_command(label="Pipette typographique PDF…", command=self._start_pdf_font_picker)
+        tools_menu.add_command(label="Catalogue des polices…", command=self._show_font_catalog)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Reconnaître le texte de la page PDF (OCR)…", command=self._ocr_pdf_page)
+        menu.add_cascade(label="Outils", menu=tools_menu)
         self.configure(menu=menu)
         self.bind("<Control-n>", lambda _event: self._new())
         self.bind("<Control-o>", lambda _event: self._load())
@@ -4825,6 +4835,11 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _cancel_current_action(self, _event: object = None) -> str:
         self._dismiss_context_menu()
+        if self._pdf_font_pick_mode:
+            self._pdf_font_pick_mode = False
+            self.canvas.configure(cursor="")
+            self.status.configure(text="Pipette typographique annulée.")
+            return "break"
         if self._crop_mode_index is not None:
             self._cancel_visual_crop()
             self.status.configure(text="Rognage annulé.")
@@ -5640,6 +5655,9 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._dismiss_context_menu()
+        if self._pdf_font_pick_mode:
+            self._pick_pdf_font(event)
+            return
         if self._crop_mode_index is not None:
             self._start_crop_drag(event)
             return
@@ -6392,7 +6410,7 @@ class DocumentEditorWindow(tk.Toplevel):
             "Inter": "Inter",
             "JetBrains Mono": "JetBrains Mono",
             "Symboles": "DejaVu Sans",
-        }.get(family, "DejaVu Sans")
+        }.get(family, family or "DejaVu Sans")
 
     def _update_font_sample(self) -> None:
         preview = Image.new("RGBA", (92, 26), "#FFFFFF")
@@ -12304,6 +12322,150 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         )
         self._render()
+
+    def _append_docx(self) -> None:
+        files = choose_documents(self, {".docx"}, initial_directory=document_destination())
+        if not files:
+            return
+        try:
+            loaded = import_docx_as_canvas(files[0])
+            self._checkpoint()
+            first_page = self.document.page_count
+            append_canvas_document(self.document, loaded)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            messagebox.showerror("Insertion impossible", str(exc), parent=self)
+            return
+        self.current_page = first_page
+        self.selected = None
+        self.selected_indices.clear()
+        self.status.configure(text=f"DOCX inséré à la suite : {files[0].name}")
+        self._render()
+
+    def _start_pdf_font_picker(self) -> None:
+        if not self.document.source_pdf or not Path(self.document.source_pdf).is_file():
+            messagebox.showinfo("Pipette typographique", "Importez d’abord un PDF contenant du texte sélectionnable.", parent=self)
+            return
+        self._pdf_font_pick_mode = True
+        self.canvas.configure(cursor="crosshair")
+        self.status.configure(text="Pipette typographique : cliquez sur un caractère du PDF. Échap annule.")
+
+    def _pick_pdf_font(self, event: tk.Event[tk.Misc]) -> None:
+        self._pdf_font_pick_mode = False
+        self.canvas.configure(cursor="")
+        x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+        y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+        spans: list[dict[str, object]] = []
+        try:
+            with pymupdf.open(self.document.source_pdf) as pdf:
+                page = pdf[self.current_page]
+                for block in page.get_text("dict").get("blocks", []):
+                    for line in block.get("lines", []):
+                        spans.extend(line.get("spans", []))
+        except (OSError, RuntimeError, ValueError, IndexError) as exc:
+            messagebox.showerror("Pipette typographique", str(exc), parent=self)
+            return
+        def distance(span: dict[str, object]) -> float:
+            x0, y0, x1, y1 = (float(value) for value in span.get("bbox", (0, 0, 0, 0)))
+            dx = max(x0 - x, 0, x - x1)
+            dy = max(y0 - y, 0, y - y1)
+            return math.hypot(dx, dy)
+        if not spans:
+            messagebox.showinfo("Pipette typographique", "Aucun texte sélectionnable sur cette page. Utilisez l’OCR pour une page scannée.", parent=self)
+            return
+        span = min(spans, key=distance)
+        detected = normalize_font_name(str(span.get("font", "")))
+        fallback = closest_family(detected)
+        self.font_family_var.set(fallback or detected)
+        self.font_size_var.set(f"{float(span.get('size', 12.0)):.1f}")
+        color = int(span.get("color", 0)) & 0xFFFFFF
+        sample = str(span.get("text", "Texte")) or "Texte"
+        self._update_font_sample()
+        self.status.configure(text=f"Police détectée : {detected} — {span.get('size', 12)} pt. Police locale : {fallback or 'introuvable'}.")
+        if self.selected is not None and self.document.objects[self.selected].kind == "text":
+            self._checkpoint()
+            item = self.document.objects[self.selected]
+            item.font_family = fallback or detected
+            item.font_size = float(span.get("size", 12.0))
+            item.color = f"#{color:06X}"
+            flags = int(span.get("flags", 0))
+            item.bold = bool(flags & 16)
+            item.italic = bool(flags & 2)
+            self._render()
+        else:
+            self._add_object(PageObject("text", self.current_page, x, y, 220, 55, text=sample, font_family=fallback or detected, font_size=float(span.get("size", 12.0)), color=f"#{color:06X}", fill="transparent", border_width=0))
+
+    def _show_font_catalog(self) -> None:
+        families = installed_families()
+        dialog = tk.Toplevel(self)
+        dialog.title("Catalogue des polices")
+        dialog.geometry("680x500")
+        dialog.configure(bg=BACKGROUND)
+        ttk.Label(dialog, text="Polices disponibles sur cet ordinateur", font=("Sans", 15, "bold")).pack(anchor="w", padx=18, pady=(16, 6))
+        search = tk.StringVar(value=self.font_family_var.get())
+        entry = ttk.Entry(dialog, textvariable=search)
+        entry.pack(fill="x", padx=18, pady=6)
+        listbox = tk.Listbox(dialog, font=("Sans", 11))
+        listbox.pack(fill="both", expand=True, padx=18, pady=6)
+        info = ttk.Label(dialog, text="", wraplength=640)
+        info.pack(fill="x", padx=18, pady=6)
+        def refresh(*_args: object) -> None:
+            needle = search.get().casefold().strip()
+            listbox.delete(0, "end")
+            visible = [family for family in families if not needle or needle in family.casefold()]
+            for family in visible:
+                listbox.insert("end", family)
+            suggestion = closest_family(search.get(), families)
+            info.configure(text=f"Police la plus proche installée : {suggestion or 'aucune'}")
+        search.trace_add("write", refresh)
+        refresh()
+        actions = ttk.Frame(dialog, padding=18)
+        actions.pack(fill="x")
+        def use_selected() -> None:
+            selection = listbox.curselection()
+            family = listbox.get(selection[0]) if selection else closest_family(search.get(), families)
+            if family:
+                self.font_family_var.set(family)
+                self._apply_font_family()
+                self._update_font_sample()
+                dialog.destroy()
+        ttk.Button(actions, text="Utiliser la police", command=use_selected).pack(side="right")
+        ttk.Button(actions, text="Chercher une police proche sur Google Fonts", command=lambda: webbrowser.open("https://fonts.google.com/?query=" + search.get().replace(" ", "+"), new=2)).pack(side="left")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        entry.focus_set()
+
+    def _ocr_pdf_page(self) -> None:
+        executable = shutil.which("tesseract")
+        if not executable:
+            messagebox.showinfo("OCR facultatif", "Le moteur Tesseract n’est pas installé. La pipette reste disponible pour les PDF contenant déjà du texte.", parent=self)
+            return
+        if not self.document.source_pdf:
+            messagebox.showinfo("OCR facultatif", "Importez d’abord un PDF.", parent=self)
+            return
+        try:
+            with pymupdf.open(self.document.source_pdf) as pdf:
+                pixmap = pdf[self.current_page].get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+                with tempfile.TemporaryDirectory(prefix="lou-codi-ocr-") as directory:
+                    image = Path(directory) / "page.png"
+                    pixmap.save(image)
+                    languages = subprocess.run(
+                        [executable, "--list-langs"], capture_output=True, text=True,
+                        check=False, timeout=10,
+                    ).stdout.splitlines()
+                    available = {language.strip() for language in languages[1:]}
+                    requested = "+".join(language for language in ("fra", "eng") if language in available)
+                    command = [executable, str(image), "stdout"]
+                    if requested:
+                        command.extend(("-l", requested))
+                    result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=90)
+            text = result.stdout.strip()
+        except (OSError, RuntimeError, ValueError, IndexError, subprocess.TimeoutExpired) as exc:
+            messagebox.showerror("OCR impossible", str(exc), parent=self)
+            return
+        if not text:
+            messagebox.showinfo("OCR", "Aucun texte n’a été reconnu sur cette page.", parent=self)
+            return
+        self._add_object(PageObject("text", self.current_page, 45, 45, self._page_size()[0] - 90, self._page_size()[1] - 90, text=text, fill="transparent", border_width=0, font_size=10))
+        self.status.configure(text="OCR terminé : le texte reconnu a été ajouté dans une zone modifiable.")
 
     def _choose_export(self, extension: str, label: str) -> Path | None:
         stem = self.project_path.stem if self.project_path else "nouveau_document"
