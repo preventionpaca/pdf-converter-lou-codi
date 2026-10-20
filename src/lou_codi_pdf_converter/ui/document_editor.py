@@ -438,6 +438,153 @@ def parse_rich_clipboard_html(value: str) -> tuple[str, list[dict[str, object]]]
     return text, [run for run in styles if run["end"] > run["start"]]
 
 
+def parse_rich_clipboard_rtf(value: str) -> tuple[str, list[dict[str, object]]]:
+    """Extract common editable character formatting from an RTF clipboard target."""
+    fonts: dict[int, str] = {}
+    font_table = re.search(r"\{\\fonttbl(?P<body>.*?)\}\s*", value, re.DOTALL)
+    if font_table:
+        for number, name in re.findall(r"\\f(\d+)[^;{}]*\s([^;{}\\]+);", font_table.group("body")):
+            fonts[int(number)] = name.strip()
+    colors: dict[int, str] = {}
+    color_table = re.search(r"\{\\colortbl(?P<body>.*?)\}\s*", value, re.DOTALL)
+    if color_table:
+        for index, entry in enumerate(color_table.group("body").split(";")[1:], start=1):
+            red = re.search(r"\\red(\d+)", entry)
+            green = re.search(r"\\green(\d+)", entry)
+            blue = re.search(r"\\blue(\d+)", entry)
+            if red and green and blue:
+                colors[index] = f"#{int(red.group(1)):02X}{int(green.group(1)):02X}{int(blue.group(1)):02X}"
+
+    def remove_destination(source: str, marker: str) -> str:
+        cursor = 0
+        while True:
+            start = source.find(marker, cursor)
+            if start < 0:
+                return source
+            depth = 0
+            end = start
+            while end < len(source):
+                if source[end] == "{" and (end == 0 or source[end - 1] != "\\"):
+                    depth += 1
+                elif source[end] == "}" and (end == 0 or source[end - 1] != "\\"):
+                    depth -= 1
+                    if depth == 0:
+                        end += 1
+                        break
+                end += 1
+            source = source[:start] + source[end:]
+            cursor = start
+
+    for destination in ("{\\fonttbl", "{\\colortbl", "{\\stylesheet", "{\\info", "{\\pict"):
+        value = remove_destination(value, destination)
+    value = re.sub(r"\{\\\*[^{}]*\}", "", value)
+
+    token_pattern = re.compile(
+        r"\\'(?P<hex>[0-9a-fA-F]{2})|"
+        r"\\(?P<word>[a-zA-Z]+)(?P<number>-?\d+)? ?|"
+        r"\\(?P<symbol>[^a-zA-Z])|"
+        r"(?P<brace>[{}])|(?P<text>[^\\{}]+)"
+    )
+    state: dict[str, object] = {}
+    stack: list[dict[str, object]] = []
+    parts: list[str] = []
+    runs: list[dict[str, object]] = []
+    length = 0
+    unicode_skip = 1
+    skip_plain = 0
+
+    def append_text(text: str) -> None:
+        nonlocal length, skip_plain
+        if skip_plain:
+            text = text[skip_plain:]
+            skip_plain = 0
+        text = normalize_external_text(text)
+        if not text:
+            return
+        start = length
+        parts.append(text)
+        length += len(text)
+        if state:
+            style = dict(state)
+            if runs and runs[-1]["end"] == start and {
+                key: item for key, item in runs[-1].items() if key not in {"start", "end"}
+            } == style:
+                runs[-1]["end"] = length
+            else:
+                runs.append({"start": start, "end": length, **style})
+
+    for match in token_pattern.finditer(value):
+        if match.group("brace") == "{":
+            stack.append(dict(state))
+            continue
+        if match.group("brace") == "}":
+            state = stack.pop() if stack else {}
+            continue
+        if match.group("hex"):
+            append_text(bytes.fromhex(match.group("hex")).decode("cp1252", errors="replace"))
+            continue
+        if match.group("symbol"):
+            symbol = match.group("symbol")
+            if symbol in "{}\\":
+                append_text(symbol)
+            elif symbol == "~":
+                append_text(" ")
+            continue
+        if match.group("text") is not None:
+            append_text(match.group("text"))
+            continue
+        word = (match.group("word") or "").lower()
+        number = int(match.group("number")) if match.group("number") is not None else None
+        if word in {"par", "line"}:
+            append_text("\n")
+        elif word == "tab":
+            append_text("\t")
+        elif word == "u" and number is not None:
+            append_text(chr(number if number >= 0 else number + 65536))
+            skip_plain = unicode_skip
+        elif word == "uc" and number is not None:
+            unicode_skip = max(0, number)
+        elif word in {"b", "i", "ul", "strike"}:
+            key = {"b": "bold", "i": "italic", "ul": "underline", "strike": "strikethrough"}[word]
+            if number == 0:
+                state.pop(key, None)
+            else:
+                state[key] = True
+        elif word in {"ulnone", "plain"}:
+            if word == "plain":
+                state = {}
+            else:
+                state.pop("underline", None)
+        elif word == "fs" and number is not None:
+            state["font_size"] = max(1.0, number / 2)
+        elif word == "cf" and number is not None:
+            if number in colors:
+                state["color"] = colors[number]
+            else:
+                state.pop("color", None)
+        elif word == "highlight" and number is not None:
+            if number in colors:
+                state["highlight"] = colors[number]
+            else:
+                state.pop("highlight", None)
+        elif word == "f" and number is not None and number in fonts:
+            family = fonts[number]
+            state["font_family"] = (
+                "Monospace" if "courier" in family.casefold() or "mono" in family.casefold()
+                else "Serif" if "times" in family.casefold() or "serif" in family.casefold()
+                else family
+            )
+    text = "".join(parts).strip("\n")
+    leading = length - len("".join(parts).lstrip("\n"))
+    cleaned = []
+    for run in runs:
+        start = max(0, int(run["start"]) - leading)
+        end = min(len(text), int(run["end"]) - leading)
+        if end > start:
+            cleaned.append({**run, "start": start, "end": end})
+    return text, cleaned
+
+
 def extract_clipboard_html(value: str) -> str:
     """Remove the CF_HTML transport header used by Word and some Office ports."""
     match_start = re.search(r"(?im)^StartHTML:\s*(\d+)", value)
@@ -2203,6 +2350,14 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Control-y>", lambda _event: self._redo())
         self.bind("<Control-c>", self._copy_shortcut)
         self.bind("<Control-v>", self._paste_shortcut)
+        self.bind(
+            "<Control-Shift-v>",
+            lambda _event: self._paste_from_system_clipboard(rich=False),
+        )
+        self.bind(
+            "<Control-Shift-V>",
+            lambda _event: self._paste_from_system_clipboard(rich=False),
+        )
         self.bind("<Control-p>", lambda _event: self._print())
         self.bind("<Delete>", lambda _event: self._delete_selected())
         self.bind("<F4>", lambda _event: self._toggle_properties_panel())
@@ -2682,7 +2837,14 @@ class DocumentEditorWindow(tk.Toplevel):
         objects = [self.document.objects[index] for index in indices]
 
         if not objects:
-            menu.add_command(label="Coller depuis le presse-papiers", command=self._paste_from_system_clipboard)
+            menu.add_command(
+                label="Coller avec mise en forme    Ctrl+V",
+                command=self._paste_from_system_clipboard,
+            )
+            menu.add_command(
+                label="Coller en texte brut    Ctrl+Maj+V",
+                command=lambda: self._paste_from_system_clipboard(rich=False),
+            )
             if self._object_clipboard:
                 menu.add_command(label="Coller une copie Lou Còdi", command=self._paste_objects)
             menu.add_separator()
@@ -8186,6 +8348,13 @@ class DocumentEditorWindow(tk.Toplevel):
                     rich_text, rich_styles = parse_rich_clipboard_html(html_value)
                 except (UnicodeError, ValueError):
                     pass
+            if not rich_text:
+                rtf_value = self._clipboard_rtf()
+                if rtf_value:
+                    try:
+                        rich_text, rich_styles = parse_rich_clipboard_rtf(rtf_value)
+                    except (UnicodeError, ValueError):
+                        pass
         try:
             value = normalize_external_text(self.clipboard_get())
         except tk.TclError:
@@ -8311,6 +8480,50 @@ class DocumentEditorWindow(tk.Toplevel):
                 result = subprocess.run(
                     command, capture_output=True, check=True, timeout=2
                 )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.stdout:
+                return result.stdout.decode("utf-8", errors="replace")
+        return ""
+
+    def _clipboard_rtf(self) -> str:
+        """Read an RTF clipboard target without disturbing image clipboard data."""
+        target_names = ["text/rtf", "application/rtf", "Rich Text Format"]
+        for target in target_names:
+            try:
+                value = self.selection_get(selection="CLIPBOARD", type=target)
+                if value:
+                    return str(value)
+            except tk.TclError:
+                continue
+        commands: list[list[str]] = []
+        if shutil.which("wl-paste"):
+            try:
+                available = subprocess.run(
+                    ["wl-paste", "--list-types"], capture_output=True,
+                    check=True, timeout=2, text=True,
+                ).stdout.splitlines()
+            except (OSError, subprocess.SubprocessError):
+                available = []
+            commands.extend(
+                ["wl-paste", "--no-newline", "--type", target]
+                for target in available if "rtf" in target.casefold()
+            )
+        if shutil.which("xclip"):
+            try:
+                available = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
+                    capture_output=True, check=True, timeout=2,
+                ).stdout.decode("utf-8", errors="replace").splitlines()
+            except (OSError, subprocess.SubprocessError):
+                available = []
+            commands.extend(
+                ["xclip", "-selection", "clipboard", "-t", target, "-o"]
+                for target in available if "rtf" in target.casefold()
+            )
+        for command in commands:
+            try:
+                result = subprocess.run(command, capture_output=True, check=True, timeout=2)
             except (OSError, subprocess.SubprocessError):
                 continue
             if result.stdout:
@@ -9259,7 +9472,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 return candidate
         return None
 
-    def _paste_from_system_clipboard(self) -> None:
+    def _paste_from_system_clipboard(self, *, rich: bool = True) -> None:
         try:
             text_value = self.clipboard_get()
         except tk.TclError:
@@ -9270,7 +9483,7 @@ class DocumentEditorWindow(tk.Toplevel):
         rich_table_cells: list[list[dict[str, object]]] = []
         column_widths: list[float] = []
         row_heights: list[float] = []
-        html_value = self._clipboard_html()
+        html_value = self._clipboard_html() if rich else ""
         if html_value:
             rich_table_cells, column_widths, row_heights = parse_tabular_clipboard_html(html_value)
         table_cells = rich_table_cells or parse_tabular_clipboard(text_value)
@@ -9317,7 +9530,28 @@ class DocumentEditorWindow(tk.Toplevel):
             self._add_object(PageObject("image", self.current_page, 70, 80, display_width, display_height, image_path=str(image_path)))
             self.status.configure(text="Image collée depuis le presse-papiers.")
             return
-        value = normalize_external_text(text_value).strip("\n")
+        rich_text = ""
+        rich_styles: list[dict[str, object]] = []
+        if rich and html_value:
+            try:
+                rich_text, rich_styles = parse_rich_clipboard_html(html_value)
+            except (UnicodeError, ValueError):
+                pass
+        if rich and not rich_text:
+            rtf_value = self._clipboard_rtf()
+            if rtf_value:
+                try:
+                    rich_text, rich_styles = parse_rich_clipboard_rtf(rtf_value)
+                except (UnicodeError, ValueError):
+                    pass
+        plain_value = normalize_external_text(text_value).strip("\n")
+        if rich_text and (
+            rich_styles or rich_clipboard_matches_plain(rich_text, plain_value)
+        ):
+            value = rich_text
+        else:
+            rich_styles = []
+            value = normalize_rich_plain_fallback(plain_value) if rich else normalize_plain_paste(plain_value)
         if not value:
             self.status.configure(text="Le presse-papiers ne contient ni texte ni image exploitable.")
             return
@@ -9325,12 +9559,30 @@ class DocumentEditorWindow(tk.Toplevel):
             self._checkpoint()
             target = self.document.objects[self.selected]
             separator = "\n" if target.text and not target.text.endswith("\n") else ""
+            offset = len(target.text) + len(separator)
             target.text += separator + value
+            target.text_styles.extend(
+                {
+                    **run,
+                    "start": offset + int(run["start"]),
+                    "end": offset + int(run["end"]),
+                }
+                for run in rich_styles
+            )
             self._render()
-            self.status.configure(text="Texte collé à la suite de la zone sélectionnée.")
+            self.status.configure(
+                text="Texte enrichi collé à la suite de la zone sélectionnée."
+                if rich_styles else "Texte brut collé à la suite de la zone sélectionnée."
+            )
             return
-        self._add_object(PageObject("text", self.current_page, 70, 80, 320, 100, text=value))
-        self.status.configure(text="Texte collé dans une nouvelle zone.")
+        self._add_object(PageObject(
+            "text", self.current_page, 70, 80, 320, 100,
+            text=value, text_styles=rich_styles,
+        ))
+        self.status.configure(
+            text="Texte enrichi collé dans une nouvelle zone."
+            if rich_styles else "Texte brut collé dans une nouvelle zone."
+        )
 
     def _paste_objects(self) -> None:
         if not self._object_clipboard:

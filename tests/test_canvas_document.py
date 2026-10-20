@@ -51,6 +51,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     parse_tabular_clipboard,
     parse_tabular_clipboard_html,
     parse_rich_clipboard_html,
+    parse_rich_clipboard_rtf,
     proportional_resize,
     point_hits_rotation_handle,
     polygon_area,
@@ -261,6 +262,25 @@ def test_office_html_clipboard_keeps_styles_and_lists() -> None:
     assert any(run.get("italic") and text[run["start"] : run["end"]] == "Premier point" for run in styles)
     assert any(run.get("font_family") == "Serif" and run.get("font_size") == 14 for run in styles)
     assert rich_clipboard_matches_plain(text, "Titre\n· Premier point\n· Second point")
+
+
+def test_office_rtf_clipboard_keeps_common_character_styles() -> None:
+    rtf = (
+        r"{\rtf1\ansi{\fonttbl{\f0 Arial;}{\f1 Times New Roman;}}"
+        r"{\colortbl;\red18\green52\blue86;\red255\green241\blue118;}"
+        r"\f1\fs28\cf1\b Titre\b0\par "
+        r"\f0\fs22 texte \i italique\i0  et \ul souligne\ulnone  "
+        r"\highlight2 marque\highlight0.}"
+    )
+
+    text, styles = parse_rich_clipboard_rtf(rtf)
+
+    assert text == "Titre\ntexte italique et souligne marque."
+    assert any(run.get("bold") and text[run["start"] : run["end"]] == "Titre" for run in styles)
+    assert any(run.get("italic") and "italique" in text[run["start"] : run["end"]] for run in styles)
+    assert any(run.get("underline") and "souligne" in text[run["start"] : run["end"]] for run in styles)
+    assert any(run.get("highlight") == "#FFF176" and "marque" in text[run["start"] : run["end"]] for run in styles)
+    assert any(run.get("font_size") == 14 and run.get("color") == "#123456" for run in styles)
 
 
 def test_office_cf_html_header_does_not_disable_rich_paste() -> None:
