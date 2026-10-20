@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
 import pymupdf
 from PIL import ImageFont
@@ -796,15 +797,50 @@ def wrapped_text_lines(text: str, frame: PageObject) -> list[str]:
 
 
 def wrapped_text_ranges(
-    text: str, frame: PageObject
+    text: str,
+    frame: PageObject,
+    *,
+    measure: Callable[[str, float, bool, bool, str], float] | None = None,
+    measurement_scale: float = 1.0,
 ) -> list[tuple[str, int, int]]:
     """Return wrapped lines with their exact offsets in the rich source text."""
     available_width = max(
         4.0, abs(frame.width) - 2 * text_frame_horizontal_inset(frame)
-    )
+    ) * measurement_scale
     style_lookup = _text_flow_style_lookup(frame, len(text))
 
     def styled_width(value: str, start: int) -> float:
+        if measure is not None:
+            width = 0.0
+            run_start = 0
+            while run_start < len(value):
+                position = start + run_start
+                style = (
+                    style_lookup[position]
+                    if 0 <= position < len(style_lookup)
+                    else (frame.font_family, frame.font_size, frame.bold, frame.italic)
+                )
+                run_end = run_start + 1
+                while run_end < len(value):
+                    next_position = start + run_end
+                    next_style = (
+                        style_lookup[next_position]
+                        if 0 <= next_position < len(style_lookup)
+                        else (frame.font_family, frame.font_size, frame.bold, frame.italic)
+                    )
+                    if next_style != style:
+                        break
+                    run_end += 1
+                family, size, bold, italic = style
+                width += measure(
+                    family,
+                    size * measurement_scale,
+                    bold,
+                    italic,
+                    value[run_start:run_end],
+                )
+                run_start = run_end
+            return width
         return _styled_text_flow_width(frame, value, start, style_lookup)
 
     lines: list[tuple[str, int, int]] = []

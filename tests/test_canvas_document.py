@@ -1096,6 +1096,26 @@ def test_rich_wrapping_keeps_exact_source_offsets_for_preview() -> None:
     assert all(line == text[start:end] for line, start, end in ranges)
 
 
+def test_preview_wrapping_can_use_the_inline_editors_scaled_metrics() -> None:
+    text = "alpha beta gamma"
+    frame = PageObject("text", 0, 0, 0, 80, 100, text=text, font_size=10)
+    calls: list[tuple[str, float, bool, bool, str]] = []
+
+    def measure(
+        family: str, size: float, bold: bool, italic: bool, value: str
+    ) -> float:
+        calls.append((family, size, bold, italic, value))
+        return len(value) * size
+
+    ranges = wrapped_text_ranges(
+        text, frame, measure=measure, measurement_scale=2.0
+    )
+
+    assert [line for line, _start, _end in ranges] == ["alpha", "beta", "gamma"]
+    assert calls
+    assert all(call[1] == 20 for call in calls)
+
+
 def test_landscape_document_and_linked_charts_export(tmp_path: Path) -> None:
     table = PageObject("table", 0, 30, 30, 250, 100, text="Janvier\t10\nFévrier\t20")
     bars = PageObject("chart", 0, 30, 160, 250, 160, source_id=table.object_id, fill="bar")

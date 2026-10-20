@@ -16,6 +16,7 @@ import webbrowser
 from html.parser import HTMLParser
 from itertools import pairwise
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
@@ -4221,19 +4222,49 @@ class DocumentEditorWindow(tk.Toplevel):
                 style=render_item.border_style,
             )
         size = max(7, round(render_item.font_size * self.zoom))
-        suffix = "-BoldOblique" if render_item.bold and render_item.italic else "-Bold" if render_item.bold else "-Oblique" if render_item.italic else ""
-        family = "DejaVuSansMono" if render_item.font_family == "Monospace" else "DejaVuSerif" if render_item.font_family == "Serif" else "DejaVuSans"
         try:
-            font = ImageFont.truetype(f"{family}{suffix}.ttf", size)
-        except OSError:
+            base_font_file = _font_file(
+                render_item.font_family, render_item.bold, render_item.italic
+            )
+            font = (
+                ImageFont.truetype(base_font_file, size)
+                if base_font_file
+                else ImageFont.load_default()
+            )
+        except (OSError, TypeError):
             font = ImageFont.load_default()
-        lines = wrapped_text_ranges(text, render_item)
+        lines = wrapped_text_ranges(
+            text,
+            render_item,
+            measure=self._measure_editor_text,
+            measurement_scale=self.zoom,
+        )
         style_lookup = resolved_text_styles(render_item, len(text))
-        line_height = text_frame_line_height(render_item) * self.zoom
-        visible_lines = text_frame_line_capacity(render_item)
-        for row, (line, line_start, line_end) in enumerate(lines[:visible_lines]):
-            py = text_frame_vertical_inset(render_item) * self.zoom + row * line_height
+        py = text_frame_vertical_inset(render_item) * self.zoom
+        for line, line_start, line_end in lines:
+            line_styles = (
+                style_lookup[line_start:line_end]
+                if line_end > line_start
+                else [text_style_at(render_item, line_start)]
+            )
+            line_height = max(
+                self._editor_line_height(
+                    str(line_style.get("font_family", render_item.font_family)),
+                    safe_number(
+                        line_style.get("font_size"),
+                        render_item.font_size,
+                        minimum=1.0,
+                    )
+                    * self.zoom,
+                    bool(line_style.get("bold", render_item.bold)),
+                    bool(line_style.get("italic", render_item.italic)),
+                )
+                for line_style in line_styles
+            )
+            if py >= render_height:
+                break
             if py + line_height < origin_y or py > origin_y + bitmap_height:
+                py += line_height
                 continue
             boundaries = {line_start, line_end}
             for link in render_item.text_links:
@@ -4267,7 +4298,13 @@ class DocumentEditorWindow(tk.Toplevel):
                     and link.get("hyperlink")
                     for link in render_item.text_links
                 )
-                fragment_width = float(draw.textlength(fragment, font=fragment_font))
+                fragment_width = self._measure_editor_text(
+                    str(fragment_style.get("font_family", render_item.font_family)),
+                    fragment_size,
+                    bool(fragment_style.get("bold", render_item.bold)),
+                    bool(fragment_style.get("italic", render_item.italic)),
+                    fragment,
+                )
                 fragments.append((fragment, fragment_style, fragment_font, linked, fragment_width))
             actual_line_width = sum(fragment[4] for fragment in fragments)
             padding = text_frame_horizontal_inset(render_item) * self.zoom
@@ -4343,6 +4380,7 @@ class DocumentEditorWindow(tk.Toplevel):
                         fill=color, width=max(1, round(self.zoom)),
                     )
                 cursor_x += displayed_width
+            py += line_height
         rotation = float(render_item.rotation) % 360
         if rotation:
             image = image.rotate(
@@ -6819,6 +6857,60 @@ class DocumentEditorWindow(tk.Toplevel):
             "JetBrains Mono": "JetBrains Mono",
             "Symboles": "DejaVu Sans",
         }.get(family, family or "DejaVu Sans")
+
+    def _tk_layout_font(
+        self, family: str, pixel_size: float, bold: bool, italic: bool
+    ) -> tkfont.Font:
+        """Return the same pixel-sized font used by the inline text editor."""
+        pixels = max(7, round(pixel_size))
+        key = (family, pixels, bool(bold), bool(italic))
+        cache = getattr(self, "_tk_layout_font_cache", None)
+        if cache is None:
+            cache = self._tk_layout_font_cache = {}
+        font = cache.get(key)
+        if font is None:
+            font = tkfont.Font(
+                root=self,
+                family=self._tk_font_family(family),
+                size=-pixels,
+                weight="bold" if bold else "normal",
+                slant="italic" if italic else "roman",
+            )
+            cache[key] = font
+        return font
+
+    def _measure_editor_text(
+        self, family: str, pixel_size: float, bold: bool, italic: bool, text: str
+    ) -> float:
+        """Measure a rich-text run with Tk, exactly like the open editor."""
+        try:
+            return float(
+                self._tk_layout_font(family, pixel_size, bold, italic).measure(text)
+            )
+        except (AttributeError, tk.TclError):
+            font_file = _font_file(family, bold, italic)
+            try:
+                font = (
+                    ImageFont.truetype(font_file, max(7, round(pixel_size)))
+                    if font_file
+                    else ImageFont.load_default()
+                )
+            except (OSError, TypeError):
+                font = ImageFont.load_default()
+            return float(font.getlength(text))
+
+    def _editor_line_height(
+        self, family: str, pixel_size: float, bold: bool, italic: bool
+    ) -> float:
+        """Return Tk's display-line height, with a headless-test fallback."""
+        try:
+            return float(
+                self._tk_layout_font(family, pixel_size, bold, italic).metrics(
+                    "linespace"
+                )
+            )
+        except (AttributeError, tk.TclError):
+            return max(1.0, pixel_size * 1.35)
 
     def _choose_inline_font_family(self, family: str) -> None:
         self.font_family_var.set(family)
