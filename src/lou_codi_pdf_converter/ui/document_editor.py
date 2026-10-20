@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import difflib
 import io
@@ -437,6 +438,36 @@ def parse_rich_clipboard_html(value: str) -> tuple[str, list[dict[str, object]]]
         if int(run["end"]) - leading > 0 and int(run["start"]) - leading < len(text)
     ]
     return text, [run for run in styles if run["end"] > run["start"]]
+
+
+def parse_rich_clipboard_html_outside_tables(
+    value: str,
+) -> tuple[str, list[dict[str, object]]]:
+    """Read the rich paragraphs surrounding tables in a mixed Office selection."""
+    html = extract_clipboard_html(value)
+    stylesheets = "".join(
+        match.group(0)
+        for match in re.finditer(r"<style\b[^>]*>.*?</style\s*>", html, re.I | re.S)
+    )
+    without_tables = re.sub(
+        r"<table\b[^>]*>.*?</table\s*>", "<p></p>", html, flags=re.I | re.S
+    )
+    return parse_rich_clipboard_html(stylesheets + without_tables)
+
+
+def clipboard_html_image_sources(value: str) -> list[str]:
+    """Return embedded or local images representing Office shapes."""
+    html = extract_clipboard_html(value)
+    sources: list[str] = []
+    for tag in re.findall(r"<img\b[^>]*>", html, re.I | re.S):
+        match = re.search(
+            r"\bsrc\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s>]+))", tag, re.I | re.S
+        )
+        if match:
+            source = next((part for part in match.groups() if part), "").strip()
+            if source and source not in sources:
+                sources.append(source)
+    return sources
 
 
 def parse_rich_clipboard_rtf(value: str) -> tuple[str, list[dict[str, object]]]:
@@ -9606,6 +9637,32 @@ class DocumentEditorWindow(tk.Toplevel):
         image.convert("RGBA").save(target, "PNG")
         return target
 
+    def _image_from_html_source(self, source: str) -> tuple[Path, int, int] | None:
+        """Materialise an Office HTML image without accessing remote resources."""
+        try:
+            if source.lower().startswith("data:image/") and "," in source:
+                header, encoded = source.split(",", 1)
+                raw = (
+                    base64.b64decode(encoded, validate=False)
+                    if ";base64" in header.lower()
+                    else unquote(encoded).encode("latin-1")
+                )
+                with Image.open(io.BytesIO(raw)) as image:
+                    copy_image = image.convert("RGBA")
+                    width, height = copy_image.size
+                return self._store_clipboard_image(copy_image), width, height
+            candidate = self._clipboard_file_from_text(source)
+            if candidate is None and source.lower().startswith("file:"):
+                candidate = Path(url2pathname(unquote(urlparse(source).path)))
+            if candidate is None or not candidate.is_file():
+                return None
+            with Image.open(candidate) as image:
+                width, height = image.size
+                copy_image = image.convert("RGBA")
+            return self._store_clipboard_image(copy_image), width, height
+        except (OSError, ValueError, base64.binascii.Error):
+            return None
+
     @staticmethod
     def _clipboard_file_from_text(value: str) -> Path | None:
         lines = [line.strip() for line in value.splitlines() if line.strip()]
@@ -9661,6 +9718,86 @@ class DocumentEditorWindow(tk.Toplevel):
             rows, columns = len(table_cells), len(table_cells[0])
             natural_width = sum(column_widths) if any(column_widths) else columns * 105.0
             natural_height = sum(row_heights) if any(row_heights) else rows * 38.0
+            surrounding_text = ""
+            surrounding_styles: list[dict[str, object]] = []
+            image_sources: list[str] = []
+            if rich_table_cells and html_value:
+                surrounding_text, surrounding_styles = (
+                    parse_rich_clipboard_html_outside_tables(html_value)
+                )
+                image_sources = clipboard_html_image_sources(html_value)
+            html_images = [
+                image
+                for source in image_sources
+                if (image := self._image_from_html_source(source)) is not None
+            ]
+            if surrounding_text.strip() or html_images:
+                self._checkpoint()
+                pasted: list[int] = []
+                cursor_y = 80.0
+                if surrounding_text.strip():
+                    line_count = max(1, surrounding_text.count("\n") + 1)
+                    text_height = min(430.0, max(100.0, line_count * 18.0 + 24.0))
+                    self.document.objects.append(
+                        PageObject(
+                            "text",
+                            self.current_page,
+                            70,
+                            cursor_y,
+                            500,
+                            text_height,
+                            text=surrounding_text,
+                            text_styles=surrounding_styles,
+                        )
+                    )
+                    pasted.append(len(self.document.objects) - 1)
+                    cursor_y += text_height + 12.0
+                table_height = min(520.0, max(70.0, natural_height))
+                self.document.objects.append(
+                    PageObject(
+                        "table",
+                        self.current_page,
+                        70,
+                        cursor_y,
+                        min(500.0, max(180.0, natural_width)),
+                        table_height,
+                        table_cells=table_cells,
+                        font_size=10,
+                        table_column_widths=column_widths,
+                        table_row_heights=row_heights,
+                    )
+                )
+                pasted.append(len(self.document.objects) - 1)
+                cursor_y += table_height + 12.0
+                for image_path, image_width, image_height in html_images:
+                    display_width = min(320.0, max(80.0, float(image_width)))
+                    display_height = min(
+                        240.0,
+                        max(60.0, display_width * image_height / max(1, image_width)),
+                    )
+                    self.document.objects.append(
+                        PageObject(
+                            "image",
+                            self.current_page,
+                            70,
+                            cursor_y,
+                            display_width,
+                            display_height,
+                            image_path=str(image_path),
+                        )
+                    )
+                    pasted.append(len(self.document.objects) - 1)
+                    cursor_y += display_height + 12.0
+                self.selected_indices = set(pasted)
+                self.selected = pasted[-1]
+                self._render()
+                self.status.configure(
+                    text=(
+                        f"Sélection mixte collée : texte, tableau {rows} × {columns}"
+                        + (f" et {len(html_images)} forme(s)/image(s)." if html_images else ".")
+                    )
+                )
+                return
             self._add_object(PageObject(
                 "table", self.current_page, 70, 80,
                 min(500.0, max(180.0, natural_width)),

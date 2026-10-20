@@ -37,6 +37,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     driving_dimension_translation,
     draw_styled_rectangle,
     edge_coincidence_translation,
+    clipboard_html_image_sources,
     extract_clipboard_html,
     fitted_table_cell_text,
     expanded_group_indices,
@@ -51,6 +52,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     parse_tabular_clipboard,
     parse_tabular_clipboard_html,
     parse_rich_clipboard_html,
+    parse_rich_clipboard_html_outside_tables,
     parse_rich_clipboard_rtf,
     proportional_resize,
     point_hits_rotation_handle,
@@ -262,6 +264,22 @@ def test_office_html_clipboard_keeps_styles_and_lists() -> None:
     assert any(run.get("italic") and text[run["start"] : run["end"]] == "Premier point" for run in styles)
     assert any(run.get("font_family") == "Serif" and run.get("font_size") == 14 for run in styles)
     assert rich_clipboard_matches_plain(text, "Titre\n· Premier point\n· Second point")
+
+
+def test_mixed_office_html_keeps_text_around_table_and_shape_images() -> None:
+    html = (
+        '<style>.important{font-weight:bold}</style>'
+        '<p class="important">Texte avant</p>'
+        '<table><tr><td>A</td><td>B</td></tr></table>'
+        '<img src="data:image/png;base64,AAAA">'
+        '<p>Texte après</p>'
+    )
+
+    text, styles = parse_rich_clipboard_html_outside_tables(html)
+
+    assert text == "Texte avant\nTexte après"
+    assert any(run.get("bold") and text[run["start"] : run["end"]] == "Texte avant" for run in styles)
+    assert clipboard_html_image_sources(html) == ["data:image/png;base64,AAAA"]
 
 
 def test_office_rtf_clipboard_keeps_common_character_styles() -> None:
