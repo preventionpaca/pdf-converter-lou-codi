@@ -52,6 +52,26 @@ Le catalogue de polices inventorie les familles installées, propose la plus pro
 police manque et ouvre sa recherche sur Google Fonts. L’OCR des pages scannées reste
 facultatif et n’est activé que si Tesseract est disponible sur l’ordinateur.
 
+### Envoi par e-mail et comptes Google
+
+La version actuelle peut exporter le document en PDF et préparer un message dans
+la messagerie configurée sur l’ordinateur. Elle ne réalise pas encore l’envoi
+direct depuis un compte Google.
+
+Une intégration Google pourra être ajoutée sur demande, après étude de
+faisabilité. Elle reposera sur la connexion officielle Google OAuth : Lou Còdi
+ne demandera et ne conservera jamais le mot de passe du compte. L’objectif est
+de permettre l’envoi explicite d’un document par Gmail, la consultation des
+contacts et des groupes de contacts, ainsi que l’utilisation de plusieurs
+comptes, par exemple un compte personnel et un compte professionnel. Le compte
+actif déterminera l’adresse d’expédition, les contacts et les groupes affichés.
+Changer de compte ne mélangera donc pas les carnets d’adresses.
+
+Cette future fonction nécessitera un compte Google et une autorisation accordée
+par chaque utilisateur. Elle n’est pas annoncée comme disponible dans la version
+actuelle et sa généralisation à d’autres fournisseurs de messagerie sera étudiée
+en fonction des demandes.
+
 L’installation complète ajoute le raccourci et les dossiers de travail.
 L’installation personnalisée permet de désactiver ces éléments facultatifs ; le cœur de
 l’application et ses bibliothèques PDF sont toujours installés.

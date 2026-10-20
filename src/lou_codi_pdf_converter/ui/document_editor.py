@@ -2171,6 +2171,12 @@ class DocumentEditorWindow(tk.Toplevel):
         tools_menu.add_separator()
         tools_menu.add_command(label="Reconnaître le texte de la page PDF (OCR)…", command=self._ocr_pdf_page)
         menu.add_cascade(label="Outils", menu=tools_menu)
+        help_menu = tk.Menu(menu, tearoff=False)
+        help_menu.add_command(
+            label="Notice — envoi et comptes Google…",
+            command=self._show_google_email_notice,
+        )
+        menu.add_cascade(label="Aide", menu=help_menu)
         self.configure(menu=menu)
         self.bind("<Control-n>", lambda _event: self._new())
         self.bind("<Control-o>", lambda _event: self._load())
@@ -2190,6 +2196,25 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Right>", lambda event: self._nudge_selected(event, 1, 0))
         self.bind("<Up>", lambda event: self._nudge_selected(event, 0, -1))
         self.bind("<Down>", lambda event: self._nudge_selected(event, 0, 1))
+
+    def _show_google_email_notice(self) -> None:
+        messagebox.showinfo(
+            "Envoi par e-mail et comptes Google",
+            (
+                "La version actuelle exporte le document en PDF et prépare un message "
+                "dans la messagerie de l’ordinateur. Elle n’envoie pas encore directement "
+                "le message avec Google.\n\n"
+                "Une intégration Google pourra être développée sur demande, après étude "
+                "de faisabilité. Elle utilisera la connexion officielle Google : aucun mot "
+                "de passe ne sera demandé ou enregistré par Lou Còdi.\n\n"
+                "Le projet prévu comprend l’envoi explicite avec Gmail, les contacts et "
+                "groupes Google, ainsi que plusieurs comptes. Le compte actif — personnel "
+                "ou professionnel — déterminera l’expéditeur, les contacts et les groupes "
+                "proposés, sans mélanger les carnets d’adresses.\n\n"
+                "Un compte Google et l’autorisation de l’utilisateur seront nécessaires."
+            ),
+            parent=self,
+        )
 
     def _refresh_destinations_menu(self) -> None:
         """Refresh shortcuts after the settings dialog without reopening the editor."""
