@@ -8413,8 +8413,50 @@ class DocumentEditorWindow(tk.Toplevel):
     def _paste_plain_text_widget(self) -> str:
         return self._paste_clean_text_widget(rich=False) or "break"
 
+    @staticmethod
+    def _linux_clipboard_target(keyword: str) -> str:
+        """Read a rich clipboard target before Tk coerces it to plain text."""
+        target_names: list[str] = []
+        commands: list[list[str]] = []
+        if shutil.which("wl-paste"):
+            try:
+                target_names = subprocess.run(
+                    ["wl-paste", "--list-types"], capture_output=True,
+                    check=True, timeout=2, text=True,
+                ).stdout.splitlines()
+            except (OSError, subprocess.SubprocessError):
+                target_names = []
+            commands.extend(
+                ["wl-paste", "--no-newline", "--type", target]
+                for target in target_names if keyword in target.casefold()
+            )
+        if shutil.which("xclip"):
+            try:
+                target_names = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
+                    capture_output=True, check=True, timeout=2,
+                ).stdout.decode("utf-8", errors="replace").splitlines()
+            except (OSError, subprocess.SubprocessError):
+                target_names = []
+            commands.extend(
+                ["xclip", "-selection", "clipboard", "-t", target, "-o"]
+                for target in target_names if keyword in target.casefold()
+            )
+        for command in commands:
+            try:
+                result = subprocess.run(command, capture_output=True, check=True, timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.stdout:
+                return result.stdout.decode("utf-8", errors="replace")
+        return ""
+
     def _clipboard_html(self) -> str:
         """Read the rich clipboard target, including Linux office fallbacks."""
+        if sys.platform.startswith("linux"):
+            value = self._linux_clipboard_target("html")
+            if value:
+                return value
         target_names = [
             "text/html",
             "text/html;charset=utf-8",
@@ -8488,6 +8530,10 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _clipboard_rtf(self) -> str:
         """Read an RTF clipboard target without disturbing image clipboard data."""
+        if sys.platform.startswith("linux"):
+            value = self._linux_clipboard_target("rtf")
+            if value:
+                return value
         target_names = ["text/rtf", "application/rtf", "Rich Text Format"]
         for target in target_names:
             try:
