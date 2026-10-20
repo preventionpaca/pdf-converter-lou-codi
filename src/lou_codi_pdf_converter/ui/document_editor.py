@@ -6633,11 +6633,6 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _populate_inline_font_menu(self, menu: tk.Menu) -> None:
         menu.delete(0, "end")
-        menu.add_command(
-            label="Rechercher ou installer une police…",
-            command=self._show_font_catalog,
-        )
-        menu.add_separator()
         groups: dict[str, list[str]] = {}
         for family in available_font_families():
             groups.setdefault(family[0].upper() if family else "#", []).append(family)
@@ -6918,16 +6913,14 @@ class DocumentEditorWindow(tk.Toplevel):
         self._populate_inline_font_menu(family_menu)
         families.configure(menu=family_menu)
         families.pack(side="left", padx=2, pady=2)
+        self._add_tooltip(
+            families,
+            "Choisir une police installée ; chaque nom est affiché dans sa propre police",
+        )
         families.bind(
             "<ButtonPress-1>",
             lambda _event, current=widget: self._preserve_inline_text_selection(current),
             add="+",
-        )
-        tool(
-            primary,
-            "Aa+",
-            self._show_font_catalog,
-            "Afficher, rechercher ou installer une police sans quitter la zone de texte",
         )
         sizes = ttk.Combobox(
             primary,
@@ -8729,7 +8722,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._mutate(lambda item: setattr(item, "border_style", value))
 
     def _write_edited_image(
-        self, source: Image.Image, suffix: str = ".png", *, optimize: bool = True
+        self, source: Image.Image, suffix: str = ".png", *, optimize: bool = False
     ) -> Path:
         directory = module_output_directory("Document Studio") / "Images modifiées"
         directory.mkdir(parents=True, exist_ok=True)
@@ -8741,7 +8734,7 @@ class DocumentEditorWindow(tk.Toplevel):
         return target
 
     def _replace_image_pixels(
-        self, item: PageObject, image: Image.Image, *, optimize: bool = True
+        self, item: PageObject, image: Image.Image, *, optimize: bool = False
     ) -> None:
         item.image_path = str(self._write_edited_image(image, optimize=optimize))
 
