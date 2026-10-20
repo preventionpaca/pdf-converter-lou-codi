@@ -3,6 +3,7 @@ import zipfile
 
 from lou_codi_pdf_converter.services.font_catalog import (
     FontFace,
+    bundled_fonts,
     closest_family,
     install_user_font,
     install_user_fonts,
@@ -22,6 +23,13 @@ def test_closest_family_prefers_exact_match() -> None:
 def test_font_face_keeps_local_path() -> None:
     face = FontFace("Example", Path("/tmp/example.ttf"), "Regular")
     assert face.family == "Example"
+
+
+def test_bundled_fonts_are_real_redistributed_files() -> None:
+    faces = bundled_fonts()
+    assert faces
+    assert any(face.family == "Inter" for face in faces)
+    assert all(face.path.is_file() for face in faces)
 
 
 def test_install_user_font_copies_to_private_font_directory(

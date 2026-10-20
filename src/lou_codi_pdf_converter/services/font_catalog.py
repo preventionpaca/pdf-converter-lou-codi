@@ -10,6 +10,8 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 
+from PIL import ImageFont
+
 
 @dataclass(frozen=True)
 class FontFace:
@@ -55,6 +57,21 @@ def installed_fonts() -> tuple[FontFace, ...]:
 
 def installed_families() -> tuple[str, ...]:
     return tuple(dict.fromkeys(face.family for face in installed_fonts()))
+
+
+@lru_cache(maxsize=1)
+def bundled_fonts() -> tuple[FontFace, ...]:
+    directory = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+    faces: list[FontFace] = []
+    for path in sorted(directory.glob("*"), key=lambda item: item.name.casefold()):
+        if path.suffix.casefold() not in {".ttf", ".otf", ".ttc"}:
+            continue
+        try:
+            family, style = ImageFont.truetype(str(path), 12).getname()
+        except OSError:
+            continue
+        faces.append(FontFace(str(family), path, str(style)))
+    return tuple(faces)
 
 
 def refresh_font_catalog() -> tuple[str, ...]:

@@ -51,6 +51,7 @@ from ..services.canvas_document import (
     _font_file,
 )
 from ..services.font_catalog import (
+    bundled_fonts,
     closest_family,
     install_user_fonts,
     installed_families,
@@ -1218,6 +1219,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_drag_anchor: str | None = None
         self._editing_text_context_menu: tk.Menu | None = None
         self._inline_font_family_combo: ttk.Combobox | None = None
+        self._inline_font_menu: tk.Menu | None = None
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
@@ -1549,6 +1551,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("∠", self._start_angle_measurement, "Mesurer un angle intérieur avec trois points"),
             ("🔎 Police PDF", self._start_pdf_font_picker, "Détecter la police, la taille et la couleur dans le PDF"),
             ("Aa Polices", self._show_font_catalog, "Afficher les polices installées et leurs équivalences"),
+            ("📦 Polices", self._show_bundled_fonts, "Voir les polices réellement livrées avec Lou Còdi"),
             ("OCR", self._ocr_pdf_page, "Reconnaître le texte de la page PDF scannée"),
         ), color="#DDF3E7")
         self._buttons(layout, (
@@ -2153,6 +2156,7 @@ class DocumentEditorWindow(tk.Toplevel):
         tools_menu = tk.Menu(menu, tearoff=False)
         tools_menu.add_command(label="Pipette typographique PDF…", command=self._start_pdf_font_picker)
         tools_menu.add_command(label="Catalogue des polices…", command=self._show_font_catalog)
+        tools_menu.add_command(label="Polices livrées avec Lou Còdi…", command=self._show_bundled_fonts)
         tools_menu.add_separator()
         tools_menu.add_command(label="Reconnaître le texte de la page PDF (OCR)…", command=self._ocr_pdf_page)
         menu.add_cascade(label="Outils", menu=tools_menu)
@@ -6571,6 +6575,31 @@ class DocumentEditorWindow(tk.Toplevel):
             "Symboles": "DejaVu Sans",
         }.get(family, family or "DejaVu Sans")
 
+    def _choose_inline_font_family(self, family: str) -> None:
+        self.font_family_var.set(family)
+        self._apply_font_family()
+        self._update_font_sample()
+
+    def _populate_inline_font_menu(self, menu: tk.Menu) -> None:
+        menu.delete(0, "end")
+        menu.add_command(
+            label="Rechercher ou installer une police…",
+            command=self._show_font_catalog,
+        )
+        menu.add_separator()
+        groups: dict[str, list[str]] = {}
+        for family in available_font_families():
+            groups.setdefault(family[0].upper() if family else "#", []).append(family)
+        for group, names in sorted(groups.items()):
+            submenu = tk.Menu(menu, tearoff=False)
+            for family in names:
+                submenu.add_command(
+                    label=f"{family}   AaBb 123",
+                    font=(self._tk_font_family(family), 12),
+                    command=lambda selected=family: self._choose_inline_font_family(selected),
+                )
+            menu.add_cascade(label=f"{group}  ({len(names)})", menu=submenu)
+
     def _update_font_sample(self) -> None:
         preview = Image.new("RGBA", (92, 26), "#FFFFFF")
         draw = ImageDraw.Draw(preview)
@@ -6824,26 +6853,25 @@ class DocumentEditorWindow(tk.Toplevel):
 
         tool(primary, "↶", self._undo_inline_text, "Annuler")
         tool(primary, "↷", self._redo_inline_text, "Rétablir")
-        families = ttk.Combobox(
+        families = tk.Menubutton(
             primary,
             textvariable=self.font_family_var,
-            values=available_font_families(),
+            relief="flat",
             width=19,
+            anchor="w",
+            padx=5,
         )
-        self._inline_font_family_combo = families
+        family_menu = tk.Menu(families, tearoff=False)
 
-        def choose_family(_event: object = None) -> None:
-            self._apply_font_family()
-            self._update_font_sample()
-
+        self._inline_font_menu = family_menu
+        self._populate_inline_font_menu(family_menu)
+        families.configure(menu=family_menu)
         families.pack(side="left", padx=2, pady=2)
         families.bind(
             "<ButtonPress-1>",
             lambda _event, current=widget: self._preserve_inline_text_selection(current),
             add="+",
         )
-        families.bind("<<ComboboxSelected>>", choose_family)
-        families.bind("<Return>", choose_family)
         tool(
             primary,
             "Aa+",
@@ -8299,6 +8327,7 @@ class DocumentEditorWindow(tk.Toplevel):
         table_original = self._editing_table_original
         self._editing_widget = None
         self._inline_font_family_combo = None
+        self._inline_font_menu = None
         dialog = self._editing_dialog
         self._editing_dialog = None
         self._editing_object_id = ""
@@ -12563,7 +12592,7 @@ class DocumentEditorWindow(tk.Toplevel):
         dialog.geometry("680x500")
         dialog.configure(bg=BACKGROUND)
         ttk.Label(dialog, text="Polices disponibles sur cet ordinateur", font=("Sans", 15, "bold")).pack(anchor="w", padx=18, pady=(16, 6))
-        search = tk.StringVar(value=self.font_family_var.get())
+        search = tk.StringVar(value="")
         entry = ttk.Entry(dialog, textvariable=search)
         entry.pack(fill="x", padx=18, pady=6)
         listbox = tk.Listbox(dialog, font=("Sans", 11))
@@ -12608,6 +12637,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 and self._inline_font_family_combo.winfo_exists()
             ):
                 self._inline_font_family_combo.configure(values=available_font_families())
+            if self._inline_font_menu is not None:
+                self._populate_inline_font_menu(self._inline_font_menu)
             first_name = installed[0].stem
             search.set(closest_family(first_name, tuple(families)) or first_name)
             refresh()
@@ -12634,6 +12665,49 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Button(actions, text="Chercher une police proche sur Google Fonts", command=lambda: webbrowser.open("https://fonts.google.com/?query=" + search.get().replace(" ", "+"), new=2)).pack(side="left")
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         entry.focus_set()
+
+    def _show_bundled_fonts(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Polices livrées avec Lou Còdi")
+        dialog.geometry("780x560")
+        dialog.configure(bg=BACKGROUND)
+        tk.Label(
+            dialog,
+            text="Polices réellement incluses dans le paquet Lou Còdi",
+            bg=NAVY,
+            fg="white",
+            font=("Sans", 17, "bold"),
+            padx=20,
+            pady=12,
+        ).pack(fill="x")
+        ttk.Label(
+            dialog,
+            text=(
+                "Ces polices fonctionnent même si elles ne sont pas installées sur l’ordinateur. "
+                "Une autre police ne peut être ajoutée au paquet qu’avec une licence autorisant "
+                "explicitement sa redistribution."
+            ),
+            wraplength=730,
+        ).pack(fill="x", padx=18, pady=(14, 8))
+        tree = ttk.Treeview(dialog, columns=("style", "file"), show="tree headings")
+        tree.heading("#0", text="Famille — aperçu")
+        tree.heading("style", text="Style")
+        tree.heading("file", text="Fichier embarqué")
+        tree.column("#0", width=330)
+        tree.column("style", width=150)
+        tree.column("file", width=240)
+        tree.pack(fill="both", expand=True, padx=18, pady=8)
+        for index, face in enumerate(bundled_fonts()):
+            tag = f"bundled-font-{index}"
+            tree.tag_configure(tag, font=(face.family, 13))
+            tree.insert(
+                "", "end", text=f"{face.family} — AaBb 123",
+                values=(face.style, face.path.name), tags=(tag,),
+            )
+        ttk.Button(dialog, text="Fermer", command=dialog.destroy).pack(
+            anchor="e", padx=18, pady=(4, 16)
+        )
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
 
     def _ocr_pdf_page(self) -> None:
         executable = shutil.which("tesseract")
