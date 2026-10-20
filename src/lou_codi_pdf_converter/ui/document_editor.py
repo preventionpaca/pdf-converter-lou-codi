@@ -12817,6 +12817,15 @@ class DocumentEditorWindow(tk.Toplevel):
             ),
             wraplength=730,
         ).pack(anchor="w", pady=(0, 12))
+        dialog_status = ttk.Label(form, text="", wraplength=730)
+        dialog_status.pack(fill="x", pady=(0, 8))
+
+        def show_dialog_status(message: str, *, error: bool = False) -> None:
+            dialog_status.configure(
+                text=message,
+                foreground="#A33A2B" if error else "#176B3A",
+            )
+            dialog.update_idletasks()
 
         account_row = ttk.Frame(form)
         account_row.pack(fill="x", pady=(0, 10))
@@ -12853,14 +12862,18 @@ class DocumentEditorWindow(tk.Toplevel):
                 messagebox.showerror("Configuration Google impossible", str(exc), parent=dialog)
                 return
             messagebox.showinfo("Google configuré", "Le fichier OAuth est installé localement.", parent=dialog)
+            show_dialog_status("Configuration Google installée sur cet ordinateur.")
 
         def add_google_account() -> None:
+            show_dialog_status("Ouverture de la connexion Google dans votre navigateur…")
             try:
                 connected = connect_account()
-            except (GoogleMailUnavailable, OSError, ValueError) as exc:
+            except Exception as exc:
+                show_dialog_status(str(exc), error=True)
                 messagebox.showerror("Connexion Google impossible", str(exc), parent=dialog)
                 return
             refresh_accounts(connected.email)
+            show_dialog_status(f"Compte Google connecté : {connected.email}")
             self.status.configure(text=f"Compte Google connecté : {connected.email}")
 
         def account_changed(_event=None) -> None:
@@ -12999,6 +13012,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     save_mail_library(library)
                     subject_box.configure(values=sorted(set(library.subjects)))
             self.status.configure(text="Réglages d’envoi enregistrés localement.")
+            show_dialog_status("Réglages enregistrés localement.")
 
         def export_attachment() -> tuple[EmailSettings, Path]:
             email_settings = current_settings()
@@ -13019,23 +13033,38 @@ class DocumentEditorWindow(tk.Toplevel):
             if not account.get():
                 messagebox.showinfo("Compte Google", "Connectez ou sélectionnez un compte Google.", parent=dialog)
                 return
+            recipients = [
+                value.strip()
+                for value in recipient.get().replace(";", ",").split(",")
+                if value.strip()
+            ]
+            if not recipients:
+                show_dialog_status("Indiquez au moins un destinataire avant l’envoi.", error=True)
+                messagebox.showinfo(
+                    "Destinataire manquant",
+                    "Indiquez au moins une adresse dans le champ Destinataires.",
+                    parent=dialog,
+                )
+                return
             if not messagebox.askyesno(
                 "Confirmer l’envoi",
                 f"Envoyer maintenant le PDF avec le compte {account.get()} ?\n\nDestinataires : {recipient.get()}",
                 parent=dialog,
             ):
                 return
+            show_dialog_status("Création du PDF et envoi à Google en cours…")
             try:
                 email_settings, target = export_attachment()
                 final_subject, final_body = prepared_message(email_settings, target.stem)
                 message_id = send_pdf(
                     account.get(),
-                    [value.strip() for value in recipient.get().replace(";", ",").split(",") if value.strip()],
+                    recipients,
                     final_subject,
                     final_body,
                     target,
                 )
-            except (GoogleMailUnavailable, OSError, RuntimeError, ValueError) as exc:
+            except Exception as exc:
+                show_dialog_status(str(exc), error=True)
                 messagebox.showerror("Envoi Google impossible", str(exc), parent=dialog)
                 return
             self.last_export = target
