@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -53,6 +54,40 @@ def installed_fonts() -> tuple[FontFace, ...]:
 
 def installed_families() -> tuple[str, ...]:
     return tuple(dict.fromkeys(face.family for face in installed_fonts()))
+
+
+def refresh_font_catalog() -> tuple[str, ...]:
+    installed_fonts.cache_clear()
+    return installed_families()
+
+
+def install_user_font(source: Path) -> Path:
+    """Install one local font for the current user, without administrator rights."""
+    source = source.expanduser().resolve()
+    if source.suffix.casefold() not in {".ttf", ".otf", ".ttc"}:
+        raise ValueError("Choisissez un fichier de police .ttf, .otf ou .ttc.")
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    if sys.platform == "darwin":
+        directory = Path.home() / "Library" / "Fonts"
+    elif sys.platform == "win32":
+        directory = Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Fonts"
+    else:
+        directory = Path.home() / ".local" / "share" / "fonts" / "LouCodi"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / source.name
+    if target.exists() and target.read_bytes() != source.read_bytes():
+        target = directory / f"{source.stem}-LouCodi{source.suffix.lower()}"
+    shutil.copy2(source, target)
+    if shutil.which("fc-cache"):
+        subprocess.run(
+            ["fc-cache", "-f", str(directory)],
+            check=False,
+            capture_output=True,
+            timeout=30,
+        )
+    refresh_font_catalog()
+    return target
 
 
 def closest_family(requested: str, families: tuple[str, ...] | None = None) -> str | None:

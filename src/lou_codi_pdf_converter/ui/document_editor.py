@@ -16,7 +16,7 @@ import webbrowser
 from html.parser import HTMLParser
 from itertools import pairwise
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
@@ -50,7 +50,13 @@ from ..services.canvas_document import (
     wrapped_text_ranges,
     _font_file,
 )
-from ..services.font_catalog import closest_family, installed_families, normalize_font_name
+from ..services.font_catalog import (
+    closest_family,
+    install_user_font,
+    installed_families,
+    normalize_font_name,
+    refresh_font_catalog,
+)
 from ..services.docx_canvas import export_editable_docx
 from ..services.docx_import import import_docx_as_canvas
 from ..services.destinations import (
@@ -12543,7 +12549,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self._add_object(PageObject("text", self.current_page, x, y, 220, 55, text=sample, font_family=fallback or detected, font_size=float(span.get("size", 12.0)), color=f"#{color:06X}", fill="transparent", border_width=0))
 
     def _show_font_catalog(self) -> None:
-        families = installed_families()
+        families = list(installed_families())
         dialog = tk.Toplevel(self)
         dialog.title("Catalogue des polices")
         dialog.geometry("680x500")
@@ -12564,6 +12570,30 @@ class DocumentEditorWindow(tk.Toplevel):
                 listbox.insert("end", family)
             suggestion = closest_family(search.get(), families)
             info.configure(text=f"Police la plus proche installée : {suggestion or 'aucune'}")
+        def install_font() -> None:
+            selected = filedialog.askopenfilename(
+                parent=dialog,
+                title="Installer une police",
+                filetypes=(("Polices", "*.ttf *.otf *.ttc"), ("Tous les fichiers", "*.*")),
+            )
+            if not selected:
+                return
+            try:
+                target = install_user_font(Path(selected))
+                families[:] = refresh_font_catalog()
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                messagebox.showerror("Installation impossible", str(exc), parent=dialog)
+                return
+            self.font_family_combo.configure(
+                values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles") + tuple(families)
+            )
+            search.set(closest_family(target.stem, tuple(families)) or target.stem)
+            refresh()
+            messagebox.showinfo(
+                "Police installée",
+                "La police a été installée pour votre compte. Elle est maintenant disponible dans Lou Còdi.",
+                parent=dialog,
+            )
         search.trace_add("write", refresh)
         refresh()
         actions = ttk.Frame(dialog, padding=18)
@@ -12577,6 +12607,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_font_sample()
                 dialog.destroy()
         ttk.Button(actions, text="Utiliser la police", command=use_selected).pack(side="right")
+        ttk.Button(actions, text="Installer une police…", command=install_font).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Chercher une police proche sur Google Fonts", command=lambda: webbrowser.open("https://fonts.google.com/?query=" + search.get().replace(" ", "+"), new=2)).pack(side="left")
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         entry.focus_set()
