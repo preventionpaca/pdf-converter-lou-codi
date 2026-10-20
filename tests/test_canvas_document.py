@@ -1592,6 +1592,50 @@ def test_spreadsheet_html_clipboard_resolves_office_css_classes_and_nested_forma
     assert cells[0][1]["horizontal_align"] == "right"
 
 
+def test_sparse_word_layout_table_remains_rich_flowing_text() -> None:
+    html = """
+    <table>
+      <tr><td>Introduction assez longue pour être un paragraphe.</td><td></td></tr>
+      <tr><td></td><td>Premier point</td></tr>
+      <tr><td></td><td>Deuxième point</td></tr>
+      <tr><td>Conclusion</td><td></td></tr>
+      <tr><td></td><td></td></tr>
+    </table>
+    """
+
+    cells, widths, heights = parse_tabular_clipboard_html(html)
+    text, _styles = parse_rich_clipboard_html(html)
+
+    assert cells == []
+    assert widths == []
+    assert heights == []
+    assert "Introduction" in text
+    assert "Premier point" in text
+
+
+def test_html_table_keeps_partial_character_formatting_inside_a_cell() -> None:
+    html = """
+    <table><tr>
+      <td>Texte <b>important</b> puis <span style="color:#ff0000">rouge</span></td>
+      <td style="background-color:#00b050">Cellule verte</td>
+    </tr></table>
+    """
+
+    cells, _widths, _heights = parse_tabular_clipboard_html(html)
+
+    first = cells[0][0]
+    assert first["text"] == "Texte important puis rouge"
+    assert any(
+        run.get("bold") and first["text"][run["start"] : run["end"]] == "important"
+        for run in first["text_styles"]
+    )
+    assert any(
+        str(run.get("color", "")).upper() == "#FF0000" and "rouge" in first["text"][run["start"] : run["end"]]
+        for run in first["text_styles"]
+    )
+    assert str(cells[0][1]["fill"]).upper() == "#00B050"
+
+
 def test_chart_uses_first_column_as_labels_and_selected_numeric_series() -> None:
     header, values = DocumentEditorWindow._chart_values(
         [["Élève", "Notes", "Absences"], ["Alice", "12", "1"], ["Bob", "15", "3"]],

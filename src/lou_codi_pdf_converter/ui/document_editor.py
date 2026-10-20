@@ -279,7 +279,7 @@ def stable_table_height_after_cell_edit(
 class RichClipboardHTMLParser(HTMLParser):
     """Extract editable text and character styles from office HTML clipboard data."""
 
-    _blocks = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li"}
+    _blocks = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "td", "th"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -739,6 +739,7 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
         self._in_style = False
         self._style_parts: list[str] = []
         self._class_styles: dict[str, str] = {}
+        self._cell_rich: RichClipboardHTMLParser | None = None
 
     def _register_stylesheet(self) -> None:
         css = "".join(self._style_parts)
@@ -808,36 +809,57 @@ class SpreadsheetClipboardHTMLParser(HTMLParser):
             if color_match:
                 cell["border_color"] = safe_pillow_color(color_match.group(1), "#72879C")
             self._cell = cell
+            self._cell_rich = RichClipboardHTMLParser()
+            self._cell_rich._class_styles = {
+                name: RichClipboardHTMLParser._css_style(css)
+                for name, css in self._class_styles.items()
+            }
+            self._cell_rich.handle_starttag("span", [("style", style_source)])
         elif tag.lower() == "br" and self._cell is not None:
             self._parts.append("\n")
-        elif self._cell is not None and tag.lower() in {"b", "strong"}:
-            self._cell["bold"] = True
-        elif self._cell is not None and tag.lower() in {"i", "em"}:
-            self._cell["italic"] = True
-        elif self._cell is not None and tag.lower() == "u":
-            self._cell["underline"] = True
-        elif self._cell is not None and tag.lower() == "font" and attributes.get("color"):
-            self._cell["color"] = safe_pillow_color(attributes["color"], "#000000")
+            if self._cell_rich is not None:
+                self._cell_rich.handle_starttag("br", [])
+        if self._cell_rich is not None and tag.lower() not in {"td", "th", "br"}:
+            self._cell_rich.handle_starttag(tag, attrs)
 
     def handle_data(self, data: str) -> None:
         if self._in_style:
             self._style_parts.append(data)
         elif self._cell is not None:
             self._parts.append(normalize_external_text(data))
+            if self._cell_rich is not None:
+                self._cell_rich.handle_data(data)
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "style":
             self._in_style = False
             self._register_stylesheet()
         elif tag.lower() in {"td", "th"} and self._cell is not None and self._row is not None:
+            if self._cell_rich is not None:
+                self._cell_rich.handle_endtag("span")
+                rich_text = "".join(self._cell_rich.parts).strip("\n")
+                if rich_text and not str(self._cell.get("text", "")).startswith("="):
+                    self._cell["text"] = rich_text
+                if self._cell_rich.styles:
+                    self._cell["text_styles"] = self._cell_rich.styles
+                    if len(self._cell_rich.styles) == 1:
+                        run = self._cell_rich.styles[0]
+                        if int(run.get("start", -1)) == 0 and int(run.get("end", -1)) >= len(rich_text):
+                            self._cell.update({
+                                key: value for key, value in run.items()
+                                if key in TEXT_STYLE_KEYS
+                            })
             if not str(self._cell.get("text", "")).startswith("="):
-                self._cell["text"] = "".join(self._parts).strip()
+                self._cell["text"] = str(self._cell.get("text") or "".join(self._parts)).strip()
             self._row.append(self._cell)
             column = len(self._row) - 1
             while len(self.column_widths) <= column:
                 self.column_widths.append(0.0)
             self.column_widths[column] = max(self.column_widths[column], self._cell_width)
             self._cell = None
+            self._cell_rich = None
+        elif self._cell_rich is not None:
+            self._cell_rich.handle_endtag(tag)
         elif tag.lower() == "tr" and self._row is not None:
             self.rows.append(self._row)
             self.row_heights.append(self._row_height)
@@ -854,6 +876,16 @@ def parse_tabular_clipboard_html(
         return [], [], []
     for row in parser.rows:
         row.extend({"text": ""} for _ in range(columns - len(row)))
+    cells = [cell for row in parser.rows for cell in row]
+    nonempty = [cell for cell in cells if str(cell.get("text", "")).strip()]
+    density = len(nonempty) / max(1, len(cells))
+    longest = max((len(str(cell.get("text", ""))) for cell in nonempty), default=0)
+    # Word frequently uses invisible two-column tables only to position ordinary
+    # paragraphs.  Such sparse layout tables must remain flowing rich text.
+    if columns == 2 and len(parser.rows) >= 4 and density < 0.70:
+        return [], [], []
+    if longest > 120 and density < 0.80:
+        return [], [], []
     return parser.rows, parser.column_widths, parser.row_heights
 
 
