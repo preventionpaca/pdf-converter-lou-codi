@@ -85,6 +85,11 @@ class PdfPicker(tk.Toplevel):
         ttk.Button(navigation, text="＋ Nouveau dossier", command=self._new_folder).pack(
             side="left", padx=(8, 0)
         )
+        ttk.Button(
+            navigation,
+            text="↻ Actualiser",
+            command=self._refresh_current_directory,
+        ).pack(side="left", padx=(8, 0))
         ttk.Label(navigation, textvariable=self.path_text).pack(side="left", padx=16)
 
         table_frame = ttk.Frame(self, padding=(20, 0, 20, 12))
@@ -106,6 +111,7 @@ class PdfPicker(tk.Toplevel):
         scrollbar.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.bind("<Double-1>", self._double_click)
+        self.bind("<FocusIn>", self._refresh_on_focus, add="+")
 
         footer = ttk.Frame(self, padding=(20, 6, 20, 18))
         footer.pack(fill="x")
@@ -140,6 +146,19 @@ class PdfPicker(tk.Toplevel):
             prefix = "📁  " if path.is_dir() else "📄  "
             item = self.tree.insert("", "end", text=prefix + path.name, values=(modified, size))
             self.paths[item] = path
+
+    def _refresh_current_directory(self) -> None:
+        selected_paths = {
+            self.paths[item] for item in self.tree.selection() if item in self.paths
+        }
+        self._show_directory(self.current_directory)
+        for item, path in self.paths.items():
+            if path in selected_paths:
+                self.tree.selection_add(item)
+
+    def _refresh_on_focus(self, event: tk.Event[tk.Misc]) -> None:
+        if event.widget is self:
+            self._refresh_current_directory()
 
     def _double_click(self, _event: tk.Event[tk.Misc]) -> None:
         selection = self.tree.selection()

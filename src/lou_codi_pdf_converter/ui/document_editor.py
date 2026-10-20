@@ -93,6 +93,18 @@ from .windowing import center_window, make_modal, maximize_window
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
+BUILTIN_FONT_FAMILIES = (
+    "Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne",
+    "Inter", "JetBrains Mono", "Symboles",
+)
+
+
+def available_font_families() -> tuple[str, ...]:
+    """Return one alphabetic list combining aliases and actual local fonts."""
+    names = {name.casefold(): name for name in installed_families()}
+    for name in BUILTIN_FONT_FAMILIES:
+        names.setdefault(name.casefold(), name)
+    return tuple(sorted(names.values(), key=str.casefold))
 
 
 def safe_pillow_color(value: object, fallback: str, *, allow_transparent: bool = False) -> str:
@@ -1390,7 +1402,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.font_family_combo = ttk.Combobox(
             formatting,
             textvariable=self.font_family_var,
-            values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles") + installed_families(),
+            values=available_font_families(),
             width=14,
         )
         self.font_family_combo.pack(side="left", padx=2)
@@ -6811,10 +6823,7 @@ class DocumentEditorWindow(tk.Toplevel):
 
         tool(primary, "↶", self._undo_inline_text, "Annuler")
         tool(primary, "↷", self._redo_inline_text, "Rétablir")
-        family_names = (
-            "Sans-serif", "Serif", "Monospace", "Cursive",
-            "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles",
-        )
+        family_names = BUILTIN_FONT_FAMILIES
         families = tk.Menubutton(
             primary,
             textvariable=self.font_family_var,
@@ -6842,6 +6851,12 @@ class DocumentEditorWindow(tk.Toplevel):
             "<ButtonPress-1>",
             lambda _event, current=widget: self._preserve_inline_text_selection(current),
             add="+",
+        )
+        tool(
+            primary,
+            "Aa+",
+            self._show_font_catalog,
+            "Afficher, rechercher ou installer une police sans quitter la zone de texte",
         )
         sizes = ttk.Combobox(
             primary,
@@ -12593,7 +12608,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 messagebox.showerror("Installation impossible", str(exc), parent=dialog)
                 return
             self.font_family_combo.configure(
-                values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles") + tuple(families)
+                values=available_font_families()
             )
             first_name = installed[0].stem
             search.set(closest_family(first_name, tuple(families)) or first_name)

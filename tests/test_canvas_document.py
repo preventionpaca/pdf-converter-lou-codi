@@ -67,6 +67,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     text_style_at,
     transform_object_assembly,
     union_axis_aligned_rectangles,
+    available_font_families,
 )
 
 
@@ -116,6 +117,20 @@ def test_document_tabs_keep_independent_documents_and_history() -> None:
     assert editor.document.objects[0].text == "Second"
     assert editor.zoom == 0.8
     assert editor.project_path is None
+
+
+def test_available_font_families_includes_local_fonts_in_alphabetic_order(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.ui.document_editor.installed_families",
+        lambda: ("Zeta", "Fira Sans", "Arimo"),
+    )
+
+    families = available_font_families()
+
+    assert "Fira Sans" in families
+    assert families == tuple(sorted(families, key=str.casefold))
 
 
 def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None:
