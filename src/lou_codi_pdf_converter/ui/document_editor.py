@@ -16,7 +16,7 @@ import webbrowser
 from html.parser import HTMLParser
 from itertools import pairwise
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
@@ -24,7 +24,7 @@ import pymupdf
 from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageGrab, ImageOps, ImageTk
 
 from ..i18n import settings_path, translate_widget_tree
-from ..paths import module_output_directory
+from ..paths import downloads_directory, module_output_directory
 from ..services.canvas_document import (
     A4_HEIGHT,
     A4_WIDTH,
@@ -52,7 +52,7 @@ from ..services.canvas_document import (
 )
 from ..services.font_catalog import (
     closest_family,
-    install_user_font,
+    install_user_fonts,
     installed_families,
     normalize_font_name,
     refresh_font_catalog,
@@ -12571,27 +12571,37 @@ class DocumentEditorWindow(tk.Toplevel):
             suggestion = closest_family(search.get(), families)
             info.configure(text=f"Police la plus proche installée : {suggestion or 'aucune'}")
         def install_font() -> None:
-            selected = filedialog.askopenfilename(
-                parent=dialog,
-                title="Installer une police",
-                filetypes=(("Polices", "*.ttf *.otf *.ttc"), ("Tous les fichiers", "*.*")),
+            selected_files = choose_documents(
+                dialog,
+                {".ttf", ".otf", ".ttc", ".zip"},
+                initial_directory=downloads_directory(),
+                window_title="Installer des polices — Téléchargements",
+                heading="Choisir des polices ou une archive ZIP",
+                accept_label="Installer les polices sélectionnées",
+                selection_help="Sélectionnez une archive ZIP ou des fichiers .ttf, .otf ou .ttc.",
             )
-            if not selected:
+            if not selected_files:
                 return
             try:
-                target = install_user_font(Path(selected))
+                installed = tuple(
+                    font
+                    for selected in selected_files
+                    for font in install_user_fonts(selected)
+                )
                 families[:] = refresh_font_catalog()
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
                 messagebox.showerror("Installation impossible", str(exc), parent=dialog)
                 return
             self.font_family_combo.configure(
                 values=("Sans-serif", "Serif", "Monospace", "Cursive", "Manuscrite ancienne", "Inter", "JetBrains Mono", "Symboles") + tuple(families)
             )
-            search.set(closest_family(target.stem, tuple(families)) or target.stem)
+            first_name = installed[0].stem
+            search.set(closest_family(first_name, tuple(families)) or first_name)
             refresh()
             messagebox.showinfo(
                 "Police installée",
-                "La police a été installée pour votre compte. Elle est maintenant disponible dans Lou Còdi.",
+                f"{len(installed)} fichier(s) de police installé(s) pour votre compte. "
+                "Ils sont maintenant disponibles dans Lou Còdi.",
                 parent=dialog,
             )
         search.trace_add("write", refresh)

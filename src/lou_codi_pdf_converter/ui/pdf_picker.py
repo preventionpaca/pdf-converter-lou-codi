@@ -203,14 +203,18 @@ def choose_documents(
     allowed_suffixes: set[str],
     *,
     initial_directory: Path | None = None,
+    window_title: str = "Choisir des documents ou images — Téléchargements",
+    heading: str = "Choisir les documents ou images",
+    accept_label: str = "Ajouter les fichiers sélectionnés",
+    selection_help: str = "Sélectionnez un ou plusieurs documents ou images pris en charge.",
 ) -> list[Path]:
     picker = PdfPicker(
         parent,
         allowed_suffixes=allowed_suffixes,
-        window_title="Choisir des documents ou images — Téléchargements",
-        heading="Choisir les documents ou images",
-        accept_label="Ajouter les fichiers sélectionnés",
-        selection_help="Sélectionnez un ou plusieurs documents ou images pris en charge.",
+        window_title=window_title,
+        heading=heading,
+        accept_label=accept_label,
+        selection_help=selection_help,
         initial_directory=initial_directory,
     )
     picker.wait_window()

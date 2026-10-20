@@ -1,9 +1,11 @@
 from pathlib import Path
+import zipfile
 
 from lou_codi_pdf_converter.services.font_catalog import (
     FontFace,
     closest_family,
     install_user_font,
+    install_user_fonts,
     normalize_font_name,
 )
 
@@ -48,3 +50,23 @@ def test_install_user_font_rejects_non_font_file(tmp_path: Path) -> None:
         assert ".ttf" in str(exc)
     else:
         raise AssertionError("A non-font file must be rejected")
+
+
+def test_install_user_fonts_extracts_compatible_files_from_zip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    archive = tmp_path / "download.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("Family/static/Example-Regular.ttf", b"regular")
+        output.writestr("Family/Example-Bold.otf", b"bold")
+        output.writestr("OFL.txt", b"license")
+    private_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: private_home))
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.font_catalog.shutil.which", lambda _name: None
+    )
+
+    installed = install_user_fonts(archive)
+
+    assert {path.name for path in installed} == {"Example-Regular.ttf", "Example-Bold.otf"}
+    assert all(path.parent == private_home / ".local/share/fonts/LouCodi" for path in installed)

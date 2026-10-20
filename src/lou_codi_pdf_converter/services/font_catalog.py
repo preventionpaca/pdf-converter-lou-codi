@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from functools import lru_cache
@@ -61,24 +62,54 @@ def refresh_font_catalog() -> tuple[str, ...]:
     return installed_families()
 
 
-def install_user_font(source: Path) -> Path:
-    """Install one local font for the current user, without administrator rights."""
+def _user_font_directory() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Fonts"
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Fonts"
+    return Path.home() / ".local" / "share" / "fonts" / "LouCodi"
+
+
+def _install_font_bytes(directory: Path, name: str, content: bytes) -> Path:
+    target = directory / Path(name).name
+    if target.exists() and target.read_bytes() != content:
+        target = directory / f"{target.stem}-LouCodi{target.suffix.lower()}"
+    target.write_bytes(content)
+    return target
+
+
+def install_user_fonts(source: Path) -> tuple[Path, ...]:
+    """Install a font file or every font contained in a downloaded ZIP archive."""
     source = source.expanduser().resolve()
-    if source.suffix.casefold() not in {".ttf", ".otf", ".ttc"}:
-        raise ValueError("Choisissez un fichier de police .ttf, .otf ou .ttc.")
     if not source.is_file():
         raise FileNotFoundError(source)
-    if sys.platform == "darwin":
-        directory = Path.home() / "Library" / "Fonts"
-    elif sys.platform == "win32":
-        directory = Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Fonts"
-    else:
-        directory = Path.home() / ".local" / "share" / "fonts" / "LouCodi"
+    suffix = source.suffix.casefold()
+    if suffix not in {".ttf", ".otf", ".ttc", ".zip"}:
+        raise ValueError("Choisissez une police .ttf/.otf/.ttc ou une archive .zip.")
+    directory = _user_font_directory()
     directory.mkdir(parents=True, exist_ok=True)
-    target = directory / source.name
-    if target.exists() and target.read_bytes() != source.read_bytes():
-        target = directory / f"{source.stem}-LouCodi{source.suffix.lower()}"
-    shutil.copy2(source, target)
+    installed: list[Path] = []
+    if suffix == ".zip":
+        try:
+            with zipfile.ZipFile(source) as archive:
+                members = [
+                    member for member in archive.infolist()
+                    if not member.is_dir()
+                    and Path(member.filename).suffix.casefold() in {".ttf", ".otf", ".ttc"}
+                    and member.file_size <= 50 * 1024 * 1024
+                ]
+                if not members:
+                    raise ValueError("Cette archive ZIP ne contient aucune police compatible.")
+                if len(members) > 100 or sum(member.file_size for member in members) > 100 * 1024 * 1024:
+                    raise ValueError("Cette archive contient trop de polices ou est anormalement volumineuse.")
+                for member in members:
+                    installed.append(
+                        _install_font_bytes(directory, member.filename, archive.read(member))
+                    )
+        except zipfile.BadZipFile as exc:
+            raise ValueError("Le fichier ZIP est illisible ou endommagé.") from exc
+    else:
+        installed.append(_install_font_bytes(directory, source.name, source.read_bytes()))
     if shutil.which("fc-cache"):
         subprocess.run(
             ["fc-cache", "-f", str(directory)],
@@ -87,7 +118,12 @@ def install_user_font(source: Path) -> Path:
             timeout=30,
         )
     refresh_font_catalog()
-    return target
+    return tuple(installed)
+
+
+def install_user_font(source: Path) -> Path:
+    """Backward-compatible single-font installer."""
+    return install_user_fonts(source)[0]
 
 
 def closest_family(requested: str, families: tuple[str, ...] | None = None) -> str | None:
