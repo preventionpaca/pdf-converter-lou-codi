@@ -20,6 +20,49 @@ class EmailSettings:
     signature: str = ""
 
 
+@dataclass
+class MailLibrary:
+    subjects: list[str]
+    signatures: dict[str, str]
+
+
+def load_mail_library(path: Path | None = None) -> MailLibrary:
+    target = path or settings_path()
+    try:
+        values = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        values = {}
+    raw = values.get("mail_library", {}) if isinstance(values, dict) else {}
+    subjects = raw.get("subjects", []) if isinstance(raw, dict) else []
+    signatures = raw.get("signatures", {}) if isinstance(raw, dict) else {}
+    return MailLibrary(
+        subjects=sorted({str(value).strip() for value in subjects if str(value).strip()}),
+        signatures={
+            str(name).strip(): str(value)
+            for name, value in signatures.items()
+            if str(name).strip()
+        } if isinstance(signatures, dict) else {},
+    )
+
+
+def save_mail_library(library: MailLibrary, path: Path | None = None) -> None:
+    target = path or settings_path()
+    try:
+        values = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        values = {}
+    if not isinstance(values, dict):
+        values = {}
+    values["mail_library"] = {
+        "subjects": sorted({value.strip() for value in library.subjects if value.strip()}),
+        "signatures": {
+            name.strip(): value for name, value in library.signatures.items() if name.strip()
+        },
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def load_email_settings(path: Path | None = None) -> EmailSettings:
     target = path or settings_path()
     try:

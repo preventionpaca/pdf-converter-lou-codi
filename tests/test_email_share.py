@@ -3,10 +3,13 @@ from pathlib import Path
 
 from lou_codi_pdf_converter.services.email_share import (
     EmailSettings,
+    MailLibrary,
     email_command,
     load_email_settings,
+    load_mail_library,
     prepared_message,
     save_email_settings,
+    save_mail_library,
 )
 
 
@@ -42,3 +45,21 @@ def test_linux_email_command_attaches_pdf(monkeypatch, tmp_path: Path) -> None:
     assert command is not None
     assert command[:3] == ["xdg-email", "--attach", str(target)]
     assert command[-1] == "a@example.org"
+
+
+def test_mail_library_sorts_subjects_and_preserves_named_signatures(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"language": "fr"}), encoding="utf-8")
+    save_mail_library(
+        MailLibrary(
+            subjects=["Demande d’information", "Documents", "Documents"],
+            signatures={"Professionnelle": "Cordialement,\nRudy", "Personnelle": "À bientôt"},
+        ),
+        path,
+    )
+
+    library = load_mail_library(path)
+
+    assert library.subjects == ["Demande d’information", "Documents"]
+    assert library.signatures["Professionnelle"].endswith("Rudy")
+    assert json.loads(path.read_text(encoding="utf-8"))["language"] == "fr"

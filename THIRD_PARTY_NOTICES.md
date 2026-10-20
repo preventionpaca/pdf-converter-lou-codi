@@ -15,6 +15,9 @@ Les textes complets des licences doivent être inclus dans l’installateur fina
 | ReportLab | génération des calques et contenus PDF | BSD |
 | arabic-reshaper | affichage de l’arabe | MIT |
 | python-bidi | affichage bidirectionnel | LGPL-3.0-or-later |
+| Google API Python Client | accès autorisé aux API Gmail et People | Apache-2.0 |
+| google-auth-oauthlib | connexion Google OAuth 2.0 | Apache-2.0 |
+| keyring | stockage des jetons dans le coffre-fort du système | MIT |
 
 SQLite, fourni par la bibliothèque standard Python, est placé dans le domaine public.
 LibreOffice n’est pas distribué dans les paquets Lou Còdi. Lorsqu’il est déjà installé
@@ -31,6 +34,9 @@ sur l’ordinateur, Lou Còdi peut l’appeler comme logiciel externe indépenda
 - ReportLab : <https://hg.reportlab.com/hg-public/reportlab>
 - arabic-reshaper : <https://github.com/mpcabd/python-arabic-reshaper>
 - python-bidi : <https://github.com/MeirKriheli/python-bidi>
+- Google API Python Client : <https://github.com/googleapis/google-api-python-client>
+- google-auth-oauthlib : <https://github.com/googleapis/google-auth-library-python-oauthlib>
+- keyring : <https://github.com/jaraco/keyring>
 - LibreOffice : <https://www.libreoffice.org/about-us/licenses/>
 
 ## Obligations de livraison

@@ -54,23 +54,25 @@ facultatif et n’est activé que si Tesseract est disponible sur l’ordinateur
 
 ### Envoi par e-mail et comptes Google
 
-La version actuelle peut exporter le document en PDF et préparer un message dans
-la messagerie configurée sur l’ordinateur. Elle ne réalise pas encore l’envoi
-direct depuis un compte Google.
+Document Studio peut envoyer directement le PDF avec un ou plusieurs comptes
+Google. La connexion utilise Google OAuth : Lou Còdi ne demande et ne conserve
+jamais le mot de passe du compte. Chaque compte doit autoriser séparément l’envoi
+Gmail et la lecture de ses contacts. Le compte actif détermine l’adresse
+d’expédition, les contacts et les groupes affichés ; changer de compte ne mélange
+donc pas les carnets d’adresses personnels et professionnels.
 
-Une intégration Google pourra être ajoutée sur demande, après étude de
-faisabilité. Elle reposera sur la connexion officielle Google OAuth : Lou Còdi
-ne demandera et ne conservera jamais le mot de passe du compte. L’objectif est
-de permettre l’envoi explicite d’un document par Gmail, la consultation des
-contacts et des groupes de contacts, ainsi que l’utilisation de plusieurs
-comptes, par exemple un compte personnel et un compte professionnel. Le compte
-actif déterminera l’adresse d’expédition, les contacts et les groupes affichés.
-Changer de compte ne mélangera donc pas les carnets d’adresses.
+La fenêtre d’envoi propose les contacts et groupes Google, une bibliothèque
+d’objets réutilisables et des signatures nommées. Un nouvel objet peut être ajouté
+à la liste lors de son premier emploi. L’envoi n’a lieu qu’après une confirmation
+explicite indiquant le compte et les destinataires.
 
-Cette future fonction nécessitera un compte Google et une autorisation accordée
-par chaque utilisateur. Elle n’est pas annoncée comme disponible dans la version
-actuelle et sa généralisation à d’autres fournisseurs de messagerie sera étudiée
-en fonction des demandes.
+L’administrateur du paquet doit configurer une application Google OAuth de type
+« application de bureau », activer les API Gmail et People, puis fournir son
+fichier client JSON dans **Configurer Google**. Les jetons de chaque utilisateur
+sont conservés par le coffre-fort du système. L’utilisation de Yahoo, Ionos,
+d’un serveur SMTP ou d’une autre adresse comme **compte expéditeur** reste
+disponible sur demande, après étude de faisabilité. Ces adresses peuvent déjà
+recevoir normalement les messages envoyés depuis Gmail.
 
 L’installation complète ajoute le raccourci et les dossiers de travail.
 L’installation personnalisée permet de désactiver ces éléments facultatifs ; le cœur de

@@ -60,10 +60,26 @@ from ..services.font_catalog import (
 )
 from ..services.email_share import (
     EmailSettings,
+    MailLibrary,
     email_command,
     load_email_settings,
+    load_mail_library,
     open_email_draft,
+    prepared_message,
     save_email_settings,
+    save_mail_library,
+)
+from ..services.google_mail import (
+    GoogleMailUnavailable,
+    active_account,
+    connect_account,
+    group_members,
+    install_client_file,
+    list_accounts,
+    list_contact_groups,
+    list_contacts,
+    send_pdf,
+    set_active_account,
 )
 from ..services.docx_canvas import export_editable_docx
 from ..services.docx_import import import_docx_as_canvas
@@ -2201,17 +2217,16 @@ class DocumentEditorWindow(tk.Toplevel):
         messagebox.showinfo(
             "Envoi par e-mail et comptes Google",
             (
-                "La version actuelle exporte le document en PDF et prépare un message "
-                "dans la messagerie de l’ordinateur. Elle n’envoie pas encore directement "
-                "le message avec Google.\n\n"
-                "Une intégration Google pourra être développée sur demande, après étude "
-                "de faisabilité. Elle utilisera la connexion officielle Google : aucun mot "
-                "de passe ne sera demandé ou enregistré par Lou Còdi.\n\n"
-                "Le projet prévu comprend l’envoi explicite avec Gmail, les contacts et "
-                "groupes Google, ainsi que plusieurs comptes. Le compte actif — personnel "
+                "Lou Còdi peut envoyer directement un PDF avec Gmail après votre "
+                "confirmation. La connexion passe par Google : aucun mot de passe n’est "
+                "demandé ou enregistré par Lou Còdi.\n\n"
+                "Vous pouvez connecter plusieurs comptes. Le compte actif — personnel "
                 "ou professionnel — déterminera l’expéditeur, les contacts et les groupes "
-                "proposés, sans mélanger les carnets d’adresses.\n\n"
-                "Un compte Google et l’autorisation de l’utilisateur seront nécessaires."
+                "proposés, sans mélanger les carnets d’adresses. Les objets et signatures "
+                "réutilisables sont conservés localement.\n\n"
+                "Les destinataires peuvent utiliser n’importe quel fournisseur. En revanche, "
+                "Yahoo, Ionos et les autres fournisseurs comme comptes expéditeurs seront "
+                "ajoutés seulement sur demande, après étude de faisabilité."
             ),
             parent=self,
         )
@@ -12785,9 +12800,10 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _email_settings_dialog(self, *, prepare: bool) -> None:
         settings = load_email_settings()
+        library = load_mail_library()
         dialog = tk.Toplevel(self)
-        dialog.title("Préparer l’envoi du document" if prepare else "Réglages d’envoi par e-mail")
-        dialog.geometry("720x640")
+        dialog.title("Envoyer le document" if prepare else "Réglages d’envoi par e-mail")
+        dialog.geometry("780x760")
         dialog.configure(bg=BACKGROUND)
         tk.Label(
             dialog,
@@ -12803,25 +12819,175 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Label(
             form,
             text=(
-                "Lou Còdi prépare un brouillon dans votre messagerie. "
-                "Il ne conserve aucun mot de passe et n’envoie jamais le message automatiquement."
+                "Gmail peut envoyer directement le PDF après votre confirmation. "
+                "Lou Còdi ne connaît pas votre mot de passe : Google ouvre sa propre page de connexion."
             ),
-            wraplength=670,
+            wraplength=730,
         ).pack(anchor="w", pady=(0, 12))
+
+        account_row = ttk.Frame(form)
+        account_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(account_row, text="Compte Google expéditeur").pack(side="left")
+        account = tk.StringVar(value=active_account())
+        account_box = ttk.Combobox(account_row, textvariable=account, state="readonly", width=36)
+        account_box.pack(side="left", padx=8, fill="x", expand=True)
+
+        def refresh_accounts(selected: str = "") -> None:
+            values = [item.email for item in list_accounts()]
+            account_box.configure(values=values)
+            chosen = selected or active_account()
+            if chosen in values:
+                account.set(chosen)
+            elif values:
+                account.set(values[0])
+                set_active_account(values[0])
+            else:
+                account.set("")
+
+        def configure_google() -> None:
+            chosen = choose_documents(
+                dialog, {".json"}, initial_directory=downloads_directory(),
+                window_title="Configurer Google — identifiant OAuth",
+                heading="Choisir le fichier client OAuth Google",
+                accept_label="Utiliser ce fichier",
+                selection_help="Sélectionnez le fichier JSON de l’application de bureau Google OAuth.",
+            )
+            if not chosen:
+                return
+            try:
+                install_client_file(chosen[0])
+            except (OSError, ValueError) as exc:
+                messagebox.showerror("Configuration Google impossible", str(exc), parent=dialog)
+                return
+            messagebox.showinfo("Google configuré", "Le fichier OAuth est installé localement.", parent=dialog)
+
+        def add_google_account() -> None:
+            try:
+                connected = connect_account()
+            except (GoogleMailUnavailable, OSError, ValueError) as exc:
+                messagebox.showerror("Connexion Google impossible", str(exc), parent=dialog)
+                return
+            refresh_accounts(connected.email)
+            self.status.configure(text=f"Compte Google connecté : {connected.email}")
+
+        def account_changed(_event=None) -> None:
+            if account.get():
+                set_active_account(account.get())
+
+        account_box.bind("<<ComboboxSelected>>", account_changed)
+        ttk.Button(account_row, text="+ Compte", command=add_google_account).pack(side="left", padx=3)
+        ttk.Button(account_row, text="Configurer Google", command=configure_google).pack(side="left", padx=3)
+        refresh_accounts()
+
         recipient = tk.StringVar(value=settings.recipient)
         subject = tk.StringVar(value=settings.subject)
-        ttk.Label(form, text="Destinataire par défaut").pack(anchor="w")
+        recipient_row = ttk.Frame(form)
+        recipient_row.pack(fill="x")
+        ttk.Label(recipient_row, text="Destinataires (séparés par une virgule)").pack(side="left")
+
+        def choose_google_recipients() -> None:
+            selected_account = account.get()
+            if not selected_account:
+                messagebox.showinfo("Compte Google", "Connectez ou sélectionnez d’abord un compte.", parent=dialog)
+                return
+            picker = tk.Toplevel(dialog)
+            picker.title(f"Contacts et groupes — {selected_account}")
+            picker.geometry("700x560")
+            frame = ttk.Frame(picker, padding=14)
+            frame.pack(fill="both", expand=True)
+            query = tk.StringVar()
+            ttk.Label(frame, text=f"Carnet du compte : {selected_account}").pack(anchor="w")
+            ttk.Entry(frame, textvariable=query).pack(fill="x", pady=8)
+            tree = ttk.Treeview(frame, columns=("type", "email"), show="tree headings", selectmode="extended")
+            tree.heading("#0", text="Nom")
+            tree.heading("type", text="Type")
+            tree.heading("email", text="Adresse / membres")
+            tree.pack(fill="both", expand=True)
+            records = {}
+            try:
+                for group in list_contact_groups(selected_account):
+                    item = tree.insert("", "end", text=group.name, values=("Groupe", f"{group.member_count} membre(s)"))
+                    records[item] = ("group", group.resource_name)
+                for contact in list_contacts(selected_account):
+                    item = tree.insert("", "end", text=contact.name or contact.email, values=("Contact", contact.email))
+                    records[item] = ("contact", contact.email)
+            except (GoogleMailUnavailable, OSError, ValueError) as exc:
+                picker.destroy()
+                messagebox.showerror("Contacts Google indisponibles", str(exc), parent=dialog)
+                return
+
+            def filter_rows(*_args) -> None:
+                needle = query.get().casefold().strip()
+                for item, (_kind, value) in records.items():
+                    haystack = f"{tree.item(item, 'text')} {value}".casefold()
+                    tree.detach(item) if needle and needle not in haystack else tree.reattach(item, "", "end")
+
+            query.trace_add("write", filter_rows)
+
+            def add_selection() -> None:
+                addresses = [part.strip() for part in recipient.get().split(",") if part.strip()]
+                try:
+                    for item in tree.selection():
+                        kind, value = records[item]
+                        if kind == "contact":
+                            addresses.append(value)
+                        else:
+                            addresses.extend(member.email for member in group_members(selected_account, value))
+                except (GoogleMailUnavailable, OSError, ValueError) as exc:
+                    messagebox.showerror("Groupe indisponible", str(exc), parent=picker)
+                    return
+                recipient.set(", ".join(dict.fromkeys(addresses)))
+                picker.destroy()
+
+            buttons = ttk.Frame(frame)
+            buttons.pack(fill="x", pady=(10, 0))
+            ttk.Button(buttons, text="Annuler", command=picker.destroy).pack(side="right")
+            ttk.Button(buttons, text="Ajouter la sélection", command=add_selection, style="Primary.TButton").pack(side="right", padx=8)
+            picker.bind("<Escape>", lambda _event: picker.destroy())
+
+        ttk.Button(recipient_row, text="Contacts et groupes Google…", command=choose_google_recipients).pack(side="right")
         ttk.Entry(form, textvariable=recipient).pack(fill="x", pady=(2, 10))
         ttk.Label(form, text="Objet — {document} sera remplacé par le nom du PDF").pack(anchor="w")
-        ttk.Entry(form, textvariable=subject).pack(fill="x", pady=(2, 10))
+        subject_box = ttk.Combobox(form, textvariable=subject, values=library.subjects)
+        subject_box.pack(fill="x", pady=(2, 10))
+
+        def filter_subjects(_event=None) -> None:
+            needle = subject.get().casefold().strip()
+            matches = [value for value in library.subjects if needle in value.casefold()]
+            subject_box.configure(values=matches or library.subjects)
+
+        subject_box.bind("<KeyRelease>", filter_subjects)
         ttk.Label(form, text="Message").pack(anchor="w")
-        body = tk.Text(form, height=10, wrap="word", font=("Sans", 11))
+        body = tk.Text(form, height=8, wrap="word", font=("Sans", 11))
         body.pack(fill="both", expand=True, pady=(2, 10))
         body.insert("1.0", settings.body)
-        ttk.Label(form, text="Signature").pack(anchor="w")
+        signature_row = ttk.Frame(form)
+        signature_row.pack(fill="x")
+        ttk.Label(signature_row, text="Signature").pack(side="left")
+        signature_name = tk.StringVar()
+        signature_box = ttk.Combobox(signature_row, textvariable=signature_name, values=sorted(library.signatures), state="readonly", width=30)
+        signature_box.pack(side="left", padx=8)
         signature = tk.Text(form, height=5, wrap="word", font=("Sans", 11))
         signature.pack(fill="x", pady=(2, 10))
         signature.insert("1.0", settings.signature)
+
+        def signature_selected(_event=None) -> None:
+            value = library.signatures.get(signature_name.get(), "")
+            signature.delete("1.0", "end")
+            signature.insert("1.0", value)
+
+        signature_box.bind("<<ComboboxSelected>>", signature_selected)
+
+        def save_signature() -> None:
+            name = ask_text(dialog, "Nom de la signature", "Nom de cette signature :", signature_name.get() or "Professionnelle")
+            if not name:
+                return
+            library.signatures[name.strip()] = signature.get("1.0", "end-1c")
+            save_mail_library(library)
+            signature_box.configure(values=sorted(library.signatures))
+            signature_name.set(name.strip())
+
+        ttk.Button(signature_row, text="Enregistrer cette signature…", command=save_signature).pack(side="right")
 
         def current_settings() -> EmailSettings:
             return EmailSettings(
@@ -12832,19 +12998,61 @@ class DocumentEditorWindow(tk.Toplevel):
             )
 
         def save_only() -> None:
-            save_email_settings(current_settings())
+            current = current_settings()
+            save_email_settings(current)
+            if current.subject and current.subject not in library.subjects:
+                if messagebox.askyesno("Nouvel objet", "Ajouter cet objet à la liste des objets disponibles ?", parent=dialog):
+                    library.subjects.append(current.subject)
+                    save_mail_library(library)
+                    subject_box.configure(values=sorted(set(library.subjects)))
             self.status.configure(text="Réglages d’envoi enregistrés localement.")
 
-        def prepare_message() -> None:
+        def export_attachment() -> tuple[EmailSettings, Path]:
             email_settings = current_settings()
             save_email_settings(email_settings)
+            if email_settings.subject and email_settings.subject not in library.subjects:
+                if messagebox.askyesno("Nouvel objet", "Ajouter cet objet à la liste des objets disponibles ?", parent=dialog):
+                    library.subjects.append(email_settings.subject)
+                    save_mail_library(library)
             self._commit_inline_editor(render=False)
             directory = document_destination() / "Envois par e-mail"
             directory.mkdir(parents=True, exist_ok=True)
             stem = self.project_path.stem if self.project_path else "nouveau_document"
             target = collision_free_target(directory, stem, ".pdf")
+            export_canvas_pdf(self.document, target)
+            return email_settings, target
+
+        def send_with_google() -> None:
+            if not account.get():
+                messagebox.showinfo("Compte Google", "Connectez ou sélectionnez un compte Google.", parent=dialog)
+                return
+            if not messagebox.askyesno(
+                "Confirmer l’envoi",
+                f"Envoyer maintenant le PDF avec le compte {account.get()} ?\n\nDestinataires : {recipient.get()}",
+                parent=dialog,
+            ):
+                return
             try:
-                export_canvas_pdf(self.document, target)
+                email_settings, target = export_attachment()
+                final_subject, final_body = prepared_message(email_settings, target.stem)
+                message_id = send_pdf(
+                    account.get(),
+                    [value.strip() for value in recipient.get().replace(";", ",").split(",") if value.strip()],
+                    final_subject,
+                    final_body,
+                    target,
+                )
+            except (GoogleMailUnavailable, OSError, RuntimeError, ValueError) as exc:
+                messagebox.showerror("Envoi Google impossible", str(exc), parent=dialog)
+                return
+            self.last_export = target
+            self.status.configure(text=f"Message envoyé avec {account.get()} — {target.name}")
+            messagebox.showinfo("Message envoyé", f"Google a accepté le message.\nIdentifiant : {message_id or 'confirmé'}", parent=dialog)
+            dialog.destroy()
+
+        def prepare_message() -> None:
+            try:
+                email_settings, target = export_attachment()
                 supports_attachment = email_command(email_settings, target) is not None
                 opened = open_email_draft(email_settings, target)
             except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
@@ -12875,9 +13083,14 @@ class DocumentEditorWindow(tk.Toplevel):
         if prepare:
             ttk.Button(
                 actions,
-                text="Exporter et préparer le message",
-                command=prepare_message,
+                text="Envoyer maintenant avec Google",
+                command=send_with_google,
                 style="Primary.TButton",
+            ).pack(side="right", padx=8)
+            ttk.Button(
+                actions,
+                text="Préparer dans une autre messagerie",
+                command=prepare_message,
             ).pack(side="right", padx=8)
         ttk.Button(actions, text="Enregistrer les réglages", command=save_only).pack(side="left")
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
