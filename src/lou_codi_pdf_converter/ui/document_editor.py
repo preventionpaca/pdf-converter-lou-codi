@@ -6710,20 +6710,33 @@ class DocumentEditorWindow(tk.Toplevel):
                 # Reflowing and rasterising a long rich-text frame on every
                 # pointer event blocks Tk for seconds. During the gesture the
                 # lightweight outline is sufficient; release performs the
-                # single accurate render.
+                # single accurate render. Hide the old raster while resizing:
+                # showing it through a stippled rectangle looked like two
+                # overlapping text layouts.
+                self.canvas.itemconfigure(f"object:{self.selected}", state="hidden")
                 self.canvas.delete("text-resize-preview")
                 self.canvas.create_rectangle(
                     self.page_x + item.x * self.zoom,
                     self.page_y + item.y * self.zoom,
                     self.page_x + (item.x + item.width) * self.zoom,
                     self.page_y + (item.y + item.height) * self.zoom,
-                    fill="#DCEBFA",
-                    stipple="gray25",
+                    fill="",
                     outline="#1769AA",
                     width=2,
                     dash=(6, 4),
                     tags=("text-resize-preview",),
                 )
+                handle_size = 12
+                handle_x = self.page_x + (item.x + item.width) * self.zoom
+                handle_y = self.page_y + (item.y + item.height) * self.zoom
+                self.canvas.coords(
+                    f"resize-end:{self.selected}",
+                    handle_x - handle_size / 2,
+                    handle_y - handle_size / 2,
+                    handle_x + handle_size / 2,
+                    handle_y + handle_size / 2,
+                )
+                self.canvas.tag_raise(f"resize-end:{self.selected}")
             else:
                 self._schedule_live_render()
             width_mm, height_mm = item.width * 25.4 / 72, item.height * 25.4 / 72
@@ -6917,9 +6930,12 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.undo_stack.append(self._drag_before)
                 self.redo_stack.clear()
         self._assembly_resize_origin = None
+        resized_text_index: int | None = None
         if self._resize_origin is not None and self.selected is not None:
             _, _, _, old_x, old_y, old_width, old_height = self._resize_origin
             item = self.document.objects[self.selected]
+            if item.kind == "text":
+                resized_text_index = self.selected
             if (item.x, item.y, item.width, item.height) != (
                 old_x, old_y, old_width, old_height
             ):
@@ -6944,10 +6960,11 @@ class DocumentEditorWindow(tk.Toplevel):
             self.redo_stack.clear()
         self._drag_origin = None
         self._drag_before = None
-        if changed:
+        if resized_text_index is not None:
             self.canvas.delete("text-resize-preview")
             self.canvas.delete("dimension-guide")
             self.canvas.delete("dimension-guide-bg")
+        if changed:
             if (
                 self.selected is not None
                 and len(self.selected_indices) == 1
@@ -6956,6 +6973,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._redraw_text_chain(self.document.objects[self.selected])
             else:
                 self._render()
+        elif resized_text_index is not None:
+            self.canvas.itemconfigure(
+                f"object:{resized_text_index}", state="normal"
+            )
 
     def _edit_selected(self, _event: object = None) -> None:
         if (
