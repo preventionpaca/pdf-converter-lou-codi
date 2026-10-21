@@ -7151,14 +7151,25 @@ class DocumentEditorWindow(tk.Toplevel):
         self, family: str, pixel_size: float, bold: bool, italic: bool
     ) -> float:
         """Return Tk's display-line height, with a headless-test fallback."""
+        key = (family, round(float(pixel_size), 3), bool(bold), bool(italic))
+        cache = getattr(self, "_text_line_height_cache", None)
+        if cache is None:
+            cache = self._text_line_height_cache = {}
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
         try:
-            return float(
+            height = float(
                 self._tk_layout_font(family, pixel_size, bold, italic).metrics(
                     "linespace"
                 )
             )
         except (AttributeError, tk.TclError):
-            return max(1.0, pixel_size * 1.35)
+            height = max(1.0, pixel_size * 1.35)
+        if len(cache) >= 256:
+            cache.clear()
+        cache[key] = height
+        return height
 
     def _choose_inline_font_family(self, family: str) -> None:
         self.font_family_var.set(family)
