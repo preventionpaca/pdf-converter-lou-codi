@@ -38,6 +38,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     draw_styled_rectangle,
     edge_coincidence_translation,
     clipboard_html_image_sources,
+    compact_text_style_runs,
     extract_clipboard_html,
     fitted_table_cell_text,
     expanded_group_indices,
@@ -184,6 +185,71 @@ def test_rich_text_fragment_boundaries_only_keep_visible_style_changes() -> None
     ]
 
     assert rich_text_fragment_boundaries(lookup, links, 4, 13) == [4, 5, 7, 9, 12, 13]
+
+
+def test_compact_text_style_runs_flattens_nested_browser_spans() -> None:
+    item = PageObject(
+        "text",
+        0,
+        0,
+        0,
+        100,
+        50,
+        text="abcdefghij",
+        text_styles=[
+            {"start": 0, "end": 10, "font_family": "Sans-serif", "color": "#333333"},
+            {"start": 2, "end": 8, "bold": True},
+            {"start": 4, "end": 6, "color": "#CC0000"},
+            {"start": 6, "end": 8, "bold": True},
+        ],
+    )
+
+    compacted = compact_text_style_runs(item, len(item.text))
+    normalized = copy.copy(item)
+    normalized.text_styles = compacted
+
+    assert len(compacted) == 5
+    assert resolved_text_styles(normalized, len(item.text)) == resolved_text_styles(
+        item, len(item.text)
+    )
+    assert all(
+        compacted[index]["end"] <= compacted[index + 1]["start"]
+        for index in range(len(compacted) - 1)
+    )
+
+
+def test_text_chain_redraw_keeps_previous_raster_until_replacement_is_ready() -> None:
+    events: list[tuple[str, object]] = []
+
+    class CanvasRecorder:
+        def find_withtag(self, tag: str) -> tuple[int, ...]:
+            return {
+                "object:0": (10,),
+                "resize-start:0": (11,),
+                "resize-end:0": (12,),
+            }.get(tag, ())
+
+        def delete(self, item: object) -> None:
+            events.append(("delete", item))
+
+    item = PageObject("text", 0, 0, 0, 100, 50, text="Texte")
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[item])
+    editor.current_page = 0
+    editor.canvas = CanvasRecorder()
+    editor._editing_object_id = ""
+    editor._editing_widget = None
+    editor._editing_dialog = None
+    editor._draw_object = lambda index, candidate: events.append(("draw", index))
+
+    editor._redraw_text_chain(item)
+
+    assert events == [
+        ("draw", 0),
+        ("delete", 10),
+        ("delete", 11),
+        ("delete", 12),
+    ]
 
 
 def test_text_flow_style_lookup_preserves_overlapping_partial_styles() -> None:

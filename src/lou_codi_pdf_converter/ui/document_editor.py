@@ -496,7 +496,8 @@ def parse_rich_clipboard_html(value: str) -> tuple[str, list[dict[str, object]]]
         for run in parser.styles
         if int(run["end"]) - leading > 0 and int(run["start"]) - leading < len(text)
     ]
-    return text, [run for run in styles if run["end"] > run["start"]]
+    frame = PageObject("text", 0, 0, 0, 1, 1, text=text, text_styles=styles)
+    return text, compact_text_style_runs(frame, len(text))
 
 
 def parse_rich_clipboard_html_outside_tables(
@@ -673,7 +674,8 @@ def parse_rich_clipboard_rtf(value: str) -> tuple[str, list[dict[str, object]]]:
         end = min(len(text), int(run["end"]) - leading)
         if end > start:
             cleaned.append({**run, "start": start, "end": end})
-    return text, cleaned
+    frame = PageObject("text", 0, 0, 0, 1, 1, text=text, text_styles=cleaned)
+    return text, compact_text_style_runs(frame, len(text))
 
 
 def extract_clipboard_html(value: str) -> str:
@@ -1064,6 +1066,49 @@ def resolved_text_styles(item: PageObject, text_length: int) -> list[dict[str, o
             merged.update(update)
             lookup[position] = merged
     return lookup
+
+
+def compact_text_style_runs(
+    item: PageObject,
+    text_length: int,
+    runs: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    """Flatten overlapping clipboard styles into minimal contiguous runs.
+
+    Browser clipboards frequently describe the same characters through many
+    nested HTML spans. Keeping every overlapping span makes wrapping and Tk
+    tag processing progressively slower and can give the editor a different
+    tag priority from the final preview. The flattened runs preserve the
+    effective appearance while giving both renderers one unambiguous style
+    per character.
+    """
+    source = copy.copy(item)
+    source.text_styles = list(runs if runs is not None else item.text_styles)
+    base = text_style_at(source, -1)
+    lookup = resolved_text_styles(source, text_length)
+    compacted: list[dict[str, object]] = []
+    run_start = 0
+    current: dict[str, object] = {}
+    for position in range(text_length + 1):
+        style = (
+            {
+                key: value
+                for key, value in lookup[position].items()
+                if value != base.get(key)
+            }
+            if position < text_length
+            else {}
+        )
+        if position == 0:
+            current = style
+            continue
+        if style == current:
+            continue
+        if current:
+            compacted.append({"start": run_start, "end": position, **current})
+        run_start = position
+        current = style
+    return compacted
 
 
 def paragraph_alignment_at(item: PageObject, position: int) -> str:
@@ -4287,6 +4332,9 @@ class DocumentEditorWindow(tk.Toplevel):
             for run in render_item.text_styles
             if isinstance(run, dict)
         ]
+        render_item.text_styles = compact_text_style_runs(
+            render_item, len(text), render_item.text_styles
+        )
         render_item.text_links = [
             {
                 **run,
@@ -7257,6 +7305,9 @@ class DocumentEditorWindow(tk.Toplevel):
             _slice_text_ranges(style_source.text_styles, flow_offset, len(editor_text))
             if linked_segment else copy.deepcopy(item.text_styles)
         )
+        editor_styles = compact_text_style_runs(
+            style_source, len(editor_text), editor_styles
+        )
         editor_links = (
             _slice_text_ranges(style_source.text_links, flow_offset, len(editor_text))
             if linked_segment else copy.deepcopy(item.text_links)
@@ -8900,10 +8951,17 @@ class DocumentEditorWindow(tk.Toplevel):
                     and self._editing_dialog is None
                 ):
                     continue
-                self.canvas.delete(f"object:{index}")
-                self.canvas.delete(f"resize-start:{index}")
-                self.canvas.delete(f"resize-end:{index}")
+                # Keep the previous raster visible while Pillow prepares the
+                # replacement. Deleting first exposed the grey canvas for a
+                # few seconds on long Office or browser pastes.
+                previous_items = tuple(self.canvas.find_withtag(f"object:{index}"))
+                previous_handles = (
+                    *self.canvas.find_withtag(f"resize-start:{index}"),
+                    *self.canvas.find_withtag(f"resize-end:{index}"),
+                )
                 self._draw_object(index, candidate)
+                for canvas_item in (*previous_items, *previous_handles):
+                    self.canvas.delete(canvas_item)
 
     def _commit_inline_editor(self, *, render: bool = True) -> None:
         widget = self._editing_widget
@@ -9017,6 +9075,7 @@ class DocumentEditorWindow(tk.Toplevel):
                         value,
                         previous_segment_styles,
                     )
+                styles = compact_text_style_runs(style_owner, len(value), styles)
                 paragraph_alignments: list[dict[str, object]] = []
                 last_line = int(widget.index("end-1c").split(".", 1)[0])
                 for line_number in range(1, last_line + 1):
@@ -9044,6 +9103,9 @@ class DocumentEditorWindow(tk.Toplevel):
                     flow_root.text_styles = _replace_text_ranges(
                         original_styles, flow_offset, old_length, styles, len(value)
                     )
+                    flow_root.text_styles = compact_text_style_runs(
+                        flow_root, len(flow_root.text), flow_root.text_styles
+                    )
                     flow_root.paragraph_alignments = _replace_text_ranges(
                         original_paragraph_alignments,
                         flow_offset,
@@ -9070,7 +9132,9 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                 else:
                     item.text = value
-                    item.text_styles = styles
+                    item.text_styles = compact_text_style_runs(
+                        item, len(value), styles
+                    )
                     item.paragraph_alignments = paragraph_alignments
                     changed = (
                         value != original_text
@@ -10055,6 +10119,9 @@ class DocumentEditorWindow(tk.Toplevel):
                     "end": offset + int(run["end"]),
                 }
                 for run in rich_styles
+            )
+            target.text_styles = compact_text_style_runs(
+                target, len(target.text), target.text_styles
             )
             self._render()
             self.status.configure(
