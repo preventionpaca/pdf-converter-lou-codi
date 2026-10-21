@@ -359,6 +359,38 @@ def proportional_resize(
     return old_width * scale, old_height * scale
 
 
+def constrained_right_triangle_vertices(
+    points: list[tuple[float, float]],
+    point_index: int,
+    target: tuple[float, float],
+) -> list[tuple[float, float]]:
+    """Move one handle while preserving the 90° angle at vertex A."""
+    if len(points) < 3:
+        return points
+    a, b, c = points[:3]
+    if point_index in {0, 3}:
+        dx, dy = target[0] - a[0], target[1] - a[1]
+        a, b, c = target, (b[0] + dx, b[1] + dy), (c[0] + dx, c[1] + dy)
+    else:
+        fixed_leg = c if point_index == 1 else b
+        fixed_dx, fixed_dy = fixed_leg[0] - a[0], fixed_leg[1] - a[1]
+        fixed_length = math.hypot(fixed_dx, fixed_dy)
+        if fixed_length <= 1e-9:
+            return [a, b, c, a]
+        direction = (-fixed_dy / fixed_length, fixed_dx / fixed_length)
+        current = b if point_index == 1 else c
+        if (current[0] - a[0]) * direction[0] + (current[1] - a[1]) * direction[1] < 0:
+            direction = (-direction[0], -direction[1])
+        distance = (target[0] - a[0]) * direction[0] + (target[1] - a[1]) * direction[1]
+        distance = max(1.0, distance)
+        moved = (a[0] + direction[0] * distance, a[1] + direction[1] * distance)
+        if point_index == 1:
+            b = moved
+        else:
+            c = moved
+    return [a, b, c, a]
+
+
 def table_cell_editor_size(
     cell_width: float,
     cell_height: float,
@@ -6902,10 +6934,17 @@ class DocumentEditorWindow(tk.Toplevel):
             object_index, point_index, _original_points = self._vertex_drag_origin
             item = self.document.objects[object_index]
             absolute = [(item.x + x, item.y + y) for x, y in item.points]
-            absolute[point_index] = (
+            target = (
                 (self.canvas.canvasx(event.x) - self.page_x) / self.zoom,
                 (self.canvas.canvasy(event.y) - self.page_y) / self.zoom,
             )
+            if item.shape == "right_triangle_geometry":
+                absolute = constrained_right_triangle_vertices(
+                    absolute, point_index, target
+                )
+                self.status.configure(text="Triangle rectangle : l’angle A reste verrouillé à 90°.")
+            else:
+                absolute[point_index] = target
             self._set_polyline_absolute_points(item, absolute)
             self._schedule_live_render()
             return
@@ -6976,6 +7015,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 else:
                     diameter = resized_circle_diameter(old_width, delta_x, delta_y)
                     new_width = new_height = diameter
+            elif item.kind == "polyline" and item.shape == "right_triangle_geometry":
+                new_width, new_height = proportional_resize(
+                    old_width, old_height, new_width, new_height
+                )
             elif control and item.kind not in {"line", "polyline"}:
                 new_width, new_height = proportional_resize(
                     old_width, old_height, new_width, new_height
@@ -13165,6 +13208,10 @@ class DocumentEditorWindow(tk.Toplevel):
         for entry in self.triangle_entries.values():
             entry.state(["!disabled"])
         metrics = self._triangle_metrics(item)
+        if is_right:
+            # Older documents may contain a manually distorted right triangle.
+            # Do not interpret the displayed, locked 90° value as a user edit.
+            metrics["angle_a"] = 90.0
         self._triangle_property_originals = metrics
         for key, value in metrics.items():
             self.triangle_vars[key].set(f"{value:.2f}")
@@ -13356,10 +13403,16 @@ class DocumentEditorWindow(tk.Toplevel):
             if point_index >= len(absolute):
                 return
             self._checkpoint()
-            absolute[point_index] = (
+            target = (
                 max(0.0, values["x"] * 72 / 25.4),
                 max(0.0, values["y"] * 72 / 25.4),
             )
+            if item.shape == "right_triangle_geometry":
+                absolute = constrained_right_triangle_vertices(
+                    absolute, point_index, target
+                )
+            else:
+                absolute[point_index] = target
             self._set_polyline_absolute_points(item, absolute)
             self.status.configure(
                 text=f"Sommet {point_index + 1} placé à X {values['x']:.2f} mm, Y {values['y']:.2f} mm."
@@ -13387,6 +13440,14 @@ class DocumentEditorWindow(tk.Toplevel):
 
         def apply(item: PageObject) -> None:
             old_width, old_height = item.width, item.height
+            if item.kind == "polyline" and item.shape == "right_triangle_geometry":
+                target_width = values["width"] * 72 / 25.4
+                target_height = values["height"] * 72 / 25.4
+                values["width"], values["height"] = proportional_resize(
+                    old_width, old_height, target_width, target_height, minimum=6.0
+                )
+                values["width"] *= 25.4 / 72
+                values["height"] *= 25.4 / 72
             for key, value in values.items():
                 if key in {"x", "y", "width", "height"}:
                     value = value * 72 / 25.4

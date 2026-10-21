@@ -26,7 +26,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     wrapped_text_lines,
     wrapped_text_ranges,
 )
-from lou_codi_pdf_converter.services.geometry import Segment
+from lou_codi_pdf_converter.services.geometry import Segment, angle_at_vertex
 from lou_codi_pdf_converter.ui.document_editor import (
     DocumentEditorWindow,
     _replace_text_ranges,
@@ -39,6 +39,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     edge_coincidence_translation,
     clipboard_html_image_sources,
     compact_text_style_runs,
+    constrained_right_triangle_vertices,
     extract_clipboard_html,
     fitted_table_cell_text,
     expanded_group_indices,
@@ -151,6 +152,21 @@ def test_slope_angle_and_percent_handles_inclines_and_verticals() -> None:
     assert percent == pytest.approx(25.0)
     assert vertical_angle == 90.0
     assert math.isinf(vertical_percent)
+
+
+@pytest.mark.parametrize(
+    ("point_index", "target"),
+    ((0, (20.0, 15.0)), (1, (130.0, 45.0)), (2, (-20.0, 95.0)), (3, (5.0, 7.0))),
+)
+def test_right_triangle_handle_drag_keeps_angle_a_locked(
+    point_index: int, target: tuple[float, float]
+) -> None:
+    original = [(0.0, 0.0), (100.0, 0.0), (0.0, 60.0), (0.0, 0.0)]
+
+    moved = constrained_right_triangle_vertices(original, point_index, target)
+
+    assert moved[-1] == moved[0]
+    assert angle_at_vertex(moved[1], moved[0], moved[2]) == pytest.approx(90.0)
 
 
 def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None:
