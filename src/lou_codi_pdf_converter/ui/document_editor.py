@@ -299,6 +299,31 @@ def remap_text_ranges_after_edit(
     )
 
 
+def merge_editor_text_styles(
+    owner: PageObject,
+    old_text: str,
+    new_text: str,
+    original_styles: list[dict[str, object]],
+    added_styles: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Preserve imported formatting and overlay styles created in the editor.
+
+    Tk may temporarily omit display-tag ranges for a large browser or Office
+    paste.  Persisted styles therefore remain the source of truth; only tags
+    created by a new formatting or paste action are layered on top of them.
+    """
+    preserved = remap_text_ranges_after_edit(
+        old_text,
+        new_text,
+        original_styles,
+    )
+    return compact_text_style_runs(
+        owner,
+        len(new_text),
+        [*preserved, *added_styles],
+    )
+
+
 def proportional_resize(
     old_width: float,
     old_height: float,
@@ -7625,6 +7650,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._editing_style_tags[tag] = style
                 self._configure_text_style_tag(widget, tag, style_source, style)
             widget.tag_add(tag, f"1.0 + {start} chars", f"1.0 + {end} chars")
+            widget.tag_raise(tag)
         for number, run in enumerate(editor_alignments):
             start = max(0, int(run.get("start", 0)))
             end = max(start, int(run.get("end", 0)))
@@ -9049,8 +9075,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 row, column = table_cell
                 cell = self._ensure_table_cells(item)[row][column]
                 cell["text"] = value
-                styles: list[dict[str, object]] = []
+                added_styles: list[dict[str, object]] = []
                 for tag, style in self._editing_style_tags.items():
+                    if not tag.startswith(("style_live_", "style_paste_")):
+                        continue
                     ranges = widget.tag_ranges(tag)
                     for start_index, end_index in zip(
                         ranges[::2], ranges[1::2], strict=True
@@ -9058,8 +9086,29 @@ class DocumentEditorWindow(tk.Toplevel):
                         start = self._text_character_offset(widget, start_index)
                         end = self._text_character_offset(widget, end_index)
                         if end > start:
-                            styles.append({"start": start, "end": end, **style})
-                cell["text_styles"] = styles
+                            added_styles.append({"start": start, "end": end, **style})
+                original_cell_text = str((table_original or {}).get("text", ""))
+                original_cell_styles = list((table_original or {}).get("text_styles", []))
+                cell_owner = copy.copy(item)
+                cell_owner.bold = bool(cell.get("bold", item.bold))
+                cell_owner.italic = bool(cell.get("italic", item.italic))
+                cell_owner.underline = bool(cell.get("underline", item.underline))
+                cell_owner.strikethrough = bool(
+                    cell.get("strikethrough", item.strikethrough)
+                )
+                cell_owner.color = str(cell.get("color", item.color))
+                cell_owner.font_family = str(cell.get("font_family", item.font_family))
+                cell_owner.font_size = safe_number(
+                    cell.get("font_size"), item.font_size, minimum=1.0
+                )
+                cell_owner.text_styles = []
+                cell["text_styles"] = merge_editor_text_styles(
+                    cell_owner,
+                    original_cell_text,
+                    value,
+                    original_cell_styles,
+                    added_styles,
+                )
                 self._sync_table_text(item)
                 # Editing one verbose imported cell must not multiply the
                 # complete table height by that cell's number of lines.
@@ -9069,14 +9118,16 @@ class DocumentEditorWindow(tk.Toplevel):
                 )
                 changed = cell != table_original
             else:
-                styles: list[dict[str, object]] = []
+                added_styles: list[dict[str, object]] = []
                 for tag, style in self._editing_style_tags.items():
+                    if not tag.startswith(("style_live_", "style_paste_")):
+                        continue
                     ranges = widget.tag_ranges(tag)
                     for start_index, end_index in zip(ranges[::2], ranges[1::2], strict=True):
                         start = self._text_character_offset(widget, start_index)
                         end = self._text_character_offset(widget, end_index)
                         if end > start:
-                            styles.append({"start": start, "end": end, **style})
+                            added_styles.append({"start": start, "end": end, **style})
                 flow_root = next(
                     (
                         candidate
@@ -9086,26 +9137,22 @@ class DocumentEditorWindow(tk.Toplevel):
                     None,
                 ) if flow_root_id else None
                 style_owner = flow_root or item
-                if not styles and original_styles:
-                    # Some Tk builds briefly lose every display tag when a
-                    # large HTML paste is edited. Never flatten all imported
-                    # formatting for that transient UI failure: remap the
-                    # persisted runs over the unchanged portions of the edit.
-                    previous_segment_styles = (
-                        _slice_text_ranges(
-                            original_styles,
-                            flow_offset,
-                            len(flow_original_segment),
-                        )
-                        if flow_root is not None
-                        else original_styles
+                previous_segment_styles = (
+                    _slice_text_ranges(
+                        original_styles,
+                        flow_offset,
+                        len(flow_original_segment),
                     )
-                    styles = remap_text_ranges_after_edit(
-                        flow_original_segment if flow_root is not None else original_text,
-                        value,
-                        previous_segment_styles,
-                    )
-                styles = compact_text_style_runs(style_owner, len(value), styles)
+                    if flow_root is not None
+                    else original_styles
+                )
+                styles = merge_editor_text_styles(
+                    style_owner,
+                    flow_original_segment if flow_root is not None else original_text,
+                    value,
+                    previous_segment_styles,
+                    added_styles,
+                )
                 paragraph_alignments: list[dict[str, object]] = []
                 last_line = int(widget.index("end-1c").split(".", 1)[0])
                 for line_number in range(1, last_line + 1):

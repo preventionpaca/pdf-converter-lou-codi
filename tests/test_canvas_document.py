@@ -44,6 +44,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     expanded_group_indices,
     inline_editor_font_size,
     inline_editor_padding,
+    merge_editor_text_styles,
     merge_mirrored_outlines,
     normalize_external_text,
     normalize_plain_paste,
@@ -1560,6 +1561,73 @@ def test_text_highlight_only_applies_inside_its_text_range() -> None:
 
     assert text_style_at(item, 2)["highlight"] == ""
     assert text_style_at(item, 10)["highlight"] == "#FFF176"
+
+
+def test_editor_preserves_imported_styles_when_a_new_style_is_added() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 200, 50, text="Titre important",
+        text_styles=[{"start": 0, "end": 5, "bold": True, "color": "#CC0000"}],
+    )
+
+    merged = merge_editor_text_styles(
+        item,
+        item.text,
+        item.text,
+        item.text_styles,
+        [{"start": 6, "end": 15, "italic": True, "highlight": "#FFF176"}],
+    )
+    result = copy.copy(item)
+    result.text_styles = merged
+
+    assert text_style_at(result, 2)["bold"] is True
+    assert text_style_at(result, 2)["color"] == "#CC0000"
+    assert text_style_at(result, 9)["italic"] is True
+    assert text_style_at(result, 9)["highlight"] == "#FFF176"
+
+
+def test_editor_remaps_imported_styles_after_text_edit_before_overlaying_new_style() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 200, 50, text="Bonjour monde",
+        text_styles=[{"start": 8, "end": 13, "bold": True}],
+    )
+    new_text = "Bonjour beau monde"
+
+    merged = merge_editor_text_styles(
+        item,
+        item.text,
+        new_text,
+        item.text_styles,
+        [{"start": 0, "end": 7, "underline": True}],
+    )
+    result = copy.copy(item)
+    result.text = new_text
+    result.text_styles = merged
+
+    assert text_style_at(result, 3)["underline"] is True
+    assert text_style_at(result, 15)["bold"] is True
+
+
+def test_editor_can_remove_an_imported_style_without_losing_other_formatting() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 200, 50, text="Titre rouge",
+        text_styles=[{
+            "start": 0, "end": 11, "bold": True, "color": "#CC0000",
+        }],
+    )
+
+    merged = merge_editor_text_styles(
+        item,
+        item.text,
+        item.text,
+        item.text_styles,
+        [{"start": 0, "end": 5, "bold": False, "color": "#CC0000"}],
+    )
+    result = copy.copy(item)
+    result.text_styles = merged
+
+    assert text_style_at(result, 2)["bold"] is False
+    assert text_style_at(result, 2)["color"] == "#CC0000"
+    assert text_style_at(result, 8)["bold"] is True
 
 
 def test_text_alignment_uses_actual_rendered_width() -> None:
