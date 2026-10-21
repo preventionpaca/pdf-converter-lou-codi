@@ -1745,3 +1745,31 @@ def test_image_rotation_and_symmetry_are_baked_into_pixels(tmp_path: Path) -> No
     assert (item.width, item.height) == (40, 80)
     editor._mirror_selected("horizontal")
     assert Path(item.image_path).is_file()
+
+
+def test_live_drag_render_is_coalesced_until_the_pending_frame_runs() -> None:
+    editor = object.__new__(DocumentEditorWindow)
+    editor._live_render_after_id = None
+    editor._rendering = False
+    scheduled: list[tuple[int, object]] = []
+    editor.after = lambda delay, callback: scheduled.append((delay, callback)) or "frame-1"
+
+    editor._schedule_live_render()
+    editor._schedule_live_render()
+    editor._schedule_live_render()
+
+    assert scheduled == [(33, editor._flush_live_render)]
+    assert editor._live_render_after_id == "frame-1"
+
+
+def test_live_drag_render_allows_next_frame_after_flush() -> None:
+    editor = object.__new__(DocumentEditorWindow)
+    editor._live_render_after_id = "frame-1"
+    editor._rendering = False
+    renders: list[bool] = []
+    editor._render = lambda: renders.append(True)
+
+    editor._flush_live_render()
+
+    assert editor._live_render_after_id is None
+    assert renders == [True]

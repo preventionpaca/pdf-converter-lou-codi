@@ -1413,6 +1413,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self._overlay_images: list[ImageTk.PhotoImage] = []
         self._text_preview_cache: dict[tuple[object, ...], ImageTk.PhotoImage] = {}
         self._zoom_render_after_id: str | None = None
+        # Pointer motion can arrive hundreds of times per second. A complete
+        # page render may rasterize rich text, tables and large pasted images,
+        # so rendering synchronously for every motion event makes the Tk event
+        # queue grow without bound. Keep at most one preview render pending.
+        self._live_render_after_id: str | None = None
         self._page_edge_wheel: tuple[int, int, int] | None = None
         self._rendering = False
         self._drag_origin: tuple[float, float, float, float] | None = None
@@ -3289,6 +3294,12 @@ class DocumentEditorWindow(tk.Toplevel):
         # et doublait brutalement CPU et mémoire, surtout au-delà de 200 %.
         if self._rendering:
             return
+        if self._live_render_after_id is not None:
+            try:
+                self.after_cancel(self._live_render_after_id)
+            except tk.TclError:
+                pass
+            self._live_render_after_id = None
         self._rendering = True
         if self._zoom_render_after_id is not None:
             try:
@@ -3467,6 +3478,16 @@ class DocumentEditorWindow(tk.Toplevel):
         self._show_properties()
         self._update_contextual_ribbon()
         self._rendering = False
+
+    def _schedule_live_render(self, delay_ms: int = 33) -> None:
+        """Coalesce expensive drag previews to roughly one frame every 33 ms."""
+        if self._live_render_after_id is not None or self._rendering:
+            return
+        self._live_render_after_id = self.after(delay_ms, self._flush_live_render)
+
+    def _flush_live_render(self) -> None:
+        self._live_render_after_id = None
+        self._render()
 
     def _update_contextual_ribbon(self) -> None:
         """Only expose commands that apply to the selected object."""
@@ -6491,7 +6512,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                     self._rotate_item_about(item, self._rotation_drag_delta, item_pivot)
                 self._rotation_preview_applied = True
-                self._render()
+                self._schedule_live_render()
             self.canvas.delete("rotation-guide")
             canvas_pivot_x = self.page_x + pivot_x * self.zoom
             canvas_pivot_y = self.page_y + pivot_y * self.zoom
@@ -6559,7 +6580,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 (self.canvas.canvasy(event.y) - self.page_y) / self.zoom,
             )
             self._set_polyline_absolute_points(item, absolute)
-            self._render()
+            self._schedule_live_render()
             return
         if self._marquee_origin is not None:
             start_x, start_y = self._marquee_origin
@@ -6595,7 +6616,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 )
             objects = [self.document.objects[index] for index in self.selected_indices]
             transform_object_assembly(objects, left, top, new_width, new_height)
-            self._render()
+            self._schedule_live_render()
             self.status.configure(
                 text=f"Assemblage : {new_width * 25.4 / 72:.1f} × "
                 f"{new_height * 25.4 / 72:.1f} mm."
@@ -6638,7 +6659,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     for point in item.points
                 ]
             item.width, item.height = new_width, new_height
-            self._render()
+            self._schedule_live_render()
             width_mm, height_mm = item.width * 25.4 / 72, item.height * 25.4 / 72
             guide = f"{width_mm:.1f} × {height_mm:.1f} mm"
             if item.kind == "line":
@@ -6715,7 +6736,7 @@ class DocumentEditorWindow(tk.Toplevel):
             and any(str(reference.get("object_id", "")) in moved_ids for reference in item.dimension_refs)
             for item in self.document.objects
         ):
-            self._render()
+            self._schedule_live_render()
         if self.selected is not None:
             if len(self.selected_indices) > 1:
                 self._update_assembly_geometry_fields()
