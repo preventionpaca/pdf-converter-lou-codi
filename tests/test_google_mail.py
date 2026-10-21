@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 from email import message_from_bytes
 from pathlib import Path
 
@@ -25,7 +26,8 @@ def test_install_oauth_client_copies_private_configuration(tmp_path: Path) -> No
     assert installed != source
     assert installed.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
     assert configured_client_file(settings) == installed
-    assert installed.stat().st_mode & 0o077 == 0
+    if os.name != "nt":
+        assert installed.stat().st_mode & 0o077 == 0
 
 
 def test_rejects_unrelated_json_as_oauth_client(tmp_path: Path) -> None:

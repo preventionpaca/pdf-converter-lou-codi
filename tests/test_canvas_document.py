@@ -1216,8 +1216,17 @@ def test_text_frame_wrap_uses_the_pasted_rich_font_size_and_weight() -> None:
         "bold": True,
     }]
 
-    plain_lines = wrapped_text_lines(text, plain)
-    rich_lines = wrapped_text_lines(text, rich)
+    def deterministic_measure(
+        _family: str, size: float, bold: bool, _italic: bool, value: str
+    ) -> float:
+        return len(value) * size * (0.62 if bold else 0.52)
+
+    plain_lines = [line for line, _start, _end in wrapped_text_ranges(
+        text, plain, measure=deterministic_measure
+    )]
+    rich_lines = [line for line, _start, _end in wrapped_text_ranges(
+        text, rich, measure=deterministic_measure
+    )]
 
     assert len(rich_lines) > len(plain_lines)
     assert "littoral" not in rich_lines[0]

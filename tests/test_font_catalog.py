@@ -8,6 +8,7 @@ from lou_codi_pdf_converter.services.font_catalog import (
     install_user_font,
     install_user_fonts,
     normalize_font_name,
+    _user_font_directory,
 )
 
 
@@ -45,7 +46,7 @@ def test_install_user_font_copies_to_private_font_directory(
 
     installed = install_user_font(source)
 
-    assert installed == private_home / ".local/share/fonts/LouCodi/Example.ttf"
+    assert installed == _user_font_directory() / "Example.ttf"
     assert installed.read_bytes() == b"font-data"
 
 
@@ -77,4 +78,4 @@ def test_install_user_fonts_extracts_compatible_files_from_zip(
     installed = install_user_fonts(archive)
 
     assert {path.name for path in installed} == {"Example-Regular.ttf", "Example-Bold.otf"}
-    assert all(path.parent == private_home / ".local/share/fonts/LouCodi" for path in installed)
+    assert all(path.parent == _user_font_directory() for path in installed)
