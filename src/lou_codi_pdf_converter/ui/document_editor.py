@@ -7378,6 +7378,17 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text="Mise en forme appliquée uniquement au texte sélectionné.")
         return True
 
+    def _active_inline_item(self) -> PageObject | None:
+        """Resolve the edited object without relying on canvas focus state."""
+        if self._editing_widget is None or not self._editing_object_id:
+            return None
+        for index, candidate in enumerate(self.document.objects):
+            if candidate.object_id == self._editing_object_id:
+                self.selected = index
+                self.selected_indices = {index}
+                return candidate
+        return None
+
     def _start_inline_text_editor(self, item: PageObject) -> None:
         if self._editing_widget is not None:
             self._commit_inline_editor(render=False)
@@ -7430,7 +7441,12 @@ class DocumentEditorWindow(tk.Toplevel):
         # Keep only the widget and native Text bindings.  The application-wide
         # pointer bindings are deliberately excluded: they used to continue a
         # selection after the mouse button had been released.
-        widget.bindtags((str(widget), "Text"))
+        # Keep Tk's global input-method and compose bindings. Without the
+        # ``all`` bindtag Backspace worked, but printable characters could be
+        # discarded on some Linux keyboard configurations. The editor
+        # window's own shortcuts remain excluded because its toplevel bindtag
+        # is intentionally absent.
+        widget.bindtags((str(widget), "Text", "all"))
         widget.insert("1.0", editor_text)
         widget.bind("<Control-a>", self._select_all_inline_text)
         widget.bind("<Control-c>", self._copy_inline_text)
@@ -9314,6 +9330,20 @@ class DocumentEditorWindow(tk.Toplevel):
             self._render()
 
     def _toggle(self, name: str) -> None:
+        inline_item = self._active_inline_item()
+        if inline_item is not None:
+            selection = self._selected_inline_text_range(inline_item)
+            if selection is None:
+                self.status.configure(text="Sélectionnez d’abord le texte à mettre en forme.")
+                self._editing_widget.focus_set()
+                return
+            current = bool(
+                self._inline_text_style_at(
+                    self._editing_widget, inline_item, selection[0]
+                ).get(name, getattr(inline_item, name))
+            )
+            self._apply_inline_text_style(inline_item, {name: not current})
+            return
         if self.selected is not None:
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
@@ -9394,9 +9424,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 parent=self,
             )
             return
-        if attribute == "color" and self.selected is not None:
-            item = self.document.objects[self.selected]
-            if item.kind in {"text", "table"} and self._editing_widget is not None:
+        if attribute == "color":
+            item = self._active_inline_item()
+            if item is not None:
                 if not self._apply_inline_text_style(item, {"color": normalized.upper()}):
                     self.status.configure(text="Sélectionnez d’abord le texte à colorer.")
                     self._editing_widget.focus_set()
@@ -9424,9 +9454,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self._mutate(lambda item: setattr(item, attribute, normalized.upper()))
 
     def _set_text_highlight(self, color: str) -> None:
-        if self.selected is None:
+        item = self._active_inline_item()
+        if item is None and self.selected is not None:
+            item = self.document.objects[self.selected]
+        if item is None:
             return
-        item = self.document.objects[self.selected]
         if item.kind not in {"text", "table"}:
             self.status.configure(text="Le surlignage s’applique au texte en cours d’édition.")
             return
@@ -9805,6 +9837,22 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._set_object_color(attribute, chosen)
 
     def _change_font(self, change: int) -> None:
+        inline_item = self._active_inline_item()
+        if inline_item is not None:
+            selection = self._selected_inline_text_range(inline_item)
+            if selection is None:
+                self.status.configure(text="Sélectionnez d’abord le texte à redimensionner.")
+                self._editing_widget.focus_set()
+                return
+            current = float(
+                self._inline_text_style_at(
+                    self._editing_widget, inline_item, selection[0]
+                ).get("font_size", inline_item.font_size)
+            )
+            new_size = max(6, current + change)
+            self._apply_inline_text_style(inline_item, {"font_size": new_size})
+            self.font_size_var.set(f"{new_size:g}")
+            return
         if self.selected is not None:
             item = self.document.objects[self.selected]
             selection = self._selected_inline_text_range(item)
@@ -9831,6 +9879,12 @@ class DocumentEditorWindow(tk.Toplevel):
             value = max(6.0, min(144.0, float(self.font_size_var.get().replace(",", "."))))
         except ValueError:
             return
+        inline_item = self._active_inline_item()
+        if inline_item is not None:
+            if not self._apply_inline_text_style(inline_item, {"font_size": value}):
+                self.status.configure(text="Sélectionnez d’abord le texte à redimensionner.")
+                self._editing_widget.focus_set()
+            return
         if self.selected is not None:
             item = self.document.objects[self.selected]
             if item.kind in {"text", "table"} and self._editing_widget is not None:
@@ -9841,6 +9895,14 @@ class DocumentEditorWindow(tk.Toplevel):
         self._mutate(lambda item: setattr(item, "font_size", value))
 
     def _apply_font_family(self) -> None:
+        inline_item = self._active_inline_item()
+        if inline_item is not None:
+            if not self._apply_inline_text_style(
+                inline_item, {"font_family": self.font_family_var.get()}
+            ):
+                self.status.configure(text="Sélectionnez d’abord le texte dont vous voulez changer la police.")
+                self._editing_widget.focus_set()
+            return
         if self.selected is not None:
             item = self.document.objects[self.selected]
             if item.kind in {"text", "table"} and self._editing_widget is not None:
