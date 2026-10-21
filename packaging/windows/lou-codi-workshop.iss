@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a4"
+  #define AppVersion "2.0.0a5"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."
@@ -24,7 +24,7 @@ PrivilegesRequired=lowest
 WizardStyle=modern
 SetupLogging=yes
 UninstallDisplayIcon={app}\lou-codi-pdf-converter.exe
-VersionInfoVersion=2.0.0.4
+VersionInfoVersion=2.0.0.5
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
