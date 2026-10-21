@@ -42,6 +42,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     extract_clipboard_html,
     fitted_table_cell_text,
     expanded_group_indices,
+    editor_text_style_runs,
     inline_editor_font_size,
     inline_editor_padding,
     merge_editor_text_styles,
@@ -1583,6 +1584,24 @@ def test_editor_preserves_imported_styles_when_a_new_style_is_added() -> None:
     assert text_style_at(result, 2)["color"] == "#CC0000"
     assert text_style_at(result, 9)["italic"] is True
     assert text_style_at(result, 9)["highlight"] == "#FFF176"
+
+
+def test_inline_editor_receives_complete_styles_for_every_character() -> None:
+    item = PageObject(
+        "text", 0, 0, 0, 200, 50, text="Titre puis suite",
+        underline=True,
+        color="#123456",
+        text_styles=[{"start": 0, "end": 5, "bold": True, "color": "#CC0000"}],
+    )
+
+    runs = editor_text_style_runs(item, len(item.text), item.text_styles)
+
+    assert runs[0]["start"] == 0
+    assert runs[-1]["end"] == len(item.text)
+    assert all(run["underline"] is True for run in runs)
+    assert runs[0]["bold"] is True
+    assert runs[0]["color"] == "#CC0000"
+    assert runs[-1]["color"] == "#123456"
 
 
 def test_editor_remaps_imported_styles_after_text_edit_before_overlaying_new_style() -> None:

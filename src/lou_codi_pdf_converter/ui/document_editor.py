@@ -1136,6 +1136,39 @@ def compact_text_style_runs(
     return compacted
 
 
+def editor_text_style_runs(
+    item: PageObject,
+    text_length: int,
+    runs: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    """Return explicit effective styles for display in the inline editor.
+
+    The preview can rely on the text object's base font and colour, but a Tk
+    ``Text`` widget does not inherit every base attribute consistently
+    (notably underline, strike-through and imported font variants).  Giving
+    every displayed segment a complete style also prevents the editor from
+    looking unformatted while the persisted rich runs are still intact.
+    """
+    source = copy.copy(item)
+    source.text_styles = list(runs if runs is not None else item.text_styles)
+    lookup = resolved_text_styles(source, text_length)
+    explicit: list[dict[str, object]] = []
+    start = 0
+    current: dict[str, object] = {}
+    for position in range(text_length + 1):
+        style = dict(lookup[position]) if position < text_length else {}
+        if position == 0:
+            current = style
+            continue
+        if style == current:
+            continue
+        if current:
+            explicit.append({"start": start, "end": position, **current})
+        start = position
+        current = style
+    return explicit
+
+
 def paragraph_alignment_at(item: PageObject, position: int) -> str:
     """Return the alignment applied to the paragraph containing a character."""
     for run in reversed(item.paragraph_alignments):
@@ -7360,7 +7393,7 @@ class DocumentEditorWindow(tk.Toplevel):
             _slice_text_ranges(style_source.text_styles, flow_offset, len(editor_text))
             if linked_segment else copy.deepcopy(item.text_styles)
         )
-        editor_styles = compact_text_style_runs(
+        editor_styles = editor_text_style_runs(
             style_source, len(editor_text), editor_styles
         )
         editor_links = (
