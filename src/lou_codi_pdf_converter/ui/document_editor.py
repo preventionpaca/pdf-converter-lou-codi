@@ -240,6 +240,39 @@ def _replace_text_ranges(
     )
 
 
+def remap_text_ranges_after_edit(
+    old_text: str,
+    new_text: str,
+    ranges: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Keep metadata on unchanged characters when a rich editor loses its tags."""
+    if old_text == new_text:
+        return copy.deepcopy(ranges)
+    matcher = difflib.SequenceMatcher(None, old_text, new_text, autojunk=False)
+    remapped: list[dict[str, object]] = []
+    for tag, old_start, old_end, new_start, _new_end in matcher.get_opcodes():
+        if tag != "equal":
+            continue
+        for run in ranges:
+            run_start = safe_text_offset(run.get("start"))
+            run_end = safe_text_offset(run.get("end"))
+            overlap_start = max(old_start, run_start)
+            overlap_end = min(old_end, run_end)
+            if overlap_end > overlap_start:
+                remapped.append({
+                    **run,
+                    "start": new_start + overlap_start - old_start,
+                    "end": new_start + overlap_end - old_start,
+                })
+    return sorted(
+        remapped,
+        key=lambda run: (
+            safe_text_offset(run.get("start")),
+            safe_text_offset(run.get("end")),
+        ),
+    )
+
+
 def proportional_resize(
     old_width: float,
     old_height: float,
@@ -4274,17 +4307,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 style=render_item.border_style,
             )
         size = max(7, round(render_item.font_size * self.zoom))
-        try:
-            base_font_file = _font_file(
-                render_item.font_family, render_item.bold, render_item.italic
-            )
-            font = (
-                ImageFont.truetype(base_font_file, size)
-                if base_font_file
-                else ImageFont.load_default()
-            )
-        except (OSError, TypeError):
-            font = ImageFont.load_default()
+        base_font_file = _font_file(
+            render_item.font_family, render_item.bold, render_item.italic
+        )
+        font = self._preview_font(base_font_file, size)
         lines = wrapped_text_ranges(
             text,
             render_item,
@@ -4335,15 +4361,12 @@ class DocumentEditorWindow(tk.Toplevel):
                     else text_style_at(render_item, start)
                 )
                 fragment_size = max(7, round(safe_number(fragment_style.get("font_size"), render_item.font_size, minimum=1.0) * self.zoom))
-                try:
-                    fragment_file = _font_file(
-                        str(fragment_style.get("font_family", render_item.font_family)),
-                        bool(fragment_style.get("bold", render_item.bold)),
-                        bool(fragment_style.get("italic", render_item.italic)),
-                    )
-                    fragment_font = ImageFont.truetype(fragment_file, fragment_size) if fragment_file else font
-                except (OSError, TypeError):
-                    fragment_font = font
+                fragment_file = _font_file(
+                    str(fragment_style.get("font_family", render_item.font_family)),
+                    bool(fragment_style.get("bold", render_item.bold)),
+                    bool(fragment_style.get("italic", render_item.italic)),
+                )
+                fragment_font = self._preview_font(fragment_file, fragment_size, font)
                 linked = any(
                     safe_text_offset(link.get("start", 0)) < end
                     and safe_text_offset(link.get("end", 0)) > start
@@ -6659,12 +6682,33 @@ class DocumentEditorWindow(tk.Toplevel):
                     for point in item.points
                 ]
             item.width, item.height = new_width, new_height
-            self._schedule_live_render()
+            if item.kind == "text":
+                # Reflowing and rasterising a long rich-text frame on every
+                # pointer event blocks Tk for seconds. During the gesture the
+                # lightweight outline is sufficient; release performs the
+                # single accurate render.
+                self.canvas.delete("text-resize-preview")
+                self.canvas.create_rectangle(
+                    self.page_x + item.x * self.zoom,
+                    self.page_y + item.y * self.zoom,
+                    self.page_x + (item.x + item.width) * self.zoom,
+                    self.page_y + (item.y + item.height) * self.zoom,
+                    fill="#DCEBFA",
+                    stipple="gray25",
+                    outline="#1769AA",
+                    width=2,
+                    dash=(6, 4),
+                    tags=("text-resize-preview",),
+                )
+            else:
+                self._schedule_live_render()
             width_mm, height_mm = item.width * 25.4 / 72, item.height * 25.4 / 72
             guide = f"{width_mm:.1f} × {height_mm:.1f} mm"
             if item.kind == "line":
                 length_mm = math.hypot(item.width, item.height) * 25.4 / 72
                 guide = f"{length_mm:.1f} mm  •  {self._object_angle(item):.1f}°"
+            self.canvas.delete("dimension-guide")
+            self.canvas.delete("dimension-guide-bg")
             self.canvas.create_text(
                 self.page_x + (item.x + item.width) * self.zoom + 8,
                 self.page_y + (item.y + item.height) * self.zoom + 8,
@@ -6935,21 +6979,51 @@ class DocumentEditorWindow(tk.Toplevel):
         self, family: str, pixel_size: float, bold: bool, italic: bool, text: str
     ) -> float:
         """Measure a rich-text run with Tk, exactly like the open editor."""
+        key = (family, round(float(pixel_size), 3), bool(bold), bool(italic), text)
+        cache = getattr(self, "_text_measure_cache", None)
+        if cache is None:
+            cache = self._text_measure_cache = {}
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
         try:
-            return float(
+            measured = float(
                 self._tk_layout_font(family, pixel_size, bold, italic).measure(text)
             )
         except (AttributeError, tk.TclError):
             font_file = _font_file(family, bold, italic)
             try:
-                font = (
-                    ImageFont.truetype(font_file, max(7, round(pixel_size)))
-                    if font_file
-                    else ImageFont.load_default()
-                )
-            except (OSError, TypeError):
-                font = ImageFont.load_default()
-            return float(font.getlength(text))
+                font = self._preview_font(font_file, max(7, round(pixel_size)))
+                measured = float(font.getlength(text))
+            except (OSError, TypeError, AttributeError):
+                measured = max(1.0, len(text) * pixel_size * 0.55)
+        if len(cache) >= 12000:
+            cache.clear()
+        cache[key] = measured
+        return measured
+
+    def _preview_font(
+        self,
+        font_file: str | None,
+        size: int,
+        fallback: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None,
+    ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        """Reuse Pillow font objects while rendering a rich-text preview."""
+        key = (str(font_file or ""), int(size))
+        cache = getattr(self, "_preview_font_cache", None)
+        if cache is None:
+            cache = self._preview_font_cache = {}
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            font = ImageFont.truetype(font_file, size) if font_file else (fallback or ImageFont.load_default())
+        except (OSError, TypeError):
+            font = fallback or ImageFont.load_default()
+        if len(cache) >= 256:
+            cache.clear()
+        cache[key] = font
+        return font
 
     def _editor_line_height(
         self, family: str, pixel_size: float, bold: bool, italic: bool
@@ -8869,6 +8943,25 @@ class DocumentEditorWindow(tk.Toplevel):
                     None,
                 ) if flow_root_id else None
                 style_owner = flow_root or item
+                if not styles and original_styles:
+                    # Some Tk builds briefly lose every display tag when a
+                    # large HTML paste is edited. Never flatten all imported
+                    # formatting for that transient UI failure: remap the
+                    # persisted runs over the unchanged portions of the edit.
+                    previous_segment_styles = (
+                        _slice_text_ranges(
+                            original_styles,
+                            flow_offset,
+                            len(flow_original_segment),
+                        )
+                        if flow_root is not None
+                        else original_styles
+                    )
+                    styles = remap_text_ranges_after_edit(
+                        flow_original_segment if flow_root is not None else original_text,
+                        value,
+                        previous_segment_styles,
+                    )
                 paragraph_alignments: list[dict[str, object]] = []
                 last_line = int(widget.index("end-1c").split(".", 1)[0])
                 for line_number in range(1, last_line + 1):

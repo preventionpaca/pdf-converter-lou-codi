@@ -55,6 +55,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     parse_rich_clipboard_html_outside_tables,
     parse_rich_clipboard_rtf,
     proportional_resize,
+    remap_text_ranges_after_edit,
     point_hits_rotation_handle,
     polygon_area,
     revolution_axis_target,
@@ -1773,3 +1774,35 @@ def test_live_drag_render_allows_next_frame_after_flush() -> None:
 
     assert editor._live_render_after_id is None
     assert renders == [True]
+
+
+def test_rich_text_ranges_survive_a_small_plain_text_edit() -> None:
+    old_text = "Titre important et suite"
+    new_text = "Titre très important et suite"
+    ranges = [
+        {"start": 0, "end": 5, "bold": True},
+        {"start": 6, "end": 15, "italic": True},
+    ]
+
+    remapped = remap_text_ranges_after_edit(old_text, new_text, ranges)
+
+    assert {"start": 0, "end": 5, "bold": True} in remapped
+    assert any(run.get("italic") is True and run["end"] > run["start"] for run in remapped)
+
+
+def test_editor_text_measurements_are_cached() -> None:
+    editor = object.__new__(DocumentEditorWindow)
+    calls: list[str] = []
+
+    class FakeFont:
+        def measure(self, value: str) -> int:
+            calls.append(value)
+            return len(value) * 7
+
+    editor._tk_layout_font = lambda *_args: FakeFont()
+
+    first = editor._measure_editor_text("Inter", 12, False, False, "Même texte")
+    second = editor._measure_editor_text("Inter", 12, False, False, "Même texte")
+
+    assert first == second == 70
+    assert calls == ["Même texte"]
