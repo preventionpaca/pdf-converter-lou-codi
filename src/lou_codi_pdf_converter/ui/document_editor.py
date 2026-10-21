@@ -163,6 +163,32 @@ def safe_text_offset(value: object, fallback: int = 0) -> int:
         return fallback
 
 
+def rich_text_fragment_boundaries(
+    style_lookup: list[dict[str, object]],
+    links: list[dict[str, object]],
+    line_start: int,
+    line_end: int,
+) -> list[int]:
+    """Return the useful rich-text boundaries for one displayed line.
+
+    Imported HTML can contain hundreds or thousands of style runs. Scanning
+    every run again for every wrapped line made a resize or edit validation
+    take several seconds. ``resolved_text_styles`` has already flattened
+    those runs, so only actual changes inside the current line are relevant.
+    """
+    boundaries = {line_start, line_end}
+    for position in range(max(line_start + 1, 1), min(line_end, len(style_lookup))):
+        if style_lookup[position] != style_lookup[position - 1]:
+            boundaries.add(position)
+    for link in links:
+        start = safe_text_offset(link.get("start", 0))
+        end = safe_text_offset(link.get("end", 0))
+        if start < line_end and end > line_start:
+            boundaries.add(max(line_start, start))
+            boundaries.add(min(line_end, end))
+    return sorted(boundaries)
+
+
 def inline_editor_font_size(font_size: object, zoom: float) -> int:
     """Return a Tk pixel size matching the Pillow canvas preview."""
     pixels = max(7, round(safe_number(font_size, 12.0, minimum=1.0) * zoom))
@@ -4344,21 +4370,19 @@ class DocumentEditorWindow(tk.Toplevel):
             if py + line_height < origin_y or py > origin_y + bitmap_height:
                 py += line_height
                 continue
-            boundaries = {line_start, line_end}
-            for link in render_item.text_links:
-                boundaries.add(max(line_start, min(line_end, safe_text_offset(link.get("start", 0)))))
-                boundaries.add(max(line_start, min(line_end, safe_text_offset(link.get("end", 0)))))
-            for style_run in render_item.text_styles:
-                boundaries.add(max(line_start, min(line_end, safe_text_offset(style_run.get("start", 0)))))
-                boundaries.add(max(line_start, min(line_end, safe_text_offset(style_run.get("end", 0)))))
-            ordered = sorted(boundaries)
+            ordered = rich_text_fragment_boundaries(
+                style_lookup,
+                render_item.text_links,
+                line_start,
+                line_end,
+            )
             fragments: list[tuple[str, dict[str, object], ImageFont.FreeTypeFont | ImageFont.ImageFont, bool, float]] = []
             for start, end in pairwise(ordered):
                 fragment = text[start:end]
                 fragment_style = (
                     style_lookup[start]
                     if 0 <= start < len(style_lookup)
-                    else text_style_at(render_item, start)
+                    else line_styles[0]
                 )
                 fragment_size = max(7, round(safe_number(fragment_style.get("font_size"), render_item.font_size, minimum=1.0) * self.zoom))
                 fragment_file = _font_file(
@@ -6921,7 +6945,17 @@ class DocumentEditorWindow(tk.Toplevel):
         self._drag_origin = None
         self._drag_before = None
         if changed:
-            self._render()
+            self.canvas.delete("text-resize-preview")
+            self.canvas.delete("dimension-guide")
+            self.canvas.delete("dimension-guide-bg")
+            if (
+                self.selected is not None
+                and len(self.selected_indices) == 1
+                and self.document.objects[self.selected].kind == "text"
+            ):
+                self._redraw_text_chain(self.document.objects[self.selected])
+            else:
+                self._render()
 
     def _edit_selected(self, _event: object = None) -> None:
         if (
@@ -9065,7 +9099,18 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_style_tags = {}
         self._editing_alignment_tags = {}
         if render:
-            self._render()
+            if item is not None and item.kind == "text":
+                flow_root = next(
+                    (
+                        candidate
+                        for candidate in self.document.objects
+                        if candidate.object_id == flow_root_id
+                    ),
+                    item,
+                )
+                self._redraw_text_chain(flow_root)
+            else:
+                self._render()
 
     def _mutate(self, mutation: object) -> None:
         if self.selected is not None:

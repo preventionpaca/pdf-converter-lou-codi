@@ -62,6 +62,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     revolution_stations,
     resolved_text_styles,
     resized_circle_diameter,
+    rich_text_fragment_boundaries,
     rich_clipboard_matches_plain,
     rotated_rectangle_points,
     rotation_step_for_objects,
@@ -170,6 +171,19 @@ def test_inline_editor_uses_canvas_pixel_metrics_and_insets() -> None:
     assert inline_editor_padding(1.15) == (16, 7)
     assert DocumentEditorWindow._tk_font_family("Sans-serif") == "DejaVu Sans"
     assert DocumentEditorWindow._tk_font_family("Serif") == "DejaVu Serif"
+
+
+def test_rich_text_fragment_boundaries_only_keep_visible_style_changes() -> None:
+    normal = {"bold": False, "color": "#000000"}
+    strong = {"bold": True, "color": "#000000"}
+    lookup = [normal] * 5 + [strong] * 4 + [normal] * 6
+    links = [
+        {"start": 1, "end": 3, "hyperlink": "https://before.example"},
+        {"start": 7, "end": 12, "hyperlink": "https://visible.example"},
+        {"start": 14, "end": 18, "hyperlink": "https://after.example"},
+    ]
+
+    assert rich_text_fragment_boundaries(lookup, links, 4, 13) == [4, 5, 7, 9, 12, 13]
 
 
 def test_text_flow_style_lookup_preserves_overlapping_partial_styles() -> None:
