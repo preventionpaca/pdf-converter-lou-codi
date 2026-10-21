@@ -4388,7 +4388,7 @@ class DocumentEditorWindow(tk.Toplevel):
         lines = wrapped_text_ranges(
             text,
             render_item,
-            measure=self._measure_editor_text,
+            measure=self._measure_preview_text,
             measurement_scale=self.zoom,
         )
         style_lookup = resolved_text_styles(render_item, len(text))
@@ -4445,7 +4445,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     and link.get("hyperlink")
                     for link in render_item.text_links
                 )
-                fragment_width = self._measure_editor_text(
+                fragment_width = self._measure_preview_text(
                     str(fragment_style.get("font_family", render_item.font_family)),
                     fragment_size,
                     bool(fragment_style.get("bold", render_item.bold)),
@@ -7018,6 +7018,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 and len(self.selected_indices) == 1
                 and self.document.objects[self.selected].kind == "text"
             ):
+                # Restore the previous bitmap before preparing its replacement
+                # so the page never turns into a large grey hole.
+                self.canvas.itemconfigure(f"object:{self.selected}", state="normal")
+                self.update_idletasks()
                 self._redraw_text_chain(self.document.objects[self.selected])
             else:
                 self._render()
@@ -7104,6 +7108,21 @@ class DocumentEditorWindow(tk.Toplevel):
             cache.clear()
         cache[key] = measured
         return measured
+
+    def _measure_preview_text(
+        self, family: str, pixel_size: float, bold: bool, italic: bool, text: str
+    ) -> float:
+        """Measure final canvas text without repeatedly crossing into Tk."""
+        pixels = max(7, round(safe_number(pixel_size, 12.0, minimum=1.0)))
+        font = self._preview_font(_font_file(family, bold, italic), pixels)
+        try:
+            return float(font.getlength(text))
+        except (AttributeError, TypeError):
+            try:
+                left, _top, right, _bottom = font.getbbox(text)
+                return float(right - left)
+            except (AttributeError, TypeError):
+                return max(1.0, len(text) * pixels * 0.55)
 
     def _preview_font(
         self,
