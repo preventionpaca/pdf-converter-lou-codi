@@ -92,6 +92,9 @@ class PageObject:
     table_border_ranges: list[dict[str, float]] = field(default_factory=list)
     points: list[list[float]] = field(default_factory=list)
     dimension_refs: list[dict[str, object]] = field(default_factory=list)
+    show_dimensions: bool = False
+    show_angles: bool = False
+    show_slope: bool = False
     chart_title: str = ""
     chart_series_index: int = 1
     chart_series_indices: list[int] = field(default_factory=list)

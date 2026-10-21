@@ -133,6 +133,16 @@ def available_font_families() -> tuple[str, ...]:
     return tuple(sorted(names.values(), key=str.casefold))
 
 
+def slope_angle_and_percent(
+    start: tuple[float, float], end: tuple[float, float]
+) -> tuple[float, float]:
+    """Return the acute incline angle and absolute slope percentage."""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    if abs(dx) <= 1e-9:
+        return 90.0, math.inf
+    return math.degrees(math.atan2(abs(dy), abs(dx))), abs(dy / dx) * 100
+
+
 def safe_pillow_color(value: object, fallback: str, *, allow_transparent: bool = False) -> str:
     """Return a Pillow- and Tk-compatible hexadecimal colour.
 
@@ -1669,6 +1679,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._measurement_refs: list[dict[str, object]] = []
         self.write_measurement_var = tk.BooleanVar(value=False)
         self.show_measurement_length_var = tk.BooleanVar(value=False)
+        self.show_object_dimensions_var = tk.BooleanVar(value=False)
+        self.show_object_angles_var = tk.BooleanVar(value=False)
+        self.show_object_slope_var = tk.BooleanVar(value=False)
         self.measurement_label_vars = {
             "distance": tk.BooleanVar(value=True),
             "angle": tk.BooleanVar(value=False),
@@ -2363,6 +2376,28 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Button(
             self.circle_frame, text="Recalculer le cercle", command=self._apply_circle_properties
         ).grid(row=4, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        self.visual_dimensions_frame = ttk.LabelFrame(
+            panel, text="COTATIONS VISUELLES", padding=6
+        )
+        ttk.Checkbutton(
+            self.visual_dimensions_frame,
+            text="Afficher les longueurs / dimensions",
+            variable=self.show_object_dimensions_var,
+            command=self._apply_visual_dimension_options,
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            self.visual_dimensions_frame,
+            text="Afficher les angles",
+            variable=self.show_object_angles_var,
+            command=self._apply_visual_dimension_options,
+        ).pack(anchor="w")
+        self.visual_slope_check = ttk.Checkbutton(
+            self.visual_dimensions_frame,
+            text="Afficher la pente (%)",
+            variable=self.show_object_slope_var,
+            command=self._apply_visual_dimension_options,
+        )
+        self.visual_slope_check.pack(anchor="w")
         assembly_actions = ttk.Frame(panel, style="Card.TFrame")
         self.assembly_actions = assembly_actions
         assembly_actions.pack(fill="x", pady=(0, 4))
@@ -4174,6 +4209,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 font=("Sans", 11, "bold"), tags=tags,
             )
         if selected and len(self.selected_indices) == 1:
+            self._draw_visual_dimensions(item, tags)
+        if selected and len(self.selected_indices) == 1:
             size = 12
             if item.kind == "line":
                 self.canvas.create_rectangle(
@@ -4198,6 +4235,124 @@ class DocumentEditorWindow(tk.Toplevel):
                 fill="#1769AA",
                 outline="white",
                 tags=(f"resize-end:{index}", "resize"),
+            )
+
+    def _visual_dimension_label(
+        self, x: float, y: float, text: str, *, color: str = "#8A4300",
+        tags: tuple[str, str] = (),
+    ) -> None:
+        """Draw a compact, legible label above the selected geometry."""
+        label = self.canvas.create_text(
+            x, y, text=text, fill=color, font=("Sans", 8, "bold"),
+            tags=(*tags, "visual-dimension"),
+        )
+        bounds = self.canvas.bbox(label)
+        if bounds:
+            background = self.canvas.create_rectangle(
+                bounds[0] - 2, bounds[1] - 1, bounds[2] + 2, bounds[3] + 1,
+                fill="#FFF8DB", outline="#D4A640", width=1,
+                tags=(*tags, "visual-dimension"),
+            )
+            self.canvas.tag_lower(background, label)
+
+    @staticmethod
+    def _visual_geometry_points(item: PageObject) -> tuple[list[tuple[float, float]], bool]:
+        if item.kind == "line":
+            return [(item.x, item.y), (item.x + item.width, item.y + item.height)], False
+        if item.kind == "polyline":
+            points = [(item.x + point[0], item.y + point[1]) for point in item.points]
+            closed = len(points) >= 3 and math.dist(points[0], points[-1]) <= 1e-6
+            return (points[:-1] if closed else points), closed
+        if item.kind != "shape":
+            return [], False
+        left, top, right, bottom = item.x, item.y, item.x + item.width, item.y + item.height
+        if item.shape == "triangle":
+            return [(left + item.width / 2, top), (right, bottom), (left, bottom)], True
+        if item.shape == "trapezoid":
+            inset = item.width * 0.2
+            return [(left + inset, top), (right - inset, top), (right, bottom), (left, bottom)], True
+        if item.shape not in {"ellipse", "circle", "arrow"}:
+            return [(left, top), (right, top), (right, bottom), (left, bottom)], True
+        return [], False
+
+    def _draw_visual_dimensions(
+        self, item: PageObject, tags: tuple[str, str]
+    ) -> None:
+        if item.kind not in {"line", "polyline", "shape"}:
+            return
+        scale = 25.4 / 72 * self.document.measurement_scale
+        if item.kind == "shape" and item.shape in {"ellipse", "circle"}:
+            center_x = self.page_x + (item.x + item.width / 2) * self.zoom
+            center_y = self.page_y + (item.y + item.height / 2) * self.zoom
+            if item.show_dimensions:
+                horizontal = abs(item.width) * scale
+                vertical = abs(item.height) * scale
+                text = (
+                    f"Ø {horizontal:.2f} mm  •  R {horizontal / 2:.2f} mm"
+                    if item.shape == "circle"
+                    else f"Ø H {horizontal:.2f} mm  •  Ø V {vertical:.2f} mm"
+                )
+                self._visual_dimension_label(
+                    center_x, center_y - abs(item.height) * self.zoom / 2 - 12,
+                    text, tags=tags,
+                )
+            return
+        points, closed = self._visual_geometry_points(item)
+        if len(points) < 2:
+            return
+        center_x = sum(point[0] for point in points) / len(points)
+        center_y = sum(point[1] for point in points) / len(points)
+        segments = list(pairwise(points + ([points[0]] if closed else [])))
+        if item.show_dimensions:
+            for start, end in segments:
+                midpoint_x = (start[0] + end[0]) / 2
+                midpoint_y = (start[1] + end[1]) / 2
+                dx, dy = end[0] - start[0], end[1] - start[1]
+                length = math.hypot(dx, dy)
+                if length <= 1e-8:
+                    continue
+                normal_x, normal_y = -dy / length, dx / length
+                # Choose the outside of a closed contour; use a stable side for open profiles.
+                if closed and (midpoint_x - center_x) * normal_x + (midpoint_y - center_y) * normal_y < 0:
+                    normal_x, normal_y = -normal_x, -normal_y
+                self._visual_dimension_label(
+                    self.page_x + (midpoint_x + normal_x * 11 / self.zoom) * self.zoom,
+                    self.page_y + (midpoint_y + normal_y * 11 / self.zoom) * self.zoom,
+                    f"{length * scale:.2f} mm",
+                    tags=tags,
+                )
+        if item.show_angles and closed and len(points) >= 3:
+            for index, vertex in enumerate(points):
+                previous, following = points[index - 1], points[(index + 1) % len(points)]
+                try:
+                    angle = angle_at_vertex(previous, vertex, following)
+                except ValueError:
+                    continue
+                label_x = vertex[0] + (center_x - vertex[0]) * 0.22
+                label_y = vertex[1] + (center_y - vertex[1]) * 0.22
+                self._visual_dimension_label(
+                    self.page_x + label_x * self.zoom,
+                    self.page_y + label_y * self.zoom,
+                    f"{angle:.1f}°", color="#145F96", tags=tags,
+                )
+        elif item.show_angles and not closed:
+            for start, end in segments:
+                angle = math.degrees(math.atan2(-(end[1] - start[1]), end[0] - start[0]))
+                self._visual_dimension_label(
+                    self.page_x + (start[0] + end[0]) / 2 * self.zoom,
+                    self.page_y + (start[1] + end[1]) / 2 * self.zoom + 12,
+                    f"{angle:.1f}°", color="#145F96", tags=tags,
+                )
+        if item.show_slope and item.shape == "right_triangle_geometry" and len(points) >= 3:
+            # The first stored vertex is the locked 90° corner; the opposite side is the hypotenuse.
+            start, end = points[1], points[2]
+            angle, slope = slope_angle_and_percent(start, end)
+            slope_text = "∞ %" if math.isinf(slope) else f"{slope:.1f} %"
+            self._visual_dimension_label(
+                self.page_x + (start[0] + end[0]) / 2 * self.zoom,
+                self.page_y + (start[1] + end[1]) / 2 * self.zoom + 24,
+                f"hypoténuse {angle:.1f}°  •  pente {slope_text}",
+                color="#7A2E8E", tags=tags,
             )
 
     def _draw_dimension(
@@ -5845,6 +6000,18 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.page_y + label_y * self.zoom,
                     text=f"{angle:.1f}°",
                     fill="#1769AA", font=("Sans", 8, "bold"), tags=("triangle-preview",),
+                )
+            if self._triangle_right:
+                # Point 0 is the right-angle vertex, hence side 1–2 is the hypotenuse.
+                start, end = points[1], points[2]
+                angle, slope = slope_angle_and_percent(start, end)
+                slope_text = "∞ %" if math.isinf(slope) else f"{slope:.1f} %"
+                self.canvas.create_text(
+                    self.page_x + (start[0] + end[0]) / 2 * self.zoom,
+                    self.page_y + (start[1] + end[1]) / 2 * self.zoom + 18,
+                    text=f"hypoténuse {angle:.1f}°  •  pente {slope_text}",
+                    fill="#7A2E8E", font=("Sans", 8, "bold"),
+                    tags=("triangle-preview",),
                 )
 
     def _draw_triangle_angle_guides(self, state: int) -> None:
@@ -12709,6 +12876,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._properties_details_visible = False
             self.triangle_frame.pack_forget()
             self.circle_frame.pack_forget()
+            self.visual_dimensions_frame.pack_forget()
             self.kind_label.configure(text="Sélectionnez un objet pour afficher ses propriétés.")
             self.geometry_help.configure(text="")
             self.shape_geometry_label.configure(text="")
@@ -12725,6 +12893,20 @@ class DocumentEditorWindow(tk.Toplevel):
                 widget.pack(**options)
             self._properties_details_visible = True
         item = self.document.objects[self.selected]
+        supports_visual_dimensions = item.kind in {"line", "polyline", "shape"}
+        if supports_visual_dimensions:
+            self.visual_dimensions_frame.pack(
+                fill="x", pady=(4, 8), before=self.assembly_actions
+            )
+            self.show_object_dimensions_var.set(item.show_dimensions)
+            self.show_object_angles_var.set(item.show_angles)
+            self.show_object_slope_var.set(item.show_slope)
+            if item.shape == "right_triangle_geometry":
+                self.visual_slope_check.pack(anchor="w")
+            else:
+                self.visual_slope_check.pack_forget()
+        else:
+            self.visual_dimensions_frame.pack_forget()
         self._set_property_layout_visibility(
             self._measurement_property_layout,
             item.kind in {"line", "polyline", "shape", "dimension", "image"},
@@ -12839,6 +13021,22 @@ class DocumentEditorWindow(tk.Toplevel):
                     widget.pack(**options)
             elif widget.winfo_manager():
                 widget.pack_forget()
+
+    def _apply_visual_dimension_options(self) -> None:
+        if self.selected is None or self.selected >= len(self.document.objects):
+            return
+        item = self.document.objects[self.selected]
+        if item.kind not in {"line", "polyline", "shape"}:
+            return
+        self._checkpoint()
+        item.show_dimensions = bool(self.show_object_dimensions_var.get())
+        item.show_angles = bool(self.show_object_angles_var.get())
+        item.show_slope = bool(
+            self.show_object_slope_var.get()
+            and item.shape == "right_triangle_geometry"
+        )
+        self.status.configure(text="Affichage des cotations visuelles mis à jour.")
+        self._render()
 
     def _shape_geometry_summary(self, item: PageObject) -> str:
         scale = 25.4 / 72

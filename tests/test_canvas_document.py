@@ -68,6 +68,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     rich_text_fragment_boundaries,
     rich_clipboard_matches_plain,
     safe_pillow_color,
+    slope_angle_and_percent,
     rotated_rectangle_points,
     rotation_step_for_objects,
     snapped_rotation_delta,
@@ -140,6 +141,16 @@ def test_available_font_families_includes_local_fonts_in_alphabetic_order(
 
     assert "Fira Sans" in families
     assert families == tuple(sorted(families, key=str.casefold))
+
+
+def test_slope_angle_and_percent_handles_inclines_and_verticals() -> None:
+    angle, percent = slope_angle_and_percent((0, 0), (100, -25))
+    vertical_angle, vertical_percent = slope_angle_and_percent((4, 2), (4, 40))
+
+    assert angle == pytest.approx(14.036243)
+    assert percent == pytest.approx(25.0)
+    assert vertical_angle == 90.0
+    assert math.isinf(vertical_percent)
 
 
 def test_linked_frame_text_metadata_can_be_edited_in_local_coordinates() -> None:
@@ -622,6 +633,14 @@ def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
         objects=[
             PageObject("mask", 0, 20, 20, 120, 30),
             PageObject("text", 0, 35, 28, 300, 50, text="Bonjour Lou Còdi", bold=True),
+            PageObject(
+                "polyline", 0, 40, 90, 100, 80,
+                points=[[0, 0], [100, 0], [0, 80], [0, 0]],
+                shape="right_triangle_geometry",
+                show_dimensions=True,
+                show_angles=True,
+                show_slope=True,
+            ),
         ]
     )
     document.save(project)
@@ -629,6 +648,9 @@ def test_canvas_document_round_trip_and_pdf_export(tmp_path: Path) -> None:
     export_canvas_pdf(restored, target)
 
     assert restored.objects[1].text == "Bonjour Lou Còdi"
+    assert restored.objects[2].show_dimensions is True
+    assert restored.objects[2].show_angles is True
+    assert restored.objects[2].show_slope is True
     assert len(PdfReader(target).pages) == 1
     assert zipfile.is_zipfile(project)
 
