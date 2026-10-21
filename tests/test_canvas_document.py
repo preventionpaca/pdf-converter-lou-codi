@@ -67,6 +67,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     resized_circle_diameter,
     rich_text_fragment_boundaries,
     rich_clipboard_matches_plain,
+    safe_pillow_color,
     rotated_rectangle_points,
     rotation_step_for_objects,
     snapped_rotation_delta,
@@ -436,7 +437,7 @@ def test_office_html_clipboard_reads_css_classes_and_ignores_list_marker_glyphs(
     assert title["italic"] is True
     assert title["underline"] is True
     assert point["bold"] is True
-    assert point["color"] == "#cc0000"
+    assert point["color"] == "#CC0000"
     assert "\uf0b7" not in text
 
 
@@ -1584,6 +1585,24 @@ def test_editor_preserves_imported_styles_when_a_new_style_is_added() -> None:
     assert text_style_at(result, 2)["color"] == "#CC0000"
     assert text_style_at(result, 9)["italic"] is True
     assert text_style_at(result, 9)["highlight"] == "#FFF176"
+
+
+def test_css_rgb_colours_are_normalised_for_the_tk_editor() -> None:
+    html = (
+        '<p style="color: rgb(33, 37, 41); '
+        'background-color: rgb(255, 255, 255)">Texte Web</p>'
+    )
+
+    text, styles = parse_rich_clipboard_html(html)
+
+    assert text == "Texte Web"
+    assert styles == [{
+        "start": 0,
+        "end": 9,
+        "color": "#212529",
+        "highlight": "#FFFFFF",
+    }]
+    assert safe_pillow_color("rgb(33, 37, 41)", "#000000") == "#212529"
 
 
 def test_inline_editor_receives_complete_styles_for_every_character() -> None:

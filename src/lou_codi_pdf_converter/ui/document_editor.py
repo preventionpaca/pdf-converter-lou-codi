@@ -134,15 +134,22 @@ def available_font_families() -> tuple[str, ...]:
 
 
 def safe_pillow_color(value: object, fallback: str, *, allow_transparent: bool = False) -> str:
-    """Return a Pillow-compatible colour without trusting imported rich-text data."""
+    """Return a Pillow- and Tk-compatible hexadecimal colour.
+
+    Pillow accepts CSS forms such as ``rgb(33, 37, 41)`` while Tk does not.
+    Keeping that original spelling made inline-editor tag configuration abort
+    after the raw text had been inserted. Normalising once at import keeps the
+    preview and editor on the same colour representation.
+    """
     candidate = str(value or "").strip()
     if allow_transparent and candidate.lower() in {"", "none", "transparent"}:
         return ""
     try:
-        ImageColor.getrgb(candidate)
+        channels = ImageColor.getrgb(candidate)
     except (TypeError, ValueError):
         return fallback
-    return candidate
+    red, green, blue = channels[:3]
+    return f"#{red:02X}{green:02X}{blue:02X}"
 
 
 def safe_number(value: object, fallback: float, *, minimum: float | None = None) -> float:
@@ -7270,11 +7277,14 @@ class DocumentEditorWindow(tk.Toplevel):
         italic = bool(style.get("italic", item.italic))
         weight = "bold" if bold else "normal"
         slant = "italic" if italic else "roman"
-        highlight = str(style.get("highlight", ""))
+        foreground = safe_pillow_color(style.get("color"), item.color)
+        highlight = safe_pillow_color(
+            style.get("highlight"), "", allow_transparent=True
+        )
         widget.tag_configure(
             tag,
             font=(family, size, f"{weight} {slant}"),
-            foreground=str(style.get("color", item.color)),
+            foreground=foreground,
             underline=bool(style.get("underline", item.underline)),
             overstrike=bool(style.get("strikethrough", item.strikethrough)),
             # An empty Tk background is "unspecified" and therefore does not erase
@@ -7426,15 +7436,19 @@ class DocumentEditorWindow(tk.Toplevel):
                 inline_editor_font_size(style_source.font_size, self.zoom),
                 "bold italic" if style_source.bold and style_source.italic else "bold" if style_source.bold else "italic" if style_source.italic else "normal",
             ),
-            bg=item.fill if item.fill.lower() not in {"", "none", "transparent"} else "white",
-            fg=style_source.color,
+            bg=(
+                safe_pillow_color(item.fill, "#FFFFFF")
+                if item.fill.lower() not in {"", "none", "transparent"}
+                else "white"
+            ),
+            fg=safe_pillow_color(style_source.color, "#000000"),
             relief="flat",
             borderwidth=0,
             padx=editor_pad_x,
             pady=editor_pad_y,
             highlightthickness=max(0, round(item.border_width * self.zoom)),
-            highlightbackground=item.border_color,
-            highlightcolor=item.border_color,
+            highlightbackground=safe_pillow_color(item.border_color, "#72879C"),
+            highlightcolor=safe_pillow_color(item.border_color, "#72879C"),
             undo=True,
             exportselection=False,
         )
