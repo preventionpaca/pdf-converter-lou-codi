@@ -45,6 +45,38 @@ function LC_records_(table) { return LC_grist_('get', '/tables/' + table + '/rec
 function LC_append_(table, fields) { return LC_grist_('post', '/tables/' + table + '/records', {records: [{fields: fields}]}); }
 function LC_patch_(table, id, fields) { return LC_grist_('patch', '/tables/' + table + '/records', {records: [{id: Number(id), fields: fields}]}); }
 
+function LC_ensureTables_() {
+  const existing = LC_grist_('get', '/tables').tables || [];
+  const ids = existing.map(function(table) { return String(table.id || ''); });
+  const definitions = [
+    {id: LC_TABLES.licenses, columns: [
+      {id:'Cle', fields:{type:'Text'}}, {id:'Email', fields:{type:'Text'}},
+      {id:'Statut', fields:{type:'Choice', widgetOptions:'{"choices":["active","disabled"]}'}},
+      {id:'Cree_le', fields:{type:'DateTime:Europe/Paris'}}, {id:'Modifie_le', fields:{type:'DateTime:Europe/Paris'}}
+    ]},
+    {id: LC_TABLES.installations, columns: [
+      {id:'Cle', fields:{type:'Text'}}, {id:'Installation', fields:{type:'Text'}},
+      {id:'Systeme', fields:{type:'Text'}}, {id:'Version', fields:{type:'Text'}},
+      {id:'Statut', fields:{type:'Choice', widgetOptions:'{"choices":["active","inactive"]}'}},
+      {id:'Activee_le', fields:{type:'DateTime:Europe/Paris'}}, {id:'Derniere_activite', fields:{type:'DateTime:Europe/Paris'}}
+    ]},
+    {id: LC_TABLES.events, columns: [
+      {id:'Recu_le', fields:{type:'DateTime:Europe/Paris'}}, {id:'Heure_evenement', fields:{type:'Text'}},
+      {id:'Version', fields:{type:'Text'}}, {id:'Systeme', fields:{type:'Text'}},
+      {id:'Module', fields:{type:'Text'}}, {id:'Action', fields:{type:'Text'}},
+      {id:'Resultat', fields:{type:'Text'}}, {id:'Dimensions', fields:{type:'Text'}}
+    ]}
+  ];
+  const created = [];
+  definitions.forEach(function(definition) {
+    if (ids.indexOf(definition.id) === -1) {
+      LC_grist_('post', '/tables', {tables: [definition]});
+      created.push(definition.id);
+    }
+  });
+  return {created: created};
+}
+
 function LC_requestLicense_(payload) {
   const email = LC_normalizeEmail_(payload.email);
   if (!email) throw new Error('Adresse électronique invalide.');
