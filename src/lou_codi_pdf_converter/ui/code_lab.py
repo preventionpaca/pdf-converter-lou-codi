@@ -9,6 +9,15 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 
+from ..code_lab_library import (
+    LearningPath,
+    LearningQuestion,
+    build_generation_prompt,
+    load_learning_paths,
+    parse_learning_path,
+    save_learning_path,
+)
+from ..paths import application_data_directory
 from ..telemetry import track_event
 
 NAVY = "#193B66"
@@ -180,6 +189,154 @@ class CodeEditor(ttk.Frame):
         self._apply_regex("number", r"\b\d+(?:\.\d+)?\b")
 
 
+class LearningPathWindow(tk.Toplevel):
+    MODE_LABELS = {"assisted": "Assisté", "autonomous": "Autonome", "challenge": "Défi"}
+    LABEL_MODES = {label: mode for mode, label in MODE_LABELS.items()}
+
+    def __init__(self, master: tk.Misc, path: LearningPath) -> None:
+        super().__init__(master, class_="Loucodiworkshop")
+        self.path = path
+        self.title(f"Parcours · {path.title}")
+        self.geometry("1180x760")
+        self.minsize(900, 620)
+        self.configure(bg=BACKGROUND)
+        self.mode = tk.StringVar(value="Assisté")
+        self.question_index = 0
+        self.answer_choice = tk.StringVar()
+        self.free_answer: tk.Text | None = None
+        self.progress_file = application_data_directory() / "code-lab" / "progress.json"
+        self.progress = self._load_progress()
+        self._build()
+        self._show_question()
+
+    def _load_progress(self) -> dict[str, list[str]]:
+        try:
+            value = json.loads(self.progress_file.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _save_progress(self) -> None:
+        self.progress_file.parent.mkdir(parents=True, exist_ok=True)
+        self.progress_file.write_text(json.dumps(self.progress, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _build(self) -> None:
+        header = tk.Frame(self, bg=NAVY, padx=18, pady=12)
+        header.pack(fill="x")
+        tk.Label(header, text=self.path.title, bg=NAVY, fg="white", font=("Sans", 18, "bold")).pack(side="left")
+        concepts = " · ".join(self.path.concepts) or self.path.language
+        tk.Label(header, text=concepts, bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(side="left", padx=18)
+        body = ttk.Panedwindow(self, orient="horizontal")
+        body.pack(fill="both", expand=True, padx=14, pady=14)
+        panel = ttk.Frame(body, padding=12)
+        editor_panel = ttk.Frame(body)
+        body.add(panel, weight=2)
+        body.add(editor_panel, weight=3)
+        ttk.Label(panel, text="Mode d’apprentissage", font=("Sans", 12, "bold"), foreground=NAVY).pack(anchor="w")
+        mode_box = ttk.Combobox(panel, textvariable=self.mode, state="readonly", values=list(self.LABEL_MODES))
+        mode_box.pack(fill="x", pady=(6, 10))
+        mode_box.bind("<<ComboboxSelected>>", lambda _event: self._change_mode())
+        mode_box.set("Assisté")
+        self.mode_caption = tk.StringVar()
+        ttk.Label(panel, textvariable=self.mode_caption, font=("Sans", 11, "bold"), foreground=BLUE, wraplength=360).pack(anchor="w", pady=4)
+        self.objective = tk.StringVar()
+        ttk.Label(panel, textvariable=self.objective, wraplength=360, justify="left").pack(anchor="w", pady=(0, 10))
+        self.progress_caption = tk.StringVar()
+        ttk.Label(panel, textvariable=self.progress_caption, foreground="#5C6F82").pack(anchor="w", pady=(0, 8))
+        self.prompt = tk.StringVar()
+        ttk.Label(panel, textvariable=self.prompt, wraplength=360, justify="left", font=("Sans", 11, "bold")).pack(anchor="w", pady=8)
+        self.answer_frame = ttk.Frame(panel)
+        self.answer_frame.pack(fill="both", expand=True)
+        controls = ttk.Frame(panel)
+        controls.pack(fill="x", pady=8)
+        ttk.Button(controls, text="← Précédente", command=lambda: self._move(-1)).pack(side="left")
+        ttk.Button(controls, text="Suivante →", command=lambda: self._move(1)).pack(side="right")
+        self.action_button = ttk.Button(panel, text="Vérifier", command=self._act)
+        self.action_button.pack(fill="x", pady=4)
+        self.hint_button = ttk.Button(panel, text="Afficher un indice", command=self._show_hint)
+        self.hint_button.pack(fill="x", pady=4)
+        self.feedback = tk.StringVar()
+        ttk.Label(panel, textvariable=self.feedback, wraplength=360, justify="left", foreground="#176B3A").pack(anchor="w", pady=8)
+        self.editor = CodeEditor(editor_panel, language=self.path.language)
+        self.editor.pack(fill="both", expand=True)
+        self.editor.set_content(self.path.code, language=self.path.language)
+
+    def _stage(self):
+        mode = self.LABEL_MODES.get(self.mode.get(), "assisted")
+        return next((stage for stage in self.path.stages if stage.mode == mode), self.path.stages[0])
+
+    def _question(self) -> LearningQuestion:
+        stage = self._stage()
+        self.question_index = min(self.question_index, len(stage.questions) - 1)
+        return stage.questions[self.question_index]
+
+    def _change_mode(self) -> None:
+        self.question_index = 0
+        self._show_question()
+
+    def _show_question(self) -> None:
+        stage = self._stage()
+        question = self._question()
+        self.mode_caption.set(f"{self.MODE_LABELS[stage.mode]} · {stage.title}")
+        self.objective.set(stage.objective)
+        completed = set(self.progress.get(self.path.identifier, []))
+        key = f"{stage.mode}:{self.question_index}"
+        marker = " · terminée ✓" if key in completed else ""
+        self.progress_caption.set(f"Question {self.question_index + 1}/{len(stage.questions)}{marker}")
+        self.prompt.set(question.prompt)
+        self.feedback.set("")
+        self.answer_choice.set("")
+        for child in self.answer_frame.winfo_children():
+            child.destroy()
+        self.free_answer = None
+        if question.kind == "qcm":
+            for choice in question.choices:
+                ttk.Radiobutton(self.answer_frame, text=choice, variable=self.answer_choice, value=choice).pack(anchor="w", pady=3)
+            self.action_button.configure(text="Vérifier ma réponse")
+        else:
+            self.free_answer = tk.Text(self.answer_frame, height=6, wrap="word", font=("Sans", 10))
+            self.free_answer.pack(fill="both", expand=True, pady=4)
+            self.action_button.configure(text="Comparer avec la correction" if stage.mode == "autonomous" else "Valider mon défi")
+        if stage.mode == "assisted" and question.hint:
+            self.hint_button.pack(fill="x", pady=4)
+        else:
+            self.hint_button.pack_forget()
+
+    def _move(self, delta: int) -> None:
+        count = len(self._stage().questions)
+        self.question_index = max(0, min(count - 1, self.question_index + delta))
+        self._show_question()
+
+    def _show_hint(self) -> None:
+        self.feedback.set("Indice : " + (self._question().hint or "Relisez la partie concernée du script."))
+
+    def _mark_complete(self) -> None:
+        key = f"{self._stage().mode}:{self.question_index}"
+        completed = self.progress.setdefault(self.path.identifier, [])
+        if key not in completed:
+            completed.append(key)
+            self._save_progress()
+
+    def _act(self) -> None:
+        question = self._question()
+        if question.kind == "qcm":
+            if self.answer_choice.get().strip().casefold() != question.answer.strip().casefold():
+                self.feedback.set("Pas encore. Observez le script et réessayez.")
+                return
+            self._mark_complete()
+            self.feedback.set("Bonne réponse. " + question.explanation)
+        else:
+            response = self.free_answer.get("1.0", "end-1c").strip() if self.free_answer else ""
+            if not response and self._stage().mode != "challenge":
+                self.feedback.set("Écrivez d’abord votre réponse.")
+                return
+            label = "Critères de réussite" if self._stage().mode == "challenge" else "Réponse attendue"
+            self._mark_complete()
+            self.feedback.set(f"{label} : {question.answer}\n{question.explanation}".strip())
+        self.progress_caption.set(self.progress_caption.get().split(" ·")[0] + " · terminée ✓")
+        track_event("code_lab", "quiz", "ok", language=self.path.language)
+
+
 class CodeLabWindow(tk.Toplevel):
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master, class_="Loucodiworkshop")
@@ -188,6 +345,7 @@ class CodeLabWindow(tk.Toplevel):
         self.minsize(980, 650)
         self.configure(bg=BACKGROUND)
         self.exercises = load_exercises()
+        self.learning_paths = load_learning_paths()
         self.editors: dict[str, CodeEditor] = {}
         self._untitled = 0
         self._build()
@@ -213,6 +371,14 @@ class CodeLabWindow(tk.Toplevel):
         for exercise in self.exercises:
             self.exercise_list.insert("end", f"{exercise.level} · {exercise.title}")
         self.exercise_list.bind("<<ListboxSelect>>", self._select_exercise)
+        ttk.Label(lessons, text="Mes parcours", font=("Sans", 12, "bold"), foreground=NAVY).pack(anchor="w", pady=(2, 3))
+        self.path_list = tk.Listbox(lessons, exportselection=False, height=4)
+        self.path_list.pack(fill="x", pady=(0, 5))
+        self.path_list.bind("<Double-Button-1>", self._open_learning_path)
+        ttk.Button(lessons, text="Ouvrir le parcours sélectionné", command=self._open_learning_path).pack(fill="x", pady=2)
+        self._refresh_path_list()
+        ttk.Button(lessons, text="Générer un parcours avec ChatGPT", command=self.generate_learning_path).pack(fill="x", pady=(8, 2))
+        ttk.Button(lessons, text="Importer la réponse", command=self.import_learning_path).pack(fill="x", pady=(2, 10))
         self.question = tk.StringVar(value="Choisissez un exercice.")
         ttk.Label(lessons, textvariable=self.question, wraplength=270, justify="left").pack(anchor="w", pady=(4, 8))
         self.answer = tk.IntVar(value=-1)
@@ -349,7 +515,8 @@ class CodeLabWindow(tk.Toplevel):
         # ChatGPT accepts a pre-filled composer through the `q` query parameter.
         # Keep the clipboard copy as a reliable fallback for very long scripts or
         # browsers that strip the query while redirecting to the authenticated page.
-        target = "https://chatgpt.com/?q=" + quote(prompt)
+        encoded = quote(prompt)
+        target = "https://chatgpt.com/?q=" + encoded if len(encoded) <= 6000 else "https://chatgpt.com/"
         opened = webbrowser.open(target, new=2)
         if opened:
             self.status.set("Prompt envoyé à ChatGPT. Il reste aussi copié dans le presse-papiers.")
@@ -360,3 +527,64 @@ class CodeLabWindow(tk.Toplevel):
                 parent=self,
             )
             self.status.set("Prompt copié dans le presse-papiers.")
+
+    def generate_learning_path(self) -> None:
+        editor = self._current()
+        if editor is None or not editor.content().strip():
+            messagebox.showinfo("Créer un parcours", "Collez ou ouvrez d’abord un script dans l’éditeur.", parent=self)
+            return
+        prompt = build_generation_prompt(editor.content(), editor.language)
+        self.clipboard_clear()
+        self.clipboard_append(prompt)
+        self.update()
+        encoded = quote(prompt)
+        target = "https://chatgpt.com/?q=" + encoded if len(encoded) <= 6000 else "https://chatgpt.com/"
+        webbrowser.open(target, new=2)
+        self.status.set("Demande de parcours ouverte dans ChatGPT. Copiez ensuite sa réponse JSON.")
+        messagebox.showinfo(
+            "Créer un parcours",
+            "ChatGPT va produire un parcours progressif en trois modes.\n\n"
+            "Quand la réponse est terminée, copiez tout le JSON puis revenez ici et cliquez sur « Importer la réponse ».",
+            parent=self,
+        )
+
+    def import_learning_path(self) -> None:
+        try:
+            raw = self.clipboard_get()
+        except tk.TclError:
+            messagebox.showerror("Importer la réponse", "Le presse-papiers ne contient pas de texte.", parent=self)
+            return
+        try:
+            path = parse_learning_path(raw)
+        except ValueError as exc:
+            messagebox.showerror("Parcours non valide", str(exc), parent=self)
+            return
+        counts = {mode: sum(len(stage.questions) for stage in path.stages if stage.mode == mode) for mode in ("assisted", "autonomous", "challenge")}
+        preview = (
+            f"Titre : {path.title}\nLangage : {path.language}\nNiveau : {path.level}\n"
+            f"Concepts : {', '.join(path.concepts) or 'non précisés'}\n\n"
+            f"Questions assistées : {counts['assisted']}\n"
+            f"Questions autonomes : {counts['autonomous']}\n"
+            f"Défis : {counts['challenge']}\n\n"
+            "Valider et enregistrer ce parcours dans la bibliothèque locale ?"
+        )
+        if not messagebox.askyesno("Validation humaine du parcours", preview, parent=self):
+            self.status.set("Import annulé : rien n’a été enregistré.")
+            return
+        target = save_learning_path(path)
+        self.learning_paths = load_learning_paths()
+        self._refresh_path_list()
+        self.status.set(f"Parcours validé et enregistré localement : {target.name}")
+        track_event("code_lab", "quiz", "path_imported", language=path.language)
+        LearningPathWindow(self, path)
+
+    def _refresh_path_list(self) -> None:
+        self.path_list.delete(0, "end")
+        for path in self.learning_paths:
+            self.path_list.insert("end", f"{path.level} · {path.title}")
+
+    def _open_learning_path(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        selection = self.path_list.curselection()
+        if not selection:
+            return
+        LearningPathWindow(self, self.learning_paths[selection[0]])
