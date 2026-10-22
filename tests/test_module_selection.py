@@ -22,6 +22,7 @@ def test_installer_selection_disables_missing_markers(tmp_path: Path, monkeypatc
 
 def test_code_lab_exercises_are_valid_and_cover_four_languages() -> None:
     exercises = load_exercises()
+    assert len(exercises) >= 20
     assert {exercise.language for exercise in exercises} >= {"python", "javascript", "html", "css"}
     for exercise in exercises:
         assert exercise.title

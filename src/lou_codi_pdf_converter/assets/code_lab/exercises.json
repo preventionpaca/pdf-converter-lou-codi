@@ -42,5 +42,181 @@
     "choices": ["Il tourne les cartes", "Il ajoute 16 px entre les cartes", "Il fixe leur hauteur", "Il masque le débordement"],
     "answer": 1,
     "explanation": "Dans un conteneur flex, gap définit l’espace entre les éléments."
+  },
+  {
+    "id": "python-variable",
+    "title": "Python — modifier une variable",
+    "language": "python",
+    "level": "Débutant",
+    "code": "points = 7\npoints = points + 3\nprint(points)\n",
+    "question": "Quelle valeur est affichée ?",
+    "choices": ["3", "7", "10", "73"],
+    "answer": 2,
+    "explanation": "La seconde ligne reprend 7, lui ajoute 3, puis range 10 dans points."
+  },
+  {
+    "id": "python-condition",
+    "title": "Python — choisir avec if",
+    "language": "python",
+    "level": "Débutant",
+    "code": "age = 16\nif age >= 18:\n    message = 'majeur'\nelse:\n    message = 'mineur'\nprint(message)\n",
+    "question": "Quel mot est affiché ?",
+    "choices": ["majeur", "mineur", "16", "Rien"],
+    "answer": 1,
+    "explanation": "16 est inférieur à 18 : Python exécute donc le bloc else."
+  },
+  {
+    "id": "python-liste",
+    "title": "Python — lire une liste",
+    "language": "python",
+    "level": "Débutant",
+    "code": "outils = ['marteau', 'scie', 'lime']\nprint(outils[1])\n",
+    "question": "Quel élément est affiché ?",
+    "choices": ["marteau", "scie", "lime", "Une erreur"],
+    "answer": 1,
+    "explanation": "Les indices commencent à zéro : l’indice 1 désigne le deuxième élément, scie."
+  },
+  {
+    "id": "python-fonction",
+    "title": "Python — appeler une fonction",
+    "language": "python",
+    "level": "Intermédiaire",
+    "code": "def double(nombre):\n    return nombre * 2\n\nresultat = double(6)\nprint(resultat)\n",
+    "question": "Que renvoie l’appel double(6) ?",
+    "choices": ["6", "8", "12", "66"],
+    "answer": 2,
+    "explanation": "La fonction multiplie son argument par 2 : 6 × 2 vaut 12."
+  },
+  {
+    "id": "javascript-variable",
+    "title": "JavaScript — calculer avec const",
+    "language": "javascript",
+    "level": "Débutant",
+    "code": "const largeur = 8;\nconst hauteur = 5;\nconst aire = largeur * hauteur;\nconsole.log(aire);\n",
+    "question": "Quelle valeur apparaît dans la console ?",
+    "choices": ["13", "40", "85", "largeur * hauteur"],
+    "answer": 1,
+    "explanation": "aire reçoit le produit de 8 par 5, soit 40."
+  },
+  {
+    "id": "javascript-tableau",
+    "title": "JavaScript — parcourir un tableau",
+    "language": "javascript",
+    "level": "Intermédiaire",
+    "code": "const notes = [12, 15, 9];\nlet total = 0;\nfor (const note of notes) {\n  total += note;\n}\nconsole.log(total);\n",
+    "question": "Quelle somme est affichée ?",
+    "choices": ["27", "32", "36", "45"],
+    "answer": 2,
+    "explanation": "La boucle ajoute successivement 12, 15 et 9 : le total vaut 36."
+  },
+  {
+    "id": "javascript-fonction",
+    "title": "JavaScript — fonction fléchée",
+    "language": "javascript",
+    "level": "Intermédiaire",
+    "code": "const saluer = nom => `Bonjour ${nom} !`;\nconsole.log(saluer('Lou'));\n",
+    "question": "Que produit la fonction ?",
+    "choices": ["Lou", "Bonjour nom !", "Bonjour Lou !", "Une erreur"],
+    "answer": 2,
+    "explanation": "Le modèle de chaîne remplace ${nom} par la valeur Lou."
+  },
+  {
+    "id": "javascript-dom",
+    "title": "JavaScript — modifier une page",
+    "language": "javascript",
+    "level": "Intermédiaire",
+    "code": "const titre = document.querySelector('h1');\ntitre.textContent = 'Bienvenue au club';\n",
+    "question": "Que fait la deuxième ligne ?",
+    "choices": ["Elle supprime le titre", "Elle change le texte du premier h1", "Elle crée une image", "Elle recharge la page"],
+    "answer": 1,
+    "explanation": "textContent remplace le contenu textuel de l’élément h1 sélectionné."
+  },
+  {
+    "id": "html-structure",
+    "title": "HTML — reconnaître la structure",
+    "language": "html",
+    "level": "Débutant",
+    "code": "<main>\n  <h1>Mon carnet</h1>\n  <p>Première étape du projet.</p>\n</main>\n",
+    "question": "Quel élément représente le titre principal ?",
+    "choices": ["main", "h1", "p", "carnet"],
+    "answer": 1,
+    "explanation": "La balise h1 représente le titre principal de cette partie de page."
+  },
+  {
+    "id": "html-lien",
+    "title": "HTML — créer un lien",
+    "language": "html",
+    "level": "Débutant",
+    "code": "<a href=\"https://developer.mozilla.org/\">Apprendre le Web</a>\n",
+    "question": "Quel attribut contient l’adresse de destination ?",
+    "choices": ["a", "href", "https", "class"],
+    "answer": 1,
+    "explanation": "L’attribut href indique la destination ouverte quand on clique sur le lien."
+  },
+  {
+    "id": "html-formulaire",
+    "title": "HTML — comprendre un formulaire",
+    "language": "html",
+    "level": "Intermédiaire",
+    "code": "<label for=\"prenom\">Prénom</label>\n<input id=\"prenom\" name=\"prenom\" type=\"text\">\n<button type=\"submit\">Envoyer</button>\n",
+    "question": "Pourquoi label utilise-t-il for=\"prenom\" ?",
+    "choices": ["Pour colorer le champ", "Pour relier le libellé au champ ayant cet id", "Pour envoyer automatiquement", "Pour masquer le bouton"],
+    "answer": 1,
+    "explanation": "La valeur de for correspond à l’id du champ et améliore notamment l’accessibilité."
+  },
+  {
+    "id": "html-image",
+    "title": "HTML — rendre une image accessible",
+    "language": "html",
+    "level": "Débutant",
+    "code": "<img src=\"atelier.jpg\" alt=\"Élèves assemblant une maquette\">\n",
+    "question": "À quoi sert l’attribut alt ?",
+    "choices": ["À agrandir l’image", "À fournir une description textuelle", "À créer un lien", "À compresser le fichier"],
+    "answer": 1,
+    "explanation": "alt décrit l’image lorsqu’elle ne peut pas être vue ou chargée."
+  },
+  {
+    "id": "css-couleur",
+    "title": "CSS — cibler un élément",
+    "language": "css",
+    "level": "Débutant",
+    "code": "h2 {\n  color: navy;\n}\n",
+    "question": "Quels éléments deviennent bleu marine ?",
+    "choices": ["Tous les titres h2", "Tous les paragraphes", "Un seul lien", "Toute la page"],
+    "answer": 0,
+    "explanation": "Le sélecteur h2 cible tous les éléments HTML portant cette balise."
+  },
+  {
+    "id": "css-classe",
+    "title": "CSS — utiliser une classe",
+    "language": "css",
+    "level": "Débutant",
+    "code": ".alerte {\n  background: #ffe4e4;\n  border: 2px solid crimson;\n}\n",
+    "question": "Que signifie le point devant alerte ?",
+    "choices": ["Il cible une balise", "Il cible une classe", "Il cible un identifiant", "Il termine une phrase"],
+    "answer": 1,
+    "explanation": "En CSS, un sélecteur commençant par un point cible les éléments ayant cette classe."
+  },
+  {
+    "id": "css-box-model",
+    "title": "CSS — comprendre les espacements",
+    "language": "css",
+    "level": "Intermédiaire",
+    "code": ".carte {\n  margin: 20px;\n  padding: 12px;\n  border: 1px solid #999;\n}\n",
+    "question": "Quel espace se trouve à l’intérieur de la bordure ?",
+    "choices": ["margin", "padding", "border", "gap"],
+    "answer": 1,
+    "explanation": "padding crée l’espace interne entre le contenu et la bordure ; margin agit à l’extérieur."
+  },
+  {
+    "id": "css-grid",
+    "title": "CSS — organiser une grille",
+    "language": "css",
+    "level": "Intermédiaire",
+    "code": ".galerie {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 12px;\n}\n",
+    "question": "Combien de colonnes égales sont créées ?",
+    "choices": ["1", "2", "3", "12"],
+    "answer": 2,
+    "explanation": "repeat(3, 1fr) crée trois colonnes occupant chacune une fraction égale."
   }
 ]
