@@ -43,6 +43,7 @@ if ($mode -eq "Cancel") { exit 0 }
 
 $installShortcut = $true
 $createWorkspace = $true
+$selectedModules = @("pdf_studio", "document_studio", "cutting_optimization", "code_lab")
 if ($mode -eq "No") {
   $installShortcut = [System.Windows.Forms.MessageBox]::Show(
     "Créer un raccourci dans le menu Démarrer ?", "Option — Raccourci", "YesNo", "Question"
@@ -50,11 +51,29 @@ if ($mode -eq "No") {
   $createWorkspace = [System.Windows.Forms.MessageBox]::Show(
     "Créer les dossiers LouCodi dans Téléchargements ?", "Option — Dossiers de travail", "YesNo", "Question"
   ) -eq "Yes"
+  $selectedModules = @()
+  @(
+    @{ Id = "pdf_studio"; Label = "PDF Studio" },
+    @{ Id = "document_studio"; Label = "Document Studio" },
+    @{ Id = "cutting_optimization"; Label = "Optimisation de découpe" },
+    @{ Id = "code_lab"; Label = "Lou Còdi Code Lab" }
+  ) | ForEach-Object {
+    $enabled = [System.Windows.Forms.MessageBox]::Show(
+      "Installer $($_.Label) ?", "Choix des modules", "YesNo", "Question"
+    ) -eq "Yes"
+    if ($enabled) { $selectedModules += $_.Id }
+  }
 }
 
 if (Test-Path $Target) { Remove-Item $Target -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 Copy-Item (Join-Path $Source "*") $Target -Recurse -Force
+$moduleDirectory = Join-Path $Target "selected-modules"
+New-Item -ItemType Directory -Force -Path $moduleDirectory | Out-Null
+Get-ChildItem $moduleDirectory -Filter "*.enabled" -ErrorAction SilentlyContinue | Remove-Item -Force
+$selectedModules | ForEach-Object {
+  New-Item -ItemType File -Force -Path (Join-Path $moduleDirectory "$_.enabled") | Out-Null
+}
 
 $classes = "HKCU:\Software\Classes"
 New-Item -Force -Path "$classes\.cod" -Value "LouCodi.Document" | Out-Null
@@ -75,10 +94,14 @@ if ($createWorkspace) {
   }
   $Workspace = Join-Path $Downloads "LouCodi"
   @(
-    "PDF vers Office", "Documents vers PDF", "Organiser les PDF",
-    "Habillage PDF", "Document Studio", "Optimisation de découpe"
-  ) | ForEach-Object {
-    New-Item -ItemType Directory -Force -Path (Join-Path $Workspace $_) | Out-Null
+    @{ Module = "pdf_studio"; Folders = @("PDF vers Office", "Documents vers PDF", "Organiser les PDF", "Habillage PDF") },
+    @{ Module = "document_studio"; Folders = @("Document Studio") },
+    @{ Module = "cutting_optimization"; Folders = @("Optimisation de découpe") },
+    @{ Module = "code_lab"; Folders = @("Code Lab") }
+  ) | Where-Object { $selectedModules -contains $_.Module } | ForEach-Object {
+    $_.Folders | ForEach-Object {
+      New-Item -ItemType Directory -Force -Path (Join-Path $Workspace $_) | Out-Null
+    }
   }
 }
 

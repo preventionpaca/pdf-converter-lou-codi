@@ -14,6 +14,7 @@ fi
 mkdir -p "$bundle/app" "$project_dir/dist/installers"
 cp -a "$project_dir/dist/lou-codi-pdf-converter/." "$bundle/app/"
 cp "$project_dir/packaging/linux/install-bundle.sh" "$bundle/installer.sh"
+cp "$project_dir/packaging/modules/enabled.marker" "$bundle/enabled.marker"
 cp "$project_dir/src/lou_codi_pdf_converter/assets/croix-lou-codi.png" "$bundle/lou-codi-workshop.png"
 cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.png" "$bundle/lou-codi-document.png"
 chmod +x "$bundle/installer.sh"

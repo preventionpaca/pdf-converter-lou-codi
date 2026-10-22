@@ -16,12 +16,20 @@ from .i18n import (
     set_language,
     translate_widget_tree,
 )
-from .licensing import activate, is_activated, license_state, request_free_license, service_configured
+from .licensing import (
+    activate,
+    is_activated,
+    license_state,
+    request_free_license,
+    service_configured,
+)
+from .module_selection import module_enabled
 from .paths import initialize_workshop_directories
 from .services.local_database import initialize_database
 from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen, register_launch
 from .telemetry import analytics_consent, set_analytics_consent, track_event
 from .ui.about_dialog import show_about
+from .ui.code_lab import CodeLabWindow
 from .ui.cutting_stock import CuttingStockWindow
 from .ui.decorate_pdf import DecoratePdfWindow
 from .ui.dialogs import install_branded_messageboxes
@@ -62,16 +70,25 @@ class Application(tk.Tk):
             "pdf_studio",
             "PDF Studio",
             "Convertir, organiser et enrichir vos documents PDF.",
+            installed=module_enabled("pdf_studio"),
         ),
         WorkshopModule(
             "document_studio",
             "Document Studio",
             "Créer et mettre en page des documents, dessins et schémas.",
+            installed=module_enabled("document_studio"),
         ),
         WorkshopModule(
             "cutting_optimization",
             "Optimisation de découpe",
             "Disposer les pièces, calculer les coupes et réduire les chutes.",
+            installed=module_enabled("cutting_optimization"),
+        ),
+        WorkshopModule(
+            "code_lab",
+            "Lou Còdi Code Lab",
+            "Comprendre, expérimenter, modifier et créer avec Python, JavaScript, HTML et CSS.",
+            installed=module_enabled("code_lab"),
         ),
         WorkshopModule(
             "practical_calculators",
@@ -148,8 +165,11 @@ class Application(tk.Tk):
             style.theme_use("clam")
         style.configure("App.TFrame", background=BACKGROUND)
         style.configure("Card.TFrame", background="white")
+        style.configure("DisabledCard.TFrame", background="#E3E7EB")
         style.configure("Title.TLabel", background="white", foreground=NAVY, font=("Sans", 15, "bold"))
         style.configure("Body.TLabel", background="white", foreground="#597089", font=("Sans", 10))
+        style.configure("DisabledTitle.TLabel", background="#E3E7EB", foreground="#7A8794", font=("Sans", 15, "bold"))
+        style.configure("DisabledBody.TLabel", background="#E3E7EB", foreground="#7A8794", font=("Sans", 10))
         style.configure("Primary.TButton", background=BLUE, foreground="white", padding=(16, 10))
 
     def _build(self) -> None:
@@ -190,13 +210,16 @@ class Application(tk.Tk):
         ttk.Label(content, text="Que souhaitez-vous faire ?", background=BACKGROUND, foreground=NAVY, font=("Sans", 19, "bold")).pack(anchor="w", pady=(0, 16))
         grid = ttk.Frame(content, style="App.TFrame")
         grid.pack(fill="both", expand=True)
-        visible_modules = [module for module in self.MODULES if module.installed]
+        visible_modules = list(self.MODULES)
         for index, module in enumerate(visible_modules):
-            card = ttk.Frame(grid, style="Card.TFrame", padding=16)
+            disabled = not module.installed
+            card = ttk.Frame(grid, style="DisabledCard.TFrame" if disabled else "Card.TFrame", padding=16)
             card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=6, pady=6)
-            ttk.Label(card, text=f"{index + 1:02d}  {module.title}", style="Title.TLabel").pack(anchor="w")
-            ttk.Label(card, text=module.description, style="Body.TLabel", wraplength=335).pack(anchor="w", pady=(8, 12))
-            if module.coming_soon:
+            ttk.Label(card, text=f"{index + 1:02d}  {module.title}", style="DisabledTitle.TLabel" if disabled else "Title.TLabel").pack(anchor="w")
+            ttk.Label(card, text=module.description, style="DisabledBody.TLabel" if disabled else "Body.TLabel", wraplength=335).pack(anchor="w", pady=(8, 12))
+            if disabled:
+                ttk.Button(card, text="Module non installé", state="disabled").pack(anchor="w")
+            elif module.coming_soon:
                 ttk.Label(card, text="Bientôt disponible", background="white", foreground=LOCKED, font=("Sans", 10, "bold")).pack(anchor="w")
             elif not module.entitled:
                 ttk.Button(card, text="Découvrir le module", command=lambda item=module: self._show_locked_module(item)).pack(anchor="w")
@@ -371,6 +394,10 @@ class Application(tk.Tk):
             return
         if module_id == "cutting_optimization":
             window = CuttingStockWindow(self)
+            self._replace_workspace(self, window, force_maximized=True)
+            return
+        if module_id == "code_lab":
+            window = CodeLabWindow(self)
             self._replace_workspace(self, window, force_maximized=True)
             return
         module = next((item for item in self.MODULES if item.module_id == module_id), None)

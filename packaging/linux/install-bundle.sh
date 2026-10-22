@@ -11,6 +11,7 @@ mime_icons_dir="$data_root/icons/hicolor/256x256/mimetypes"
 mime_packages_dir="$data_root/mime/packages"
 install_launcher=1
 create_workspace=1
+selected_modules="pdf_studio document_studio cutting_optimization code_lab"
 
 if [ ! -x "$application_source/lou-codi-pdf-converter" ]; then
   echo "Paquet incomplet : l’exécutable Lou Còdi Workshop est absent." >&2
@@ -38,13 +39,22 @@ if [ -t 0 ]; then
   echo "1 - Installation complète (recommandée)"
   echo "    Application + raccourci + dossiers de travail."
   echo "2 - Installation personnalisée"
-  echo "    Choisir le raccourci et les dossiers de travail."
+  echo "    Choisir les modules, le raccourci et les dossiers de travail."
   echo "3 - Annuler"
   printf "Votre choix [1] : "
   read -r mode
   case "${mode:-1}" in
     1) ;;
     2)
+      selected_modules=""
+      for module_spec in "pdf_studio:PDF Studio" "document_studio:Document Studio" \
+        "cutting_optimization:Optimisation de découpe" "code_lab:Lou Còdi Code Lab"; do
+        module_id=${module_spec%%:*}
+        module_name=${module_spec#*:}
+        printf "Installer %s ? [O/n] " "$module_name"
+        read -r answer
+        case "$answer" in n|N|non|NON) ;; *) selected_modules="$selected_modules $module_id" ;; esac
+      done
       printf "Créer le raccourci dans le menu des applications ? [O/n] "
       read -r answer
       case "$answer" in n|N|non|NON) install_launcher=0 ;; esac
@@ -59,16 +69,26 @@ fi
 
 install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir"
 cp -a "$application_source/." "$application_target/"
+install -d "$application_target/selected-modules"
+for module in pdf_studio document_studio cutting_optimization code_lab; do
+  marker="$application_target/selected-modules/$module.enabled"
+  if [ -f "$marker" ]; then
+    unlink "$marker"
+  fi
+done
+for module in $selected_modules; do
+  install -m 0644 "$bundle_dir/enabled.marker" "$application_target/selected-modules/$module.enabled"
+done
 if [ "$create_workspace" -eq 1 ]; then
   downloads_dir="${XDG_DOWNLOAD_DIR:-$HOME/Téléchargements}"
   if command -v xdg-user-dir >/dev/null 2>&1; then
     detected_downloads=$(xdg-user-dir DOWNLOAD 2>/dev/null || true)
     [ -n "$detected_downloads" ] && downloads_dir="$detected_downloads"
   fi
-  for module in "PDF vers Office" "Documents vers PDF" "Organiser les PDF" \
-    "Habillage PDF" "Document Studio" "Optimisation de découpe"; do
-    install -d "$downloads_dir/LouCodi/$module"
-  done
+  case " $selected_modules " in *" pdf_studio "*) for module in "PDF vers Office" "Documents vers PDF" "Organiser les PDF" "Habillage PDF"; do install -d "$downloads_dir/LouCodi/$module"; done ;; esac
+  case " $selected_modules " in *" document_studio "*) install -d "$downloads_dir/LouCodi/Document Studio" ;; esac
+  case " $selected_modules " in *" cutting_optimization "*) install -d "$downloads_dir/LouCodi/Optimisation de découpe" ;; esac
+  case " $selected_modules " in *" code_lab "*) install -d "$downloads_dir/LouCodi/Code Lab" ;; esac
 fi
 
 if [ "$install_launcher" -eq 1 ]; then

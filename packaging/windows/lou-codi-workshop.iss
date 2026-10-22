@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a6"
+  #define AppVersion "2.0.0a7"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."
@@ -24,7 +24,7 @@ PrivilegesRequired=lowest
 WizardStyle=modern
 SetupLogging=yes
 UninstallDisplayIcon={app}\lou-codi-pdf-converter.exe
-VersionInfoVersion=2.0.0.6
+VersionInfoVersion=2.0.0.7
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
@@ -35,6 +35,11 @@ Name: "custom"; Description: "Installation personnalisée"; Flags: iscustom
 
 [Components]
 Name: "core"; Description: "Lou Còdi Workshop (obligatoire)"; Types: full custom; Flags: fixed
+Name: "modules"; Description: "Modules du Workshop"; Types: full custom
+Name: "modules\pdfstudio"; Description: "PDF Studio"; Types: full custom
+Name: "modules\documentstudio"; Description: "Document Studio"; Types: full custom
+Name: "modules\cutting"; Description: "Optimisation de découpe"; Types: full custom
+Name: "modules\codelab"; Description: "Lou Còdi Code Lab"; Types: full custom
 Name: "workspace"; Description: "Dossiers de travail LouCodi dans Téléchargements"; Types: full
 
 [Tasks]
@@ -43,14 +48,22 @@ Name: "desktopicon"; Description: "Créer une icône sur le Bureau"; GroupDescri
 [Files]
 Source: "{#ProjectDir}\dist\lou-codi-pdf-converter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: core
 Source: "{#ProjectDir}\src\lou_codi_pdf_converter\assets\lou-codi-document.ico"; DestDir: "{app}"; Flags: ignoreversion; Components: core
+Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "pdf_studio.enabled"; Flags: ignoreversion; Components: modules\pdfstudio
+Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "document_studio.enabled"; Flags: ignoreversion; Components: modules\documentstudio
+Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "cutting_optimization.enabled"; Flags: ignoreversion; Components: modules\cutting
+Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "code_lab.enabled"; Flags: ignoreversion; Components: modules\codelab
+
+[InstallDelete]
+Type: files; Name: "{app}\selected-modules\*.enabled"
 
 [Dirs]
-Name: "{%USERPROFILE}\Downloads\LouCodi\PDF vers Office"; Components: workspace
-Name: "{%USERPROFILE}\Downloads\LouCodi\Documents vers PDF"; Components: workspace
-Name: "{%USERPROFILE}\Downloads\LouCodi\Organiser les PDF"; Components: workspace
-Name: "{%USERPROFILE}\Downloads\LouCodi\Habillage PDF"; Components: workspace
-Name: "{%USERPROFILE}\Downloads\LouCodi\Document Studio"; Components: workspace
-Name: "{%USERPROFILE}\Downloads\LouCodi\Optimisation de découpe"; Components: workspace
+Name: "{%USERPROFILE}\Downloads\LouCodi\PDF vers Office"; Components: workspace and modules\pdfstudio
+Name: "{%USERPROFILE}\Downloads\LouCodi\Documents vers PDF"; Components: workspace and modules\pdfstudio
+Name: "{%USERPROFILE}\Downloads\LouCodi\Organiser les PDF"; Components: workspace and modules\pdfstudio
+Name: "{%USERPROFILE}\Downloads\LouCodi\Habillage PDF"; Components: workspace and modules\pdfstudio
+Name: "{%USERPROFILE}\Downloads\LouCodi\Document Studio"; Components: workspace and modules\documentstudio
+Name: "{%USERPROFILE}\Downloads\LouCodi\Optimisation de découpe"; Components: workspace and modules\cutting
+Name: "{%USERPROFILE}\Downloads\LouCodi\Code Lab"; Components: workspace and modules\codelab
 
 [Icons]
 Name: "{group}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; AppUserModelID: "LouCodi.Workshop"

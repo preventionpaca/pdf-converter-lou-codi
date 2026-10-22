@@ -1,7 +1,7 @@
 const LC_TABLES = Object.freeze({licenses: 'Licences', installations: 'Installations', events: 'Statistiques'});
 const LC_MAX_INSTALLATIONS = 3;
-const LC_ALLOWED_MODULES = Object.freeze(['workshop','pdf_studio','pdf_to_office','documents_to_pdf','organize_pdf','decorate_pdf','document_studio','cutting_optimization','website']);
-const LC_ALLOWED_ACTIONS = Object.freeze(['open','convert','download']);
+const LC_ALLOWED_MODULES = Object.freeze(['workshop','pdf_studio','pdf_to_office','documents_to_pdf','organize_pdf','decorate_pdf','document_studio','cutting_optimization','code_lab','website']);
+const LC_ALLOWED_ACTIONS = Object.freeze(['open','convert','download','quiz']);
 
 function doGet() {
   return LC_json_({ok: true, service: 'Lou Còdi collecte', version: 2});
@@ -133,7 +133,7 @@ function LC_recordTelemetry_(payload) {
     const moduleName = LC_safe_(event.module, 80); const action = LC_safe_(event.action, 80);
     if (LC_ALLOWED_MODULES.indexOf(moduleName) === -1 || LC_ALLOWED_ACTIONS.indexOf(action) === -1) throw new Error('Événement non autorisé.');
     const dimensions = event.dimensions && typeof event.dimensions === 'object' ? event.dimensions : {}; const clean = {};
-    ['format','engine'].forEach(function(name) { if (dimensions[name] != null) clean[name] = LC_safe_(dimensions[name], 80); });
+    ['format','engine','language'].forEach(function(name) { if (dimensions[name] != null) clean[name] = LC_safe_(dimensions[name], 80); });
     return {fields: {Recu_le: now, Heure_evenement: LC_safe_(event.time, 40), Version: LC_safe_(event.app_version, 40), Systeme: LC_safe_(event.os, 40), Module: moduleName, Action: action, Resultat: LC_safe_(event.result, 40), Dimensions: JSON.stringify(clean).slice(0, 500)}};
   });
   LC_grist_('post', '/tables/' + LC_TABLES.events + '/records', {records: records});

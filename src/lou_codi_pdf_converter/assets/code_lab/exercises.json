@@ -1,0 +1,46 @@
+[
+  {
+    "id": "python-boucle",
+    "title": "Python — comprendre une boucle",
+    "language": "python",
+    "level": "Débutant",
+    "code": "total = 0\nfor nombre in range(1, 6):\n    total += nombre\n\nprint(total)\n",
+    "question": "Quelle valeur est affichée ?",
+    "choices": ["5", "10", "15", "21"],
+    "answer": 2,
+    "explanation": "range(1, 6) produit 1, 2, 3, 4 et 5. Leur somme vaut 15."
+  },
+  {
+    "id": "javascript-condition",
+    "title": "JavaScript — suivre une condition",
+    "language": "javascript",
+    "level": "Débutant",
+    "code": "const temperature = 18;\n\nif (temperature >= 20) {\n  console.log('Il fait chaud');\n} else {\n  console.log('Prenez une veste');\n}\n",
+    "question": "Quel message est écrit dans la console ?",
+    "choices": ["Il fait chaud", "Prenez une veste", "18", "Aucun message"],
+    "answer": 1,
+    "explanation": "18 n’est pas supérieur ou égal à 20 : le bloc else est donc exécuté."
+  },
+  {
+    "id": "html-classe",
+    "title": "HTML/CSS — relier une classe à son style",
+    "language": "html",
+    "level": "Débutant",
+    "code": "<!doctype html>\n<html lang=\"fr\">\n<head>\n  <style>\n    .important { color: crimson; font-weight: bold; }\n  </style>\n</head>\n<body>\n  <p class=\"important\">Bonjour le club !</p>\n</body>\n</html>\n",
+    "question": "Comment le texte « Bonjour le club ! » apparaît-il ?",
+    "choices": ["Bleu et italique", "Rouge et gras", "Masqué", "Sans style"],
+    "answer": 1,
+    "explanation": "Le paragraphe utilise la classe important, définie en rouge (crimson) et en gras."
+  },
+  {
+    "id": "css-flex",
+    "title": "CSS — observer une rangée flexible",
+    "language": "css",
+    "level": "Intermédiaire",
+    "code": ".cartes {\n  display: flex;\n  gap: 16px;\n  justify-content: center;\n}\n\n.carte {\n  width: 180px;\n  padding: 12px;\n}\n",
+    "question": "Quel rôle joue gap: 16px ?",
+    "choices": ["Il tourne les cartes", "Il ajoute 16 px entre les cartes", "Il fixe leur hauteur", "Il masque le débordement"],
+    "answer": 1,
+    "explanation": "Dans un conteneur flex, gap définit l’espace entre les éléments."
+  }
+]
