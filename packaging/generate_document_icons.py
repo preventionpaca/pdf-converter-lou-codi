@@ -24,12 +24,12 @@ def build() -> None:
     image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     red = "#D71920"
-    # White document, red CODE: readable in file explorers and a visual wink to .doc.
+    # White document, red .COD: readable in file explorers and a visual wink to .DOC.
     draw.rounded_rectangle((29, 12, 227, 244), radius=18, fill="white", outline=red, width=10)
     draw.polygon(((173, 12), (227, 66), (173, 66)), fill="#FFE5E6", outline=red)
     draw.line((173, 12, 173, 66, 227, 66), fill=red, width=8)
     title_font = font(53)
-    label = "CODE"
+    label = ".COD"
     box = draw.textbbox((0, 0), label, font=title_font)
     x = 128 - (box[2] - box[0]) / 2
     y = 112 - (box[3] - box[1]) / 2

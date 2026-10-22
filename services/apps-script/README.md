@@ -10,7 +10,7 @@ les clés gratuites par courrier électronique et limite chaque clé à trois po
 2. Copier `Code.gs` et ajouter un fichier HTML nommé `Dashboard` avec le contenu de
    `Dashboard.html`.
 3. Dans **Paramètres du projet > Propriétés du script**, créer :
-   - `ADMIN_EMAIL` : l'adresse administratrice actuelle ;
+   - `ADMIN_EMAIL` : l'adresse fonctionnelle privée chargée des licences ;
    - `ADMIN_PASSWORD` : une phrase secrète longue et unique.
 4. Exécuter `setupService` une fois et autoriser le script. La fonction renvoie l'URL
    du tableur privé créé automatiquement.

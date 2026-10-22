@@ -13691,7 +13691,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self,
             destination,
             initial_name,
-            ".code",
+            ".cod",
         )
         if not selected:
             return False
@@ -13713,7 +13713,7 @@ class DocumentEditorWindow(tk.Toplevel):
         directory = settings_path().parent / "modeles"
         directory.mkdir(parents=True, exist_ok=True)
         initial_name = f"modele_{self.project_path.stem}" if self.project_path else "nouveau_modele"
-        selected = choose_save_path(self, directory, initial_name, ".code")
+        selected = choose_save_path(self, directory, initial_name, ".cod")
         if not selected:
             return False
         template = copy.deepcopy(self.document)
