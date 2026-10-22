@@ -5,11 +5,12 @@ const SHEETS = Object.freeze({
 });
 const MAX_INSTALLATIONS = 3;
 
-/** Run once after setting ADMIN_EMAIL and ADMIN_PASSWORD in Script Properties. */
+/** Run once after setting ADMIN_EMAIL, ADMIN_PASSWORD and ADMIN_API_KEY. */
 function setupService() {
   const properties = PropertiesService.getScriptProperties();
   requireProperty_(properties, 'ADMIN_EMAIL');
   requireProperty_(properties, 'ADMIN_PASSWORD');
+  requireProperty_(properties, 'ADMIN_API_KEY');
   let spreadsheetId = properties.getProperty('SPREADSHEET_ID');
   if (!spreadsheetId) {
     const spreadsheet = SpreadsheetApp.create('Lou Còdi — licences et statistiques');
@@ -39,6 +40,8 @@ function doPost(event) {
       activate: activate_,
       deactivate: deactivate_,
       telemetry: recordTelemetry_,
+      admin_snapshot: adminSnapshotApi_,
+      admin_license_status: setLicenseStatusApi_,
     };
     if (!handlers[action]) throw new Error('Action inconnue.');
     return json_(handlers[action](payload));
@@ -134,6 +137,15 @@ function recordTelemetry_(payload) {
 
 function adminSnapshot(password) {
   authorizeAdmin_(password);
+  return adminSnapshot_();
+}
+
+function adminSnapshotApi_(payload) {
+  authorizeAdminApi_(payload.admin_api_key);
+  return Object.assign({ok: true}, adminSnapshot_());
+}
+
+function adminSnapshot_() {
   const licenses = values_(sheet_(SHEETS.licenses)).slice(1);
   const installations = values_(sheet_(SHEETS.installations)).slice(1);
   const events = values_(sheet_(SHEETS.events)).slice(1);
@@ -154,6 +166,15 @@ function adminSnapshot(password) {
 
 function setLicenseStatus(password, licenseKey, status) {
   authorizeAdmin_(password);
+  return setLicenseStatus_(licenseKey, status);
+}
+
+function setLicenseStatusApi_(payload) {
+  authorizeAdminApi_(payload.admin_api_key);
+  return setLicenseStatus_(payload.license_key, payload.status);
+}
+
+function setLicenseStatus_(licenseKey, status) {
   if (!['active', 'disabled'].includes(status)) throw new Error('Statut invalide.');
   const sheet = sheet_(SHEETS.licenses);
   const rows = values_(sheet);
@@ -200,5 +221,6 @@ function createLicenseKey_() { const raw = Utilities.getUuid().replace(/-/g, '')
 function maskKey_(key) { const value = String(key); return value.slice(0, 6) + '••••••' + value.slice(-4); }
 function escapeHtml_(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
 function authorizeAdmin_(password) { if (String(password || '') !== requireProperty_(PropertiesService.getScriptProperties(), 'ADMIN_PASSWORD')) throw new Error('Accès refusé.'); }
+function authorizeAdminApi_(key) { if (String(key || '') !== requireProperty_(PropertiesService.getScriptProperties(), 'ADMIN_API_KEY')) throw new Error('Accès serveur refusé.'); }
 function requireProperty_(properties, name) { const value = properties.getProperty(name); if (!value) throw new Error('Propriété manquante : ' + name); return value; }
 function json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
