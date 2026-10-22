@@ -21,6 +21,20 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev,packaging]"
+      - name: Préparer la configuration privée des services
+        shell: python
+        env:
+          LOU_CODI_SERVICE_CONFIG_B64: ${{ secrets.LOU_CODI_SERVICE_CONFIG_B64 }}
+        run: |
+          import base64
+          import os
+          from pathlib import Path
+
+          encoded = os.environ.get("LOU_CODI_SERVICE_CONFIG_B64", "").strip()
+          if not encoded:
+              raise SystemExit("Secret LOU_CODI_SERVICE_CONFIG_B64 absent")
+          target = Path("src/lou_codi_pdf_converter/assets/service-config.json")
+          target.write_bytes(base64.b64decode(encoded, validate=True))
       - run: python -m pytest -q
       - run: python packaging/generate_document_icons.py
       - run: python -m PyInstaller -y --clean packaging/standalone/lou-codi-pdf-converter.spec
