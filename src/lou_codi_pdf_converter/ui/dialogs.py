@@ -5,7 +5,7 @@ from collections.abc import Callable
 from tkinter import messagebox, ttk
 
 from ..i18n import tr, translate_widget_tree
-from .windowing import center_window, make_modal
+from .windowing import fit_dialog, make_modal
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -28,7 +28,7 @@ def _branded_message(
     dialog = tk.Toplevel(owner, class_="Loucodiworkshop")
     title, message = tr(title), tr(message)
     dialog.title(title)
-    dialog.resizable(False, False)
+    dialog.resizable(True, True)
     dialog.configure(bg=BACKGROUND)
     icon = getattr(dialog._root(), "app_icon", None)
     if icon is not None:
@@ -50,7 +50,15 @@ def _branded_message(
     text = tk.Frame(card, bg="white")
     text.pack(side="left", fill="both", expand=True)
     tk.Label(text, text=heading, bg="white", fg=INK, font=("Sans", 13, "bold")).pack(anchor="w")
-    tk.Label(text, text=message, bg="white", fg=MUTED, font=("Sans", 10), wraplength=560, justify="left").pack(anchor="w", pady=(8, 0))
+    tk.Label(
+        text,
+        text=message,
+        bg="white",
+        fg=MUTED,
+        font=("Sans", 10),
+        wraplength=640,
+        justify="left",
+    ).pack(anchor="w", pady=(8, 0))
     footer = ttk.Frame(dialog, padding=(18, 0, 18, 18))
     footer.pack(fill="x")
 
@@ -66,7 +74,7 @@ def _branded_message(
             command=lambda selected=value: close(selected),
         ).pack(side="right", padx=(8, 0))
     dialog.protocol("WM_DELETE_WINDOW", lambda: close(default))
-    center_window(dialog, 680, 320)
+    fit_dialog(dialog, minimum_width=760, minimum_height=380)
     make_modal(dialog, owner)
     dialog.wait_window()
     return result["value"]
@@ -101,7 +109,7 @@ def show_success(
     """Show a branded modal confirmation instead of a native Tk message box."""
     dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title(title)
-    dialog.resizable(False, False)
+    dialog.resizable(True, True)
     dialog.configure(bg=BACKGROUND)
     app_icon = getattr(dialog._root(), "app_icon", None)
     if app_icon is not None:
@@ -163,7 +171,7 @@ def show_success(
         ).pack(side="right", padx=(0, 10))
 
     translate_widget_tree(dialog)
-    center_window(dialog, 700, 330)
+    fit_dialog(dialog, minimum_width=760, minimum_height=380)
     make_modal(dialog, parent)
     dialog.wait_window()
     if parent.winfo_exists():

@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import __version__
 from ..i18n import translate_widget_tree
-from .windowing import center_window, make_modal
+from .windowing import fit_dialog, make_modal
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -149,6 +149,6 @@ def show_about(parent: tk.Misc) -> None:
         ),
     ).pack(side="left")
     translate_widget_tree(dialog)
-    center_window(dialog, 860, 620)
+    fit_dialog(dialog, minimum_width=900, minimum_height=650)
     make_modal(dialog, parent)
     dialog.wait_window()

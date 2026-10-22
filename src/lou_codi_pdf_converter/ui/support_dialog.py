@@ -7,7 +7,7 @@ from tkinter import ttk
 
 from ..i18n import translate_widget_tree
 from ..support import SUPPORT_URL
-from .windowing import center_window, make_modal
+from .windowing import fit_dialog, make_modal
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -27,7 +27,7 @@ def _support_dialog(
 ) -> bool:
     dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title(title)
-    dialog.resizable(False, False)
+    dialog.resizable(True, True)
     dialog.configure(bg=BACKGROUND)
     app_icon = getattr(dialog._root(), "app_icon", None)
     if app_icon is not None:
@@ -50,7 +50,7 @@ def _support_dialog(
         content,
         text=message,
         style="Body.TLabel",
-        wraplength=610,
+        wraplength=660,
         justify="left",
     ).pack(anchor="w")
 
@@ -78,7 +78,11 @@ def _support_dialog(
     ).pack(side="right", padx=(0, 10))
 
     translate_widget_tree(dialog)
-    center_window(dialog, 720, 370 if allow_disable else 340)
+    fit_dialog(
+        dialog,
+        minimum_width=780,
+        minimum_height=410 if allow_disable else 380,
+    )
     make_modal(dialog, parent)
     dialog.wait_window()
     return disable_var.get()

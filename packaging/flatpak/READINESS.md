@@ -102,7 +102,7 @@ mise à jour et désinstallation.
 
 ## Points bloquants actuels
 
-- la version préparée `2.0.0a5` est une alpha et non une version stable ;
+- la version préparée `2.0.0a6` est une alpha et non une version stable ;
 - les portails de fichiers ne sont pas encore intégrés ;
 - les captures propres et permanentes ne sont pas encore publiées ;
 - le manifeste de soumission doit être écrit humainement ;

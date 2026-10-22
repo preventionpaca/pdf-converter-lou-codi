@@ -29,6 +29,25 @@ cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.png" \
 
 cat > "$package_root/usr/bin/lou-codi-workshop" <<'EOF'
 #!/usr/bin/env sh
+config_root=${XDG_CONFIG_HOME:-"$HOME/.config"}/lou-codi-workshop
+desktop_marker="$config_root/desktop-shortcut-checked"
+if [ ! -e "$desktop_marker" ]; then
+  desktop_dir=""
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    desktop_dir=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+  fi
+  if [ -n "$desktop_dir" ] && [ -d "$desktop_dir" ] && [ -w "$desktop_dir" ]; then
+    cp /usr/share/applications/lou-codi-workshop.desktop \
+      "$desktop_dir/Lou Còdi Workshop.desktop" 2>/dev/null || true
+    chmod +x "$desktop_dir/Lou Còdi Workshop.desktop" 2>/dev/null || true
+    if command -v gio >/dev/null 2>&1; then
+      gio set "$desktop_dir/Lou Còdi Workshop.desktop" metadata::trusted true \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+  mkdir -p "$config_root" 2>/dev/null || true
+  touch "$desktop_marker" 2>/dev/null || true
+fi
 exec /opt/lou-codi-workshop/lou-codi-pdf-converter "$@"
 EOF
 chmod 0755 "$package_root/usr/bin/lou-codi-workshop"
