@@ -7,6 +7,7 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from urllib.parse import quote
 
 from ..telemetry import track_event
 
@@ -345,5 +346,17 @@ class CodeLabWindow(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(prompt)
         self.update()
-        webbrowser.open("https://chatgpt.com/")
-        self.status.set("Prompt copié : collez-le dans ChatGPT.")
+        # ChatGPT accepts a pre-filled composer through the `q` query parameter.
+        # Keep the clipboard copy as a reliable fallback for very long scripts or
+        # browsers that strip the query while redirecting to the authenticated page.
+        target = "https://chatgpt.com/?q=" + quote(prompt)
+        opened = webbrowser.open(target, new=2)
+        if opened:
+            self.status.set("Prompt envoyé à ChatGPT. Il reste aussi copié dans le presse-papiers.")
+        else:
+            messagebox.showinfo(
+                "Expliquer avec ChatGPT",
+                "Le navigateur n’a pas pu être ouvert. Le prompt est copié : ouvrez ChatGPT et collez-le avec Ctrl+V.",
+                parent=self,
+            )
+            self.status.set("Prompt copié dans le presse-papiers.")
