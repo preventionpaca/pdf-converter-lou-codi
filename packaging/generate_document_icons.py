@@ -23,17 +23,20 @@ def build() -> None:
     ASSETS.mkdir(parents=True, exist_ok=True)
     image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    navy, pale, red, yellow = "#193B66", "#F7FAFD", "#C8202F", "#FFD21A"
-    draw.rounded_rectangle((35, 14, 221, 242), radius=18, fill=pale, outline=navy, width=10)
-    draw.polygon(((171, 14), (221, 64), (171, 64)), fill="#DCEBFA", outline=navy)
-    draw.line((171, 14, 171, 64, 221, 64), fill=navy, width=8)
-    title_font = font(54)
-    positions = (("C", red, 34), ("O", yellow, 101), ("D", red, 168))
-    for letter, color, y in positions:
-        box = draw.textbbox((0, 0), letter, font=title_font)
-        x = 128 - (box[2] - box[0]) / 2
-        draw.text((x, y), letter, font=title_font, fill=color, stroke_width=2, stroke_fill=navy)
-    draw.line((121, 99, 133, 90), fill=yellow, width=6)
+    red = "#D71920"
+    # White document, red CODE: readable in file explorers and a visual wink to .doc.
+    draw.rounded_rectangle((29, 12, 227, 244), radius=18, fill="white", outline=red, width=10)
+    draw.polygon(((173, 12), (227, 66), (173, 66)), fill="#FFE5E6", outline=red)
+    draw.line((173, 12, 173, 66, 227, 66), fill=red, width=8)
+    title_font = font(53)
+    label = "CODE"
+    box = draw.textbbox((0, 0), label, font=title_font)
+    x = 128 - (box[2] - box[0]) / 2
+    y = 112 - (box[3] - box[1]) / 2
+    draw.text((x, y), label, font=title_font, fill=red)
+    draw.line((62, 166, 194, 166), fill=red, width=7)
+    draw.line((62, 190, 174, 190), fill="#E78B8F", width=6)
+    draw.line((62, 214, 151, 214), fill="#E78B8F", width=6)
     png = ASSETS / "lou-codi-document.png"
     ico = ASSETS / "lou-codi-document.ico"
     image.save(png, "PNG", optimize=True)

@@ -12,7 +12,9 @@ from . import __version__
 from .i18n import settings_path
 from .paths import application_data_directory
 
-ANALYTICS_ENDPOINT = os.environ.get("LOU_CODI_ANALYTICS_URL", "").strip()
+ANALYTICS_ENDPOINT = os.environ.get(
+    "LOU_CODI_ANALYTICS_URL", os.environ.get("LOU_CODI_SERVICE_URL", "")
+).strip()
 QUEUE_LIMIT = 200
 
 
@@ -61,7 +63,9 @@ def flush_events() -> bool:
     events = _read_json(target, [])
     if not isinstance(events, list) or not events:
         return True
-    body = json.dumps({"events": events}, separators=(",", ":")).encode("utf-8")
+    body = json.dumps(
+        {"action": "telemetry", "events": events}, separators=(",", ":")
+    ).encode("utf-8")
     request = urllib.request.Request(
         ANALYTICS_ENDPOINT,
         data=body,

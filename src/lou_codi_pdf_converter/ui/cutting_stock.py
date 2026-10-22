@@ -277,7 +277,7 @@ class CuttingStockWindow(tk.Toplevel):
             self.parts_tree.insert("", "end", iid=str(index), values=(part.label, f"{part.width:g} × {part.height:g}", part.quantity, "Oui" if part.rotation_allowed else "Non"))
 
     def _import_drawing_rectangles(self) -> None:
-        files = choose_documents(self, {".cod", ".loucodi-document"})
+        files = choose_documents(self, {".code", ".cod", ".loucodi-document"})
         if not files:
             return
         try:

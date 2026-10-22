@@ -71,6 +71,7 @@ cat > "$package_root/usr/share/mime/packages/lou-codi-document.xml" <<'EOF'
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-loucodi-document">
     <comment>Document Lou Còdi</comment>
+    <glob pattern="*.code"/>
     <glob pattern="*.cod"/>
     <glob pattern="*.loucodi-document"/>
   </mime-type>

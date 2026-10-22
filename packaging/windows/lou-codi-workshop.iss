@@ -57,6 +57,7 @@ Name: "{group}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"
 Name: "{autodesktop}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; Tasks: desktopicon; AppUserModelID: "LouCodi.Workshop"
 
 [Registry]
+Root: HKA; Subkey: "Software\Classes\.code"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.cod"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.loucodi-document"; ValueType: string; ValueData: "LouCodi.Document"; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\LouCodi.Document"; ValueType: string; ValueData: "Document Lou Còdi"; Flags: uninsdeletekey

@@ -114,7 +114,7 @@ class CanvasDocument:
     is_template: bool = False
 
     def save(self, path: Path) -> None:
-        """Save one self-contained .cod archive, including every external asset."""
+        """Save one self-contained .code archive, including every external asset."""
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent

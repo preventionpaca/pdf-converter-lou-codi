@@ -16,6 +16,7 @@ from .i18n import (
     set_language,
     translate_widget_tree,
 )
+from .licensing import activate, is_activated, license_state, request_free_license, service_configured
 from .paths import initialize_workshop_directories
 from .services.local_database import initialize_database
 from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen, register_launch
@@ -137,7 +138,7 @@ class Application(tk.Tk):
     def _mac_open_document(self, *paths: str) -> None:
         if paths:
             candidate = Path(paths[0]).expanduser()
-            if candidate.suffix.lower() in {".cod", ".loucodi-document"}:
+            if candidate.suffix.lower() in {".code", ".cod", ".loucodi-document"}:
                 self._open_document_project(candidate.resolve())
 
     def _configure_styles(self) -> None:
@@ -168,6 +169,7 @@ class Application(tk.Tk):
         tk.Button(header, text="Soutenir Lou Còdi ♥", command=lambda: webbrowser.open(SUPPORT_URL), bg="#28507D", fg="white", relief="flat", padx=16, pady=8).pack(side="right", padx=(8, 24))
         tk.Button(header, text="À propos", command=lambda: show_about(self), bg="#28507D", fg="white", relief="flat", padx=14, pady=8).pack(side="right", padx=4)
         tk.Button(header, text="Confidentialité", command=self._analytics_dialog, bg="#28507D", fg="white", relief="flat", padx=12, pady=8).pack(side="right", padx=4)
+        tk.Button(header, text="Licence", command=self._license_dialog, bg="#28507D", fg="white", relief="flat", padx=12, pady=8).pack(side="right", padx=4)
         self.language_name = tk.StringVar(value=LANGUAGES[get_language()])
         language_selector = ttk.Combobox(
             header,
@@ -290,6 +292,47 @@ class Application(tk.Tk):
                 "Statistiques anonymes activées." if enabled else "Statistiques anonymes désactivées et file locale supprimée.",
                 parent=self,
             )
+
+    def _license_dialog(self) -> None:
+        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
+        dialog.title("Licence gratuite — Lou Còdi Workshop")
+        dialog.configure(bg=BACKGROUND, padx=24, pady=22)
+        dialog.resizable(False, False)
+        tk.Label(dialog, text="Licence gratuite", bg=BACKGROUND, fg=NAVY, font=("Sans", 18, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
+        tk.Label(dialog, text="Une même licence peut activer jusqu’à trois ordinateurs.", bg=BACKGROUND, fg="#597089").grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 18))
+        tk.Label(dialog, text="Adresse électronique", bg=BACKGROUND, fg=NAVY).grid(row=2, column=0, sticky="w", pady=5)
+        email = tk.StringVar(value=str(license_state().get("email", "")))
+        ttk.Entry(dialog, textvariable=email, width=44).grid(row=2, column=1, sticky="ew", pady=5)
+        tk.Label(dialog, text="Clé reçue", bg=BACKGROUND, fg=NAVY).grid(row=3, column=0, sticky="w", pady=5)
+        key = tk.StringVar(value=str(license_state().get("license_key", "")))
+        ttk.Entry(dialog, textvariable=key, width=44).grid(row=3, column=1, sticky="ew", pady=5)
+        initial_status = "Licence activée sur cet ordinateur." if is_activated() else "Licence non activée."
+        if not service_configured():
+            initial_status = "Interface prête : le service sera actif après le déploiement Apps Script."
+        status = tk.StringVar(value=initial_status)
+        tk.Label(dialog, textvariable=status, bg=BACKGROUND, fg="#157347", wraplength=500, justify="left").grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 8))
+
+        def request() -> None:
+            try:
+                status.set(request_free_license(email.get()))
+            except RuntimeError as exc:
+                status.set(str(exc))
+
+        def validate() -> None:
+            try:
+                state = activate(email.get(), key.get())
+                status.set(f"Licence activée — {state['slots_used']} poste(s) utilisé(s) sur 3.")
+            except RuntimeError as exc:
+                status.set(str(exc))
+
+        actions = ttk.Frame(dialog, style="App.TFrame")
+        actions.grid(row=5, column=0, columnspan=2, sticky="e", pady=(8, 0))
+        ttk.Button(actions, text="Recevoir une licence", command=request).pack(side="left", padx=4)
+        ttk.Button(actions, text="Activer", style="Primary.TButton", command=validate).pack(side="left", padx=4)
+        ttk.Button(actions, text="Fermer", command=dialog.destroy).pack(side="left", padx=4)
+        dialog.update_idletasks()
+        center_window(dialog, max(620, dialog.winfo_reqwidth()), max(300, dialog.winfo_reqheight()))
+        make_modal(dialog, self)
 
     def _open_module(self, module_id: str) -> None:
         if getattr(self, "_workspace_opening", False):
@@ -447,7 +490,7 @@ def main() -> None:
     project_path = None
     if len(sys.argv) > 1:
         candidate = Path(sys.argv[1]).expanduser()
-        if candidate.suffix.lower() in {".cod", ".loucodi-document"}:
+        if candidate.suffix.lower() in {".code", ".cod", ".loucodi-document"}:
             project_path = candidate.resolve()
     Application(project_path=project_path).mainloop()
 
