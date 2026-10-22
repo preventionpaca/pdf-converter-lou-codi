@@ -1,32 +1,26 @@
-# Service gratuit de licences et statistiques
+# Collecteur Apps Script Lou Còdi
 
-Ce dossier contient le Web App Google Apps Script de Lou Còdi Workshop. Il crée un
-tableur privé avec trois feuilles (`Licences`, `Installations`, `Statistiques`), envoie
-les clés gratuites par courrier électronique et limite chaque clé à trois postes.
+Ce Web App reçoit uniquement les demandes de licence, activations et événements
+d’usage consentis. Il ne fournit aucune donnée de consultation et ne contient aucun
+tableau de bord : la consultation reste dans l’administration de `loucodi.fr`, après
+authentification Google et contrôle de la table Grist `Administrateurs`.
 
-## Installation
+Le collecteur utilise le **même document Grist** que l’administration. Il ne crée ni
+tableur Google ni base indépendante. Les tables attendues (`Licences`,
+`Installations`, `Statistiques`) sont décrites dans
+le fichier `admin-apps-script/schema-grist.json` du dépôt du site.
 
-1. Créer un projet Apps Script depuis le compte Google Workspace administrateur.
-2. Copier `Code.gs` et ajouter un fichier HTML nommé `Dashboard` avec le contenu de
-   `Dashboard.html`.
-3. Dans **Paramètres du projet > Propriétés du script**, créer :
-   - `ADMIN_EMAIL` : l'adresse fonctionnelle privée chargée des licences ;
-   - `ADMIN_PASSWORD` : une phrase secrète longue et unique pour le tableau de secours ;
-   - `ADMIN_API_KEY` : une autre valeur aléatoire longue, partagée uniquement avec
-     l’administration Apps Script du site.
-4. Exécuter `setupService` une fois et autoriser le script. La fonction renvoie l'URL
-   du tableur privé créé automatiquement.
-5. Déployer comme **Application Web**, exécutée par le propriétaire, accessible à
-   toute personne disposant du lien. Conserver l'URL `/exec`.
-6. Le tableau de bord se trouve à `URL_EXEC?view=admin` et demande `ADMIN_PASSWORD`.
+## Propriétés de script privées
 
-L’administration principale du site utilise `ADMIN_API_KEY` pour charger les chiffres
-et gérer les licences côté serveur. Cette clé ne doit jamais être envoyée au navigateur.
+- `LC_GRIST_API_URL` : `https://docs.getgrist.com` par défaut ;
+- `LC_GRIST_DOC_ID` : identifiant du document déjà utilisé par l’administration ;
+- `LC_GRIST_API_KEY` : jeton Grist, conservé uniquement côté serveur ;
+- `LC_CLIENT_TOKEN` : jeton d’écriture distinct, injecté dans les paquets logiciels.
 
-Ne jamais placer l'adresse administratrice, le mot de passe, l'identifiant du tableur
-ou l'URL privée dans Git. L'URL publique `/exec` pourra être injectée dans les paquets
-Windows et Linux au moment de la construction.
+Le Web App doit être exécuté par son propriétaire et accessible aux clients installés.
+La connaissance de `LC_CLIENT_TOKEN` permet seulement d’appeler les quatre actions
+d’écriture exposées ; elle ne permet jamais de lire Grist ni d’ouvrir l’administration.
 
-La collecte reste désactivée tant que l'utilisateur n'a pas donné son consentement.
-Les événements ne contiennent ni document, ni texte, ni chemin de fichier, ni adresse
-électronique. Les adresses des licences sont conservées séparément.
+La télémétrie est inactive sans consentement explicite. Elle ne transmet aucun fichier,
+contenu, nom de fichier, chemin, adresse électronique ou identifiant d’installation.
+Les dimensions autorisées sont limitées au format et au moteur de conversion.

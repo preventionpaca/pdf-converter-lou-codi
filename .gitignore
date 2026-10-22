@@ -18,3 +18,4 @@ packaging/runtime/audio-runtime/
 *.odt
 *.ods
 *.odp
+src/lou_codi_pdf_converter/assets/service-config.json

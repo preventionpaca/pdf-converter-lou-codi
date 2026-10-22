@@ -28,4 +28,11 @@ def test_activation_is_persisted(tmp_path: Path, monkeypatch) -> None:
 
 def test_service_is_disabled_without_https_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(licensing, "SERVICE_ENDPOINT", "")
+    monkeypatch.setattr(licensing, "CLIENT_TOKEN", "token")
+    assert licensing.service_configured() is False
+
+
+def test_service_is_disabled_without_client_token(monkeypatch) -> None:
+    monkeypatch.setattr(licensing, "SERVICE_ENDPOINT", "https://example.invalid/exec")
+    monkeypatch.setattr(licensing, "CLIENT_TOKEN", "")
     assert licensing.service_configured() is False

@@ -1,226 +1,117 @@
-const SHEETS = Object.freeze({
-  licenses: 'Licences',
-  installations: 'Installations',
-  events: 'Statistiques',
-});
-const MAX_INSTALLATIONS = 3;
+const LC_TABLES = Object.freeze({licenses: 'Licences', installations: 'Installations', events: 'Statistiques'});
+const LC_MAX_INSTALLATIONS = 3;
+const LC_ALLOWED_MODULES = Object.freeze(['workshop','pdf_studio','pdf_to_office','documents_to_pdf','organize_pdf','decorate_pdf','document_studio','cutting_optimization','website']);
+const LC_ALLOWED_ACTIONS = Object.freeze(['open','convert','download']);
 
-/** Run once after setting ADMIN_EMAIL, ADMIN_PASSWORD and ADMIN_API_KEY. */
-function setupService() {
-  const properties = PropertiesService.getScriptProperties();
-  requireProperty_(properties, 'ADMIN_EMAIL');
-  requireProperty_(properties, 'ADMIN_PASSWORD');
-  requireProperty_(properties, 'ADMIN_API_KEY');
-  let spreadsheetId = properties.getProperty('SPREADSHEET_ID');
-  if (!spreadsheetId) {
-    const spreadsheet = SpreadsheetApp.create('Lou Còdi — licences et statistiques');
-    spreadsheetId = spreadsheet.getId();
-    properties.setProperty('SPREADSHEET_ID', spreadsheetId);
-    initializeSheets_(spreadsheet);
-  }
-  return SpreadsheetApp.openById(spreadsheetId).getUrl();
-}
-
-function doGet(event) {
-  if ((event.parameter.view || '') !== 'admin') {
-    return json_({ok: true, service: 'Lou Còdi licences et statistiques'});
-  }
-  return HtmlService.createTemplateFromFile('Dashboard')
-    .evaluate()
-    .setTitle('Lou Còdi — licences et statistiques')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+function doGet() {
+  return LC_json_({ok: true, service: 'Lou Còdi collecte', version: 2});
 }
 
 function doPost(event) {
   try {
     const payload = JSON.parse((event.postData && event.postData.contents) || '{}');
-    const action = String(payload.action || '');
-    const handlers = {
-      request_license: requestLicense_,
-      activate: activate_,
-      deactivate: deactivate_,
-      telemetry: recordTelemetry_,
-      admin_snapshot: adminSnapshotApi_,
-      admin_license_status: setLicenseStatusApi_,
-    };
-    if (!handlers[action]) throw new Error('Action inconnue.');
-    return json_(handlers[action](payload));
+    LC_authorizeClient_(payload.client_token);
+    const handlers = {request_license: LC_requestLicense_, activate: LC_activate_, deactivate: LC_deactivate_, telemetry: LC_recordTelemetry_};
+    const handler = handlers[String(payload.action || '')];
+    if (!handler) throw new Error('Action inconnue.');
+    return LC_json_(handler(payload));
   } catch (error) {
-    return json_({ok: false, error: String(error.message || error)});
+    return LC_json_({ok: false, error: String(error.message || error)});
   }
 }
 
-function requestLicense_(payload) {
-  const email = normalizeEmail_(payload.email);
-  if (!email) throw new Error('Adresse électronique invalide.');
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    const sheet = sheet_(SHEETS.licenses);
-    const rows = values_(sheet);
-    let row = rows.findIndex((item, index) => index > 0 && normalizeEmail_(item[1]) === email);
-    let key;
-    if (row > 0) {
-      key = String(rows[row][0]);
-      sheet.getRange(row + 1, 5).setValue(new Date());
-    } else {
-      key = createLicenseKey_();
-      sheet.appendRow([key, email, 'active', new Date(), new Date()]);
-    }
-    MailApp.sendEmail({
-      to: email,
-      subject: 'Votre licence gratuite Lou Còdi Workshop',
-      htmlBody: '<p>Voici votre licence gratuite Lou Còdi Workshop :</p>' +
-        '<p style="font-size:20px;font-weight:bold">' + escapeHtml_(key) + '</p>' +
-        '<p>Elle permet d’activer jusqu’à trois ordinateurs.</p>',
-    });
-    return {ok: true, message: 'La licence a été envoyée par courrier électronique.'};
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function activate_(payload) {
-  const email = normalizeEmail_(payload.email);
-  const key = normalizeKey_(payload.license_key);
-  const installationId = safe_(payload.installation_id, 96);
-  if (!email || !key || !installationId) throw new Error('Informations d’activation incomplètes.');
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  try {
-    const license = findLicense_(email, key);
-    if (!license || license.status !== 'active') throw new Error('Licence inconnue ou désactivée.');
-    const sheet = sheet_(SHEETS.installations);
-    const rows = values_(sheet);
-    const existing = rows.findIndex((row, index) => index > 0 && String(row[0]) === key && String(row[1]) === installationId);
-    if (existing > 0) {
-      sheet.getRange(existing + 1, 7).setValue(new Date());
-      return {ok: true, activated: true, slots_used: countActive_(rows, key)};
-    }
-    if (countActive_(rows, key) >= MAX_INSTALLATIONS) {
-      throw new Error('Cette licence est déjà active sur trois ordinateurs.');
-    }
-    sheet.appendRow([
-      key, installationId, safe_(payload.os, 40), safe_(payload.app_version, 40),
-      'active', new Date(), new Date(),
-    ]);
-    return {ok: true, activated: true, slots_used: countActive_(values_(sheet), key)};
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function deactivate_(payload) {
-  const key = normalizeKey_(payload.license_key);
-  const installationId = safe_(payload.installation_id, 96);
-  const sheet = sheet_(SHEETS.installations);
-  const rows = values_(sheet);
-  const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === key && String(row[1]) === installationId);
-  if (index < 1) throw new Error('Installation inconnue.');
-  sheet.getRange(index + 1, 5).setValue('inactive');
-  sheet.getRange(index + 1, 7).setValue(new Date());
-  return {ok: true};
-}
-
-function recordTelemetry_(payload) {
-  const events = Array.isArray(payload.events) ? payload.events.slice(0, 100) : [];
-  if (!events.length) return {ok: true, recorded: 0};
-  const rows = events.map(event => [
-    new Date(), safe_(event.time, 40), safe_(event.app_version, 40), safe_(event.os, 40),
-    safe_(event.module, 80), safe_(event.action, 80), safe_(event.result, 40),
-    JSON.stringify(event.dimensions || {}).slice(0, 1000),
-  ]);
-  const sheet = sheet_(SHEETS.events);
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
-  return {ok: true, recorded: rows.length};
-}
-
-function adminSnapshot(password) {
-  authorizeAdmin_(password);
-  return adminSnapshot_();
-}
-
-function adminSnapshotApi_(payload) {
-  authorizeAdminApi_(payload.admin_api_key);
-  return Object.assign({ok: true}, adminSnapshot_());
-}
-
-function adminSnapshot_() {
-  const licenses = values_(sheet_(SHEETS.licenses)).slice(1);
-  const installations = values_(sheet_(SHEETS.installations)).slice(1);
-  const events = values_(sheet_(SHEETS.events)).slice(1);
-  const activeInstallations = installations.filter(row => row[4] === 'active');
-  const modules = {};
-  events.forEach(row => { modules[row[4]] = (modules[row[4]] || 0) + 1; });
-  return {
-    admin: PropertiesService.getScriptProperties().getProperty('ADMIN_EMAIL'),
-    licenses: licenses.length,
-    active_installations: activeInstallations.length,
-    events: events.length,
-    modules: modules,
-    recent_licenses: licenses.slice(-25).reverse().map(row => ({
-      key: maskKey_(row[0]), email: row[1], status: row[2], created: String(row[3]),
-    })),
+function LC_config_() {
+  const properties = PropertiesService.getScriptProperties();
+  const config = {
+    apiUrl: String(properties.getProperty('LC_GRIST_API_URL') || 'https://docs.getgrist.com').replace(/\/$/, ''),
+    docId: String(properties.getProperty('LC_GRIST_DOC_ID') || '').trim(),
+    apiKey: String(properties.getProperty('LC_GRIST_API_KEY') || '').trim(),
   };
+  if (!config.docId || !config.apiKey) throw new Error('Configuration Grist incomplète.');
+  return config;
 }
 
-function setLicenseStatus(password, licenseKey, status) {
-  authorizeAdmin_(password);
-  return setLicenseStatus_(licenseKey, status);
+function LC_grist_(method, path, body) {
+  const config = LC_config_();
+  const options = {method: method, muteHttpExceptions: true, headers: {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'}};
+  if (body !== undefined) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
+  const response = UrlFetchApp.fetch(config.apiUrl + '/api/docs/' + encodeURIComponent(config.docId) + path, options);
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) throw new Error('Stockage indisponible (' + status + ').');
+  return JSON.parse(response.getContentText() || '{}');
 }
 
-function setLicenseStatusApi_(payload) {
-  authorizeAdminApi_(payload.admin_api_key);
-  return setLicenseStatus_(payload.license_key, payload.status);
+function LC_records_(table) { return LC_grist_('get', '/tables/' + table + '/records').records || []; }
+function LC_append_(table, fields) { return LC_grist_('post', '/tables/' + table + '/records', {records: [{fields: fields}]}); }
+function LC_patch_(table, id, fields) { return LC_grist_('patch', '/tables/' + table + '/records', {records: [{id: Number(id), fields: fields}]}); }
+
+function LC_requestLicense_(payload) {
+  const email = LC_normalizeEmail_(payload.email);
+  if (!email) throw new Error('Adresse électronique invalide.');
+  const lock = LockService.getScriptLock(); lock.waitLock(10000);
+  try {
+    const records = LC_records_(LC_TABLES.licenses);
+    const record = records.find(function(item) { return LC_normalizeEmail_((item.fields || {}).Email) === email; });
+    const now = Math.floor(Date.now() / 1000);
+    const key = record ? String((record.fields || {}).Cle || '') : LC_createLicenseKey_();
+    if (record) LC_patch_(LC_TABLES.licenses, record.id, {Modifie_le: now});
+    else LC_append_(LC_TABLES.licenses, {Cle: key, Email: email, Statut: 'active', Cree_le: now, Modifie_le: now});
+    MailApp.sendEmail({to: email, subject: 'Votre licence gratuite Lou Còdi Workshop', htmlBody: '<p>Voici votre licence gratuite Lou Còdi Workshop :</p><p style="font-size:20px;font-weight:bold">' + LC_escapeHtml_(key) + '</p><p>Elle permet d’activer jusqu’à trois ordinateurs.</p>'});
+    return {ok: true, message: 'La licence a été envoyée par courrier électronique.'};
+  } finally { lock.releaseLock(); }
 }
 
-function setLicenseStatus_(licenseKey, status) {
-  if (!['active', 'disabled'].includes(status)) throw new Error('Statut invalide.');
-  const sheet = sheet_(SHEETS.licenses);
-  const rows = values_(sheet);
-  const index = rows.findIndex((row, i) => i > 0 && String(row[0]) === licenseKey);
-  if (index < 1) throw new Error('Licence inconnue.');
-  sheet.getRange(index + 1, 3).setValue(status);
+function LC_activate_(payload) {
+  const email = LC_normalizeEmail_(payload.email);
+  const key = LC_normalizeKey_(payload.license_key);
+  const installationId = LC_safe_(payload.installation_id, 96);
+  if (!email || !key || !installationId) throw new Error('Informations d’activation incomplètes.');
+  const license = LC_records_(LC_TABLES.licenses).find(function(item) { const fields = item.fields || {}; return String(fields.Cle || '') === key && LC_normalizeEmail_(fields.Email) === email; });
+  if (!license || String((license.fields || {}).Statut || '') !== 'active') throw new Error('Licence inconnue ou désactivée.');
+  const lock = LockService.getScriptLock(); lock.waitLock(10000);
+  try {
+    const records = LC_records_(LC_TABLES.installations);
+    const existing = records.find(function(item) { const fields = item.fields || {}; return String(fields.Cle || '') === key && String(fields.Installation || '') === installationId; });
+    const activeCount = records.filter(function(item) { const fields = item.fields || {}; return String(fields.Cle || '') === key && String(fields.Statut || '') === 'active'; }).length;
+    const now = Math.floor(Date.now() / 1000);
+    if (existing) {
+      LC_patch_(LC_TABLES.installations, existing.id, {Systeme: LC_safe_(payload.os, 40), Version: LC_safe_(payload.app_version, 40), Statut: 'active', Derniere_activite: now});
+      return {ok: true, activated: true, slots_used: Math.max(1, activeCount)};
+    }
+    if (activeCount >= LC_MAX_INSTALLATIONS) throw new Error('Cette licence est déjà active sur trois ordinateurs.');
+    LC_append_(LC_TABLES.installations, {Cle: key, Installation: installationId, Systeme: LC_safe_(payload.os, 40), Version: LC_safe_(payload.app_version, 40), Statut: 'active', Activee_le: now, Derniere_activite: now});
+    return {ok: true, activated: true, slots_used: activeCount + 1};
+  } finally { lock.releaseLock(); }
+}
+
+function LC_deactivate_(payload) {
+  const key = LC_normalizeKey_(payload.license_key);
+  const installationId = LC_safe_(payload.installation_id, 96);
+  const record = LC_records_(LC_TABLES.installations).find(function(item) { const fields = item.fields || {}; return String(fields.Cle || '') === key && String(fields.Installation || '') === installationId; });
+  if (!record) throw new Error('Installation inconnue.');
+  LC_patch_(LC_TABLES.installations, record.id, {Statut: 'inactive', Derniere_activite: Math.floor(Date.now() / 1000)});
   return {ok: true};
 }
 
-function initializeSheets_(spreadsheet) {
-  const definitions = [
-    [SHEETS.licenses, ['Clé', 'E-mail', 'Statut', 'Créée le', 'Dernière demande']],
-    [SHEETS.installations, ['Clé', 'Installation', 'Système', 'Version', 'Statut', 'Activée le', 'Dernière activité']],
-    [SHEETS.events, ['Reçu le', 'Heure arrondie', 'Version', 'Système', 'Module', 'Action', 'Résultat', 'Dimensions']],
-  ];
-  definitions.forEach((definition, index) => {
-    const sheet = index === 0 ? spreadsheet.getSheets()[0] : spreadsheet.insertSheet();
-    sheet.setName(definition[0]);
-    sheet.getRange(1, 1, 1, definition[1].length).setValues([definition[1]]).setFontWeight('bold');
-    sheet.setFrozenRows(1);
+function LC_recordTelemetry_(payload) {
+  const source = Array.isArray(payload.events) ? payload.events.slice(0, 100) : [];
+  if (!source.length) return {ok: true, recorded: 0};
+  const now = Math.floor(Date.now() / 1000);
+  const records = source.map(function(event) {
+    const moduleName = LC_safe_(event.module, 80); const action = LC_safe_(event.action, 80);
+    if (LC_ALLOWED_MODULES.indexOf(moduleName) === -1 || LC_ALLOWED_ACTIONS.indexOf(action) === -1) throw new Error('Événement non autorisé.');
+    const dimensions = event.dimensions && typeof event.dimensions === 'object' ? event.dimensions : {}; const clean = {};
+    ['format','engine'].forEach(function(name) { if (dimensions[name] != null) clean[name] = LC_safe_(dimensions[name], 80); });
+    return {fields: {Recu_le: now, Heure_evenement: LC_safe_(event.time, 40), Version: LC_safe_(event.app_version, 40), Systeme: LC_safe_(event.os, 40), Module: moduleName, Action: action, Resultat: LC_safe_(event.result, 40), Dimensions: JSON.stringify(clean).slice(0, 500)}};
   });
+  LC_grist_('post', '/tables/' + LC_TABLES.events + '/records', {records: records});
+  return {ok: true, recorded: records.length};
 }
 
-function findLicense_(email, key) {
-  const row = values_(sheet_(SHEETS.licenses)).find((item, index) =>
-    index > 0 && String(item[0]) === key && normalizeEmail_(item[1]) === email
-  );
-  return row ? {key: row[0], email: row[1], status: row[2]} : null;
-}
-
-function sheet_(name) {
-  const id = requireProperty_(PropertiesService.getScriptProperties(), 'SPREADSHEET_ID');
-  const sheet = SpreadsheetApp.openById(id).getSheetByName(name);
-  if (!sheet) throw new Error('Feuille absente : ' + name);
-  return sheet;
-}
-
-function values_(sheet) { return sheet.getDataRange().getValues(); }
-function countActive_(rows, key) { return rows.filter((row, i) => i > 0 && String(row[0]) === key && row[4] === 'active').length; }
-function normalizeEmail_(value) { const email = String(value || '').trim().toLowerCase(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : ''; }
-function normalizeKey_(value) { return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 40); }
-function safe_(value, limit) { return String(value || '').replace(/[\r\n\t]/g, ' ').slice(0, limit); }
-function createLicenseKey_() { const raw = Utilities.getUuid().replace(/-/g, '').toUpperCase(); return 'LC-' + raw.slice(0, 6) + '-' + raw.slice(6, 12) + '-' + raw.slice(12, 18); }
-function maskKey_(key) { const value = String(key); return value.slice(0, 6) + '••••••' + value.slice(-4); }
-function escapeHtml_(value) { return String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char])); }
-function authorizeAdmin_(password) { if (String(password || '') !== requireProperty_(PropertiesService.getScriptProperties(), 'ADMIN_PASSWORD')) throw new Error('Accès refusé.'); }
-function authorizeAdminApi_(key) { if (String(key || '') !== requireProperty_(PropertiesService.getScriptProperties(), 'ADMIN_API_KEY')) throw new Error('Accès serveur refusé.'); }
-function requireProperty_(properties, name) { const value = properties.getProperty(name); if (!value) throw new Error('Propriété manquante : ' + name); return value; }
-function json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
+function LC_authorizeClient_(token) { const expected = String(PropertiesService.getScriptProperties().getProperty('LC_CLIENT_TOKEN') || ''); if (!expected || String(token || '') !== expected) throw new Error('Client non autorisé.'); }
+function LC_normalizeEmail_(value) { const email = String(value || '').trim().toLowerCase(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : ''; }
+function LC_normalizeKey_(value) { return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 40); }
+function LC_safe_(value, limit) { return String(value || '').replace(/[\r\n\t]/g, ' ').slice(0, limit); }
+function LC_createLicenseKey_() { const raw = Utilities.getUuid().replace(/-/g, '').toUpperCase(); return 'LC-' + raw.slice(0, 6) + '-' + raw.slice(6, 12) + '-' + raw.slice(12, 18); }
+function LC_escapeHtml_(value) { return String(value).replace(/[&<>"']/g, function(char) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]; }); }
+function LC_json_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }

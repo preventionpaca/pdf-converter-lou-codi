@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
 import urllib.request
 import uuid
@@ -9,12 +8,14 @@ from pathlib import Path
 
 from . import __version__
 from .paths import application_data_directory
+from .service_config import client_token, endpoint
 
-SERVICE_ENDPOINT = os.environ.get("LOU_CODI_SERVICE_URL", "").strip()
+SERVICE_ENDPOINT = endpoint()
+CLIENT_TOKEN = client_token()
 
 
 def service_configured() -> bool:
-    return SERVICE_ENDPOINT.startswith("https://")
+    return SERVICE_ENDPOINT.startswith("https://") and bool(CLIENT_TOKEN)
 
 
 def license_state(path: Path | None = None) -> dict[str, object]:
@@ -91,6 +92,8 @@ def installation_path() -> Path:
 def _post(payload: dict[str, object]) -> dict[str, object]:
     if not service_configured():
         raise RuntimeError("Le service de licences n’est pas encore configuré dans cette version.")
+    payload = dict(payload)
+    payload["client_token"] = CLIENT_TOKEN
     request = urllib.request.Request(
         SERVICE_ENDPOINT,
         data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),

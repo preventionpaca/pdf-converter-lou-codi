@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
 import threading
 import urllib.request
@@ -11,10 +10,10 @@ from pathlib import Path
 from . import __version__
 from .i18n import settings_path
 from .paths import application_data_directory
+from .service_config import client_token, endpoint
 
-ANALYTICS_ENDPOINT = os.environ.get(
-    "LOU_CODI_ANALYTICS_URL", os.environ.get("LOU_CODI_SERVICE_URL", "")
-).strip()
+ANALYTICS_ENDPOINT = endpoint()
+CLIENT_TOKEN = client_token()
 QUEUE_LIMIT = 200
 
 
@@ -52,19 +51,20 @@ def track_event(module: str, action: str, result: str = "ok", **dimensions: str)
         events = []
     events.append(event)
     _write_json(target, events[-QUEUE_LIMIT:])
-    if ANALYTICS_ENDPOINT:
+    if ANALYTICS_ENDPOINT and CLIENT_TOKEN:
         threading.Thread(target=flush_events, daemon=True).start()
 
 
 def flush_events() -> bool:
-    if analytics_consent() is not True or not ANALYTICS_ENDPOINT:
+    if analytics_consent() is not True or not ANALYTICS_ENDPOINT or not CLIENT_TOKEN:
         return False
     target = queue_path()
     events = _read_json(target, [])
     if not isinstance(events, list) or not events:
         return True
     body = json.dumps(
-        {"action": "telemetry", "events": events}, separators=(",", ":")
+        {"action": "telemetry", "client_token": CLIENT_TOKEN, "events": events},
+        separators=(",", ":"),
     ).encode("utf-8")
     request = urllib.request.Request(
         ANALYTICS_ENDPOINT,

@@ -123,6 +123,7 @@ class Application(tk.Tk):
         if sys.platform == "darwin":
             self.createcommand("::tk::mac::OpenDocument", self._mac_open_document)
         self.launch_state = register_launch()
+        track_event("workshop", "open")
         self.after(350, self._show_launch_information)
         if project_path is not None:
             self.after(50, lambda: self._open_document_project(project_path))
