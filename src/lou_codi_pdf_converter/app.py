@@ -30,6 +30,7 @@ from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen
 from .telemetry import analytics_consent, set_analytics_consent, track_event
 from .ui.about_dialog import show_about
 from .ui.code_lab import CodeLabWindow
+from .ui.codi_space import CodiSpaceWindow
 from .ui.cutting_stock import CuttingStockWindow
 from .ui.decorate_pdf import DecoratePdfWindow
 from .ui.dialogs import install_branded_messageboxes
@@ -89,6 +90,12 @@ class Application(tk.Tk):
             "Lou Còdi Code Lab",
             "Comprendre, expérimenter, modifier et créer avec Python, JavaScript, HTML et CSS.",
             installed=module_enabled("code_lab"),
+        ),
+        WorkshopModule(
+            "codi_space",
+            "Còdi Espace",
+            "Relier documents, dossiers Drive, courriels, liens et albums Google Photos.",
+            installed=module_enabled("codi_space"),
         ),
         WorkshopModule(
             "practical_calculators",
@@ -398,6 +405,10 @@ class Application(tk.Tk):
             return
         if module_id == "code_lab":
             window = CodeLabWindow(self)
+            self._replace_workspace(self, window, force_maximized=True)
+            return
+        if module_id == "codi_space":
+            window = CodiSpaceWindow(self)
             self._replace_workspace(self, window, force_maximized=True)
             return
         module = next((item for item in self.MODULES if item.module_id == module_id), None)

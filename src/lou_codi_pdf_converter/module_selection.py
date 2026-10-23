@@ -9,6 +9,7 @@ SELECTABLE_MODULES = (
     "document_studio",
     "cutting_optimization",
     "code_lab",
+    "codi_space",
 )
 
 

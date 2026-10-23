@@ -43,7 +43,7 @@ if ($mode -eq "Cancel") { exit 0 }
 
 $installShortcut = $true
 $createWorkspace = $true
-$selectedModules = @("pdf_studio", "document_studio", "cutting_optimization", "code_lab")
+$selectedModules = @("pdf_studio", "document_studio", "cutting_optimization", "code_lab", "codi_space")
 if ($mode -eq "No") {
   $installShortcut = [System.Windows.Forms.MessageBox]::Show(
     "Créer un raccourci dans le menu Démarrer ?", "Option — Raccourci", "YesNo", "Question"
@@ -56,7 +56,8 @@ if ($mode -eq "No") {
     @{ Id = "pdf_studio"; Label = "PDF Studio" },
     @{ Id = "document_studio"; Label = "Document Studio" },
     @{ Id = "cutting_optimization"; Label = "Optimisation de découpe" },
-    @{ Id = "code_lab"; Label = "Lou Còdi Code Lab" }
+    @{ Id = "code_lab"; Label = "Lou Còdi Code Lab" },
+    @{ Id = "codi_space"; Label = "Còdi Espace" }
   ) | ForEach-Object {
     $enabled = [System.Windows.Forms.MessageBox]::Show(
       "Installer $($_.Label) ?", "Choix des modules", "YesNo", "Question"
@@ -97,7 +98,8 @@ if ($createWorkspace) {
     @{ Module = "pdf_studio"; Folders = @("PDF vers Office", "Documents vers PDF", "Organiser les PDF", "Habillage PDF") },
     @{ Module = "document_studio"; Folders = @("Document Studio") },
     @{ Module = "cutting_optimization"; Folders = @("Optimisation de découpe") },
-    @{ Module = "code_lab"; Folders = @("Code Lab") }
+    @{ Module = "code_lab"; Folders = @("Code Lab") },
+    @{ Module = "codi_space"; Folders = @("Còdi Espace") }
   ) | Where-Object { $selectedModules -contains $_.Module } | ForEach-Object {
     $_.Folders | ForEach-Object {
       New-Item -ItemType Directory -Force -Path (Join-Path $Workspace $_) | Out-Null

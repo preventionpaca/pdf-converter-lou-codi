@@ -11,7 +11,7 @@ mime_icons_dir="$data_root/icons/hicolor/256x256/mimetypes"
 mime_packages_dir="$data_root/mime/packages"
 install_launcher=1
 create_workspace=1
-selected_modules="pdf_studio document_studio cutting_optimization code_lab"
+selected_modules="pdf_studio document_studio cutting_optimization code_lab codi_space"
 
 if [ ! -x "$application_source/lou-codi-pdf-converter" ]; then
   echo "Paquet incomplet : l’exécutable Lou Còdi Workshop est absent." >&2
@@ -48,7 +48,8 @@ if [ -t 0 ]; then
     2)
       selected_modules=""
       for module_spec in "pdf_studio:PDF Studio" "document_studio:Document Studio" \
-        "cutting_optimization:Optimisation de découpe" "code_lab:Lou Còdi Code Lab"; do
+        "cutting_optimization:Optimisation de découpe" "code_lab:Lou Còdi Code Lab" \
+        "codi_space:Còdi Espace"; do
         module_id=${module_spec%%:*}
         module_name=${module_spec#*:}
         printf "Installer %s ? [O/n] " "$module_name"
@@ -70,7 +71,7 @@ fi
 install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir"
 cp -a "$application_source/." "$application_target/"
 install -d "$application_target/selected-modules"
-for module in pdf_studio document_studio cutting_optimization code_lab; do
+for module in pdf_studio document_studio cutting_optimization code_lab codi_space; do
   marker="$application_target/selected-modules/$module.enabled"
   if [ -f "$marker" ]; then
     unlink "$marker"
@@ -89,6 +90,7 @@ if [ "$create_workspace" -eq 1 ]; then
   case " $selected_modules " in *" document_studio "*) install -d "$downloads_dir/LouCodi/Document Studio" ;; esac
   case " $selected_modules " in *" cutting_optimization "*) install -d "$downloads_dir/LouCodi/Optimisation de découpe" ;; esac
   case " $selected_modules " in *" code_lab "*) install -d "$downloads_dir/LouCodi/Code Lab" ;; esac
+  case " $selected_modules " in *" codi_space "*) install -d "$downloads_dir/LouCodi/Còdi Espace" ;; esac
 fi
 
 if [ "$install_launcher" -eq 1 ]; then

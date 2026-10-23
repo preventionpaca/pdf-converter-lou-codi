@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a11"
+  #define AppVersion "2.0.0a12"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."
@@ -40,6 +40,7 @@ Name: "modules\pdfstudio"; Description: "PDF Studio"; Types: full custom
 Name: "modules\documentstudio"; Description: "Document Studio"; Types: full custom
 Name: "modules\cutting"; Description: "Optimisation de découpe"; Types: full custom
 Name: "modules\codelab"; Description: "Lou Còdi Code Lab"; Types: full custom
+Name: "modules\codispace"; Description: "Còdi Espace"; Types: full custom
 Name: "workspace"; Description: "Dossiers de travail LouCodi dans Téléchargements"; Types: full
 
 [Tasks]
@@ -52,6 +53,7 @@ Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\select
 Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "document_studio.enabled"; Flags: ignoreversion; Components: modules\documentstudio
 Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "cutting_optimization.enabled"; Flags: ignoreversion; Components: modules\cutting
 Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "code_lab.enabled"; Flags: ignoreversion; Components: modules\codelab
+Source: "{#ProjectDir}\packaging\modules\enabled.marker"; DestDir: "{app}\selected-modules"; DestName: "codi_space.enabled"; Flags: ignoreversion; Components: modules\codispace
 
 [InstallDelete]
 Type: files; Name: "{app}\selected-modules\*.enabled"
@@ -64,6 +66,7 @@ Name: "{%USERPROFILE}\Downloads\LouCodi\Habillage PDF"; Components: workspace an
 Name: "{%USERPROFILE}\Downloads\LouCodi\Document Studio"; Components: workspace and modules\documentstudio
 Name: "{%USERPROFILE}\Downloads\LouCodi\Optimisation de découpe"; Components: workspace and modules\cutting
 Name: "{%USERPROFILE}\Downloads\LouCodi\Code Lab"; Components: workspace and modules\codelab
+Name: "{%USERPROFILE}\Downloads\LouCodi\Còdi Espace"; Components: workspace and modules\codispace
 
 [Icons]
 Name: "{group}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; AppUserModelID: "LouCodi.Workshop"
