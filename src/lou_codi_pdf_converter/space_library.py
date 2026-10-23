@@ -40,6 +40,16 @@ def inbox_space(account_email: str = "") -> CodiSpace:
     return CodiSpace(identifier="inbox", title="À classer", account_email=account_email)
 
 
+def space_deletion_blocker(space: CodiSpace) -> str:
+    if space.identifier == "inbox":
+        return "L’espace « À classer » est permanent et ne peut pas être supprimé."
+    if space.resources:
+        return "Retirez d’abord toutes les ressources de cet espace."
+    if space.drive_folder.strip():
+        return "Détachez d’abord le dossier Google Drive lié à cet espace."
+    return ""
+
+
 def load_spaces(path: Path | None = None) -> list[CodiSpace]:
     target = path or library_path()
     try:
@@ -87,4 +97,3 @@ def save_spaces(spaces: list[CodiSpace], path: Path | None = None) -> None:
         encoding="utf-8",
     )
     temporary.replace(target)
-

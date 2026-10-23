@@ -6,7 +6,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from ..services.google_mail import active_account, list_accounts, set_active_account
-from ..space_library import CodiSpace, SpaceResource, load_spaces, new_identifier, save_spaces
+from ..space_library import (
+    CodiSpace,
+    SpaceResource,
+    load_spaces,
+    new_identifier,
+    save_spaces,
+    space_deletion_blocker,
+)
 from ..system import open_path
 from .windowing import maximize_window
 
@@ -60,6 +67,7 @@ class CodiSpaceWindow(tk.Toplevel):
         toolbar = ttk.Frame(self, padding=(14, 10))
         toolbar.pack(fill="x")
         ttk.Button(toolbar, text="+ Nouvel espace", command=self._new_space).pack(side="left")
+        ttk.Button(toolbar, text="Supprimer l’espace", command=self._delete_space).pack(side="left", padx=6)
         ttk.Button(toolbar, text="+ Ajouter une ressource", command=self._add_resource).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Lier un dossier Drive", command=self._link_drive_folder).pack(side="left")
         ttk.Entry(toolbar, textvariable=self.search, width=34).pack(side="right")
@@ -155,6 +163,24 @@ class CodiSpaceWindow(tk.Toplevel):
         space = CodiSpace(new_identifier(), title.strip(), account_email=self.account.get())
         self.spaces.append(space)
         self.current_space_id = space.identifier
+        self._save()
+
+    def _delete_space(self) -> None:
+        space = self._selected_space()
+        blocker = space_deletion_blocker(space)
+        if blocker:
+            messagebox.showinfo("Suppression impossible", blocker, parent=self)
+            return
+        if not messagebox.askyesno(
+            "Supprimer l’espace",
+            f"Supprimer définitivement l’espace vide « {space.title} » ?\n\n"
+            "Aucun fichier Google Drive ou local ne sera supprimé.",
+            parent=self,
+            default="no",
+        ):
+            return
+        self.spaces.remove(space)
+        self.current_space_id = "inbox"
         self._save()
 
     def _link_drive_folder(self) -> None:
@@ -256,4 +282,3 @@ class CodiSpaceWindow(tk.Toplevel):
         if messagebox.askyesno("Retirer la ressource", "La retirer de cet espace sans supprimer l’original ?", parent=self):
             self._selected_space().resources.remove(resource)
             self._save()
-
