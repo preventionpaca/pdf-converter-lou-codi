@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import webbrowser
 from pathlib import Path
+import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from ..services.google_mail import active_account, list_accounts, set_active_account
+from ..services.google_mail import (
+    GoogleMailUnavailable,
+    active_account,
+    list_accounts,
+    list_drive_folder,
+    set_active_account,
+)
 from ..space_library import (
     CodiSpace,
     SpaceResource,
@@ -32,6 +39,13 @@ RESOURCE_KINDS = {
 }
 
 
+def drive_folder_id(value: str) -> str:
+    match = re.search(r"/folders/([A-Za-z0-9_-]+)", value)
+    if match:
+        return match.group(1)
+    return value.strip() if re.fullmatch(r"[A-Za-z0-9_-]{10,}", value.strip()) else ""
+
+
 class CodiSpaceWindow(tk.Toplevel):
     def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent, class_="Loucodiworkshop")
@@ -43,6 +57,7 @@ class CodiSpaceWindow(tk.Toplevel):
         self.current_space_id = "inbox"
         self.account = tk.StringVar(value=active_account())
         self.search = tk.StringVar()
+        self._display_resources: dict[str, SpaceResource] = {}
         self._build()
         self._refresh_spaces()
         maximize_window(self)
@@ -70,6 +85,7 @@ class CodiSpaceWindow(tk.Toplevel):
         ttk.Button(toolbar, text="Supprimer l’espace", command=self._delete_space).pack(side="left", padx=6)
         ttk.Button(toolbar, text="+ Ajouter une ressource", command=self._add_resource).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Lier un dossier Drive", command=self._link_drive_folder).pack(side="left")
+        ttk.Button(toolbar, text="Actualiser Drive", command=self._refresh_resources).pack(side="left", padx=6)
         ttk.Entry(toolbar, textvariable=self.search, width=34).pack(side="right")
         ttk.Label(toolbar, text="Rechercher").pack(side="right", padx=6)
         self.search.trace_add("write", lambda *_args: self._refresh_resources())
@@ -131,6 +147,7 @@ class CodiSpaceWindow(tk.Toplevel):
             details.append("dossier Drive lié")
         self.space_detail.set("  •  ".join(details))
         self.resource_tree.delete(*self.resource_tree.get_children())
+        self._display_resources = {resource.identifier: resource for resource in space.resources}
         needle = self.search.get().casefold().strip()
         for resource in space.resources:
             haystack = f"{resource.title} {' '.join(resource.tags)} {resource.target}".casefold()
@@ -141,6 +158,46 @@ class CodiSpaceWindow(tk.Toplevel):
                 "", "end", iid=resource.identifier, text=resource.title,
                 values=(label, ", ".join(resource.tags), resource.account_email, resource.target),
             )
+        if space.drive_folder and space.account_email:
+            folder_id = drive_folder_id(space.drive_folder)
+            if not folder_id:
+                self.status.configure(text="L’adresse du dossier Drive n’est pas reconnue.")
+                return
+            try:
+                drive_items = list_drive_folder(space.account_email, folder_id)
+            except (GoogleMailUnavailable, OSError, ValueError) as exc:
+                self.status.configure(text=str(exc))
+                return
+            except Exception as exc:
+                message = str(exc)
+                if "SERVICE_DISABLED" in message or "accessNotConfigured" in message:
+                    message = "Activez Google Drive API dans le projet loucodi-workshop, puis réessayez."
+                self.status.configure(text=message)
+                return
+            for item in drive_items:
+                identifier = f"drive:{item.identifier}"
+                kind = (
+                    "google_drive_folder"
+                    if item.mime_type == "application/vnd.google-apps.folder"
+                    else "google_drive_document"
+                )
+                resource = SpaceResource(
+                    identifier=identifier,
+                    title=item.name,
+                    kind=kind,
+                    target=item.web_url,
+                    account_email=space.account_email,
+                )
+                self._display_resources[identifier] = resource
+                haystack = f"{resource.title} {resource.target}".casefold()
+                if needle and needle not in haystack:
+                    continue
+                label = "Dossier Google Drive" if kind == "google_drive_folder" else "Document Google Drive"
+                self.resource_tree.insert(
+                    "", "end", iid=identifier, text=resource.title,
+                    values=(label, "", resource.account_email, resource.target),
+                )
+            self.status.configure(text=f"Dossier Drive actualisé : {len(drive_items)} élément(s).")
 
     def _save(self) -> None:
         save_spaces(self.spaces)
@@ -253,7 +310,7 @@ class CodiSpaceWindow(tk.Toplevel):
         if not selection:
             return None
         identifier = selection[0]
-        return next((item for item in self._selected_space().resources if item.identifier == identifier), None)
+        return self._display_resources.get(identifier)
 
     def _open_resource(self) -> None:
         resource = self._selected_resource()
@@ -268,6 +325,13 @@ class CodiSpaceWindow(tk.Toplevel):
         resource = self._selected_resource()
         if resource is None:
             return
+        if resource.identifier.startswith("drive:"):
+            messagebox.showinfo(
+                "Tags Drive",
+                "Les tags des éléments synchronisés depuis Drive ne sont pas encore modifiables dans Còdi Espace.",
+                parent=self,
+            )
+            return
         value = simpledialog.askstring(
             "Tags", "Tags séparés par des virgules", initialvalue=", ".join(resource.tags), parent=self
         )
@@ -278,6 +342,13 @@ class CodiSpaceWindow(tk.Toplevel):
     def _remove_resource(self) -> None:
         resource = self._selected_resource()
         if resource is None:
+            return
+        if resource.identifier.startswith("drive:"):
+            messagebox.showinfo(
+                "Élément Drive",
+                "Cet élément provient directement du dossier lié. Retirez-le depuis Google Drive.",
+                parent=self,
+            )
             return
         if messagebox.askyesno("Retirer la ressource", "La retirer de cet espace sans supprimer l’original ?", parent=self):
             self._selected_space().resources.remove(resource)

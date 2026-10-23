@@ -7,6 +7,7 @@ from lou_codi_pdf_converter.space_library import (
     save_spaces,
     space_deletion_blocker,
 )
+from lou_codi_pdf_converter.ui.codi_space import drive_folder_id
 
 
 def test_missing_library_starts_with_inbox(tmp_path: Path) -> None:
@@ -52,3 +53,9 @@ def test_space_deletion_requires_an_empty_unlinked_space() -> None:
     )
     assert "ressources" in space_deletion_blocker(populated)
     assert space_deletion_blocker(CodiSpace("empty", "Vide")) == ""
+
+
+def test_drive_folder_id_accepts_url_or_identifier() -> None:
+    assert drive_folder_id("https://drive.google.com/drive/folders/abc_DEF-123?usp=sharing") == "abc_DEF-123"
+    assert drive_folder_id("1LongFolderIdentifier_123") == "1LongFolderIdentifier_123"
+    assert drive_folder_id("https://drive.google.com/file/d/not-a-folder") == ""

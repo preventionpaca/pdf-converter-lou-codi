@@ -14,6 +14,7 @@ SCOPES = (
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/contacts.other.readonly",
+    "https://www.googleapis.com/auth/drive.metadata.readonly",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 )
@@ -167,7 +168,7 @@ def credentials_for(email: str):
     if granted and not set(SCOPES).issubset(set(granted)):
         raise GoogleMailUnavailable(
             "Les autorisations Google de ce compte sont anciennes. Cliquez sur « + Compte », "
-            "sélectionnez de nouveau ce compte et acceptez l’accès aux contacts et à l’annuaire."
+            "sélectionnez de nouveau ce compte et acceptez l’accès aux contacts et à Google Drive."
         )
     return Credentials.from_authorized_user_info(information, SCOPES)
 
@@ -239,6 +240,44 @@ def group_members(email: str, resource_name: str) -> list[GoogleRecipient]:
         if address:
             recipients.append(GoogleRecipient(name=name, email=address))
     return sorted(recipients, key=lambda item: (item.name.casefold(), item.email.casefold()))
+
+
+@dataclass(frozen=True)
+class GoogleDriveItem:
+    identifier: str
+    name: str
+    mime_type: str
+    web_url: str
+
+
+def list_drive_folder(email: str, folder_id: str) -> list[GoogleDriveItem]:
+    *_, build = _dependencies()
+    service = build("drive", "v3", credentials=credentials_for(email), cache_discovery=False)
+    items: list[GoogleDriveItem] = []
+    token = None
+    while True:
+        response = service.files().list(
+            q=f"'{folder_id}' in parents and trashed = false",
+            fields="nextPageToken, files(id,name,mimeType,webViewLink)",
+            orderBy="folder,name_natural",
+            pageSize=1000,
+            pageToken=token,
+        ).execute()
+        for item in response.get("files", []):
+            identifier = str(item.get("id", ""))
+            if identifier:
+                items.append(
+                    GoogleDriveItem(
+                        identifier=identifier,
+                        name=str(item.get("name", identifier)),
+                        mime_type=str(item.get("mimeType", "")),
+                        web_url=str(item.get("webViewLink", ""))
+                        or f"https://drive.google.com/open?id={identifier}",
+                    )
+                )
+        token = response.get("nextPageToken")
+        if not token:
+            return items
 
 
 def send_pdf(
