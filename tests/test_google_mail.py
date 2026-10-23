@@ -11,7 +11,7 @@ from lou_codi_pdf_converter.services.google_mail import (
     configured_client_file,
     install_client_file,
     list_accounts,
-    search_directory_people,
+    list_contacts,
     send_pdf,
     set_active_account,
 )
@@ -103,27 +103,38 @@ def test_send_pdf_builds_gmail_message_with_attachment(monkeypatch, tmp_path: Pa
     assert parsed.get_payload()[1].get_filename() == "document.pdf"
 
 
-def test_workspace_directory_search_returns_named_addresses(monkeypatch) -> None:
+def test_contacts_include_saved_and_other_contacts(monkeypatch) -> None:
     class Request:
+        def __init__(self, payload):
+            self.payload = payload
+
         def execute(self):
-            return {
-                "people": [
-                    {
-                        "names": [{"displayName": "Alice Exemple"}],
-                        "emailAddresses": [{"value": "alice@example.org"}],
-                    }
-                ]
-            }
+            return self.payload
+
+    class Connections:
+        def list(self, **_kwargs):
+            return Request({"connections": [{
+                "names": [{"displayName": "Contact enregistré"}],
+                "emailAddresses": [{"value": "saved@example.org"}],
+            }]})
 
     class People:
-        def searchDirectoryPeople(self, **kwargs):
-            assert kwargs["query"] == "Ali"
-            assert kwargs["sources"] == ["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"]
-            return Request()
+        def connections(self):
+            return Connections()
+
+    class OtherContacts:
+        def list(self, **_kwargs):
+            return Request({"otherContacts": [{
+                "names": [{"displayName": "Contact récent"}],
+                "emailAddresses": [{"value": "recent@example.org"}],
+            }]})
 
     class Service:
         def people(self):
             return People()
+
+        def otherContacts(self):
+            return OtherContacts()
 
     monkeypatch.setattr(
         "lou_codi_pdf_converter.services.google_mail._dependencies",
@@ -133,8 +144,9 @@ def test_workspace_directory_search_returns_named_addresses(monkeypatch) -> None
         "lou_codi_pdf_converter.services.google_mail.credentials_for", lambda _email: object()
     )
 
-    results = search_directory_people("pro@example.org", "Ali")
+    contacts = list_contacts("pro@example.org")
 
-    assert [(item.name, item.email) for item in results] == [
-        ("Alice Exemple", "alice@example.org")
-    ]
+    assert {contact.email for contact in contacts} == {
+        "saved@example.org",
+        "recent@example.org",
+    }

@@ -81,7 +81,6 @@ from ..services.google_mail import (
     list_accounts,
     list_contact_groups,
     list_contacts,
-    search_directory_people,
     send_pdf,
     set_active_account,
 )
@@ -14156,17 +14155,13 @@ class DocumentEditorWindow(tk.Toplevel):
             frame.pack(fill="both", expand=True)
             query = tk.StringVar()
             ttk.Label(frame, text=f"Carnet du compte : {selected_account}").pack(anchor="w")
-            search_row = ttk.Frame(frame)
-            search_row.pack(fill="x", pady=8)
-            query_entry = ttk.Entry(search_row, textvariable=query)
-            query_entry.pack(side="left", fill="x", expand=True)
+            ttk.Entry(frame, textvariable=query).pack(fill="x", pady=8)
             tree = ttk.Treeview(frame, columns=("type", "email"), show="tree headings", selectmode="extended")
             tree.heading("#0", text="Nom")
             tree.heading("type", text="Type")
             tree.heading("email", text="Adresse / membres")
             tree.pack(fill="both", expand=True)
             records = {}
-            directory_items: set[str] = set()
             try:
                 for group in list_contact_groups(selected_account):
                     item = tree.insert("", "end", text=group.name, values=("Groupe", f"{group.member_count} membre(s)"))
@@ -14178,38 +14173,6 @@ class DocumentEditorWindow(tk.Toplevel):
                 picker.destroy()
                 messagebox.showerror("Contacts Google indisponibles", str(exc), parent=dialog)
                 return
-
-            def search_directory() -> None:
-                needle = query.get().strip()
-                if len(needle) < 2:
-                    messagebox.showinfo(
-                        "Annuaire Google",
-                        "Saisissez au moins deux caractères pour rechercher dans l’annuaire de l’établissement.",
-                        parent=picker,
-                    )
-                    return
-                for item in directory_items:
-                    records.pop(item, None)
-                    tree.delete(item)
-                directory_items.clear()
-                try:
-                    matches = search_directory_people(selected_account, needle)
-                except Exception as exc:
-                    messagebox.showerror("Annuaire Google indisponible", str(exc), parent=picker)
-                    return
-                for contact in matches:
-                    item = tree.insert("", "end", text=contact.name or contact.email, values=("Annuaire", contact.email))
-                    records[item] = ("contact", contact.email)
-                    directory_items.add(item)
-                if not matches:
-                    messagebox.showinfo(
-                        "Annuaire Google",
-                        "Aucun résultat. L’administrateur Workspace peut aussi avoir désactivé l’accès à l’annuaire.",
-                        parent=picker,
-                    )
-
-            ttk.Button(search_row, text="Rechercher dans l’annuaire", command=search_directory).pack(side="left", padx=(8, 0))
-            query_entry.bind("<Return>", lambda _event: search_directory())
 
             def filter_rows(*_args) -> None:
                 needle = query.get().casefold().strip()

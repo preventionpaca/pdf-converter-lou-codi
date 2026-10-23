@@ -14,7 +14,6 @@ SCOPES = (
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/contacts.other.readonly",
-    "https://www.googleapis.com/auth/directory.readonly",
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
 )
@@ -206,29 +205,6 @@ def list_contacts(email: str) -> list[GoogleRecipient]:
         token = response.get("nextPageToken")
         if not token:
             return sorted(recipients.values(), key=lambda item: (item.name.casefold(), item.email.casefold()))
-
-
-def search_directory_people(email: str, query: str) -> list[GoogleRecipient]:
-    """Search the Workspace domain directory without downloading it wholesale."""
-    needle = query.strip()
-    if len(needle) < 2:
-        return []
-    *_, build = _dependencies()
-    service = build("people", "v1", credentials=credentials_for(email), cache_discovery=False)
-    response = service.people().searchDirectoryPeople(
-        query=needle,
-        readMask="names,emailAddresses",
-        sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
-        pageSize=100,
-    ).execute()
-    recipients: dict[str, GoogleRecipient] = {}
-    for person in response.get("people", []):
-        name = next((item.get("displayName", "") for item in person.get("names", [])), "")
-        for address in person.get("emailAddresses", []):
-            value = str(address.get("value", "")).strip()
-            if value:
-                recipients[value.casefold()] = GoogleRecipient(name=name, email=value)
-    return sorted(recipients.values(), key=lambda item: (item.name.casefold(), item.email.casefold()))
 
 
 def list_contact_groups(email: str) -> list[GoogleContactGroup]:
