@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import webbrowser
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
@@ -21,9 +21,16 @@ class EmailSettings:
 
 
 @dataclass
+class MailTemplate:
+    subject: str = ""
+    body: str = ""
+
+
+@dataclass
 class MailLibrary:
     subjects: list[str]
     signatures: dict[str, str]
+    templates: dict[str, MailTemplate] = field(default_factory=dict)
 
 
 def load_mail_library(path: Path | None = None) -> MailLibrary:
@@ -35,6 +42,7 @@ def load_mail_library(path: Path | None = None) -> MailLibrary:
     raw = values.get("mail_library", {}) if isinstance(values, dict) else {}
     subjects = raw.get("subjects", []) if isinstance(raw, dict) else []
     signatures = raw.get("signatures", {}) if isinstance(raw, dict) else {}
+    templates = raw.get("templates", {}) if isinstance(raw, dict) else {}
     return MailLibrary(
         subjects=sorted({str(value).strip() for value in subjects if str(value).strip()}),
         signatures={
@@ -42,6 +50,14 @@ def load_mail_library(path: Path | None = None) -> MailLibrary:
             for name, value in signatures.items()
             if str(name).strip()
         } if isinstance(signatures, dict) else {},
+        templates={
+            str(name).strip(): MailTemplate(
+                subject=str(value.get("subject", "")),
+                body=str(value.get("body", "")),
+            )
+            for name, value in templates.items()
+            if str(name).strip() and isinstance(value, dict)
+        } if isinstance(templates, dict) else {},
     )
 
 
@@ -57,6 +73,11 @@ def save_mail_library(library: MailLibrary, path: Path | None = None) -> None:
         "subjects": sorted({value.strip() for value in library.subjects if value.strip()}),
         "signatures": {
             name.strip(): value for name, value in library.signatures.items() if name.strip()
+        },
+        "templates": {
+            name.strip(): asdict(value)
+            for name, value in library.templates.items()
+            if name.strip()
         },
     }
     target.parent.mkdir(parents=True, exist_ok=True)

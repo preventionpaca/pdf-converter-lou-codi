@@ -4,6 +4,7 @@ from pathlib import Path
 from lou_codi_pdf_converter.services.email_share import (
     EmailSettings,
     MailLibrary,
+    MailTemplate,
     email_command,
     load_email_settings,
     load_mail_library,
@@ -54,6 +55,12 @@ def test_mail_library_sorts_subjects_and_preserves_named_signatures(tmp_path: Pa
         MailLibrary(
             subjects=["Demande d’information", "Documents", "Documents"],
             signatures={"Professionnelle": "Cordialement,\nRudy", "Personnelle": "À bientôt"},
+            templates={
+                "Transmission": MailTemplate(
+                    subject="Transmission de {document}",
+                    body="Bonjour,\n\nVeuillez trouver {document} en pièce jointe.",
+                )
+            },
         ),
         path,
     )
@@ -62,4 +69,6 @@ def test_mail_library_sorts_subjects_and_preserves_named_signatures(tmp_path: Pa
 
     assert library.subjects == ["Demande d’information", "Documents"]
     assert library.signatures["Professionnelle"].endswith("Rudy")
+    assert library.templates["Transmission"].subject == "Transmission de {document}"
+    assert "pièce jointe" in library.templates["Transmission"].body
     assert json.loads(path.read_text(encoding="utf-8"))["language"] == "fr"

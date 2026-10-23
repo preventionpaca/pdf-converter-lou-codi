@@ -63,6 +63,7 @@ from ..services.font_catalog import (
 from ..services.email_share import (
     EmailSettings,
     MailLibrary,
+    MailTemplate,
     email_command,
     load_email_settings,
     load_mail_library,
@@ -80,6 +81,7 @@ from ..services.google_mail import (
     list_accounts,
     list_contact_groups,
     list_contacts,
+    search_directory_people,
     send_pdf,
     set_active_account,
 )
@@ -14154,13 +14156,17 @@ class DocumentEditorWindow(tk.Toplevel):
             frame.pack(fill="both", expand=True)
             query = tk.StringVar()
             ttk.Label(frame, text=f"Carnet du compte : {selected_account}").pack(anchor="w")
-            ttk.Entry(frame, textvariable=query).pack(fill="x", pady=8)
+            search_row = ttk.Frame(frame)
+            search_row.pack(fill="x", pady=8)
+            query_entry = ttk.Entry(search_row, textvariable=query)
+            query_entry.pack(side="left", fill="x", expand=True)
             tree = ttk.Treeview(frame, columns=("type", "email"), show="tree headings", selectmode="extended")
             tree.heading("#0", text="Nom")
             tree.heading("type", text="Type")
             tree.heading("email", text="Adresse / membres")
             tree.pack(fill="both", expand=True)
             records = {}
+            directory_items: set[str] = set()
             try:
                 for group in list_contact_groups(selected_account):
                     item = tree.insert("", "end", text=group.name, values=("Groupe", f"{group.member_count} membre(s)"))
@@ -14168,10 +14174,42 @@ class DocumentEditorWindow(tk.Toplevel):
                 for contact in list_contacts(selected_account):
                     item = tree.insert("", "end", text=contact.name or contact.email, values=("Contact", contact.email))
                     records[item] = ("contact", contact.email)
-            except (GoogleMailUnavailable, OSError, ValueError) as exc:
+            except Exception as exc:
                 picker.destroy()
                 messagebox.showerror("Contacts Google indisponibles", str(exc), parent=dialog)
                 return
+
+            def search_directory() -> None:
+                needle = query.get().strip()
+                if len(needle) < 2:
+                    messagebox.showinfo(
+                        "Annuaire Google",
+                        "Saisissez au moins deux caractères pour rechercher dans l’annuaire de l’établissement.",
+                        parent=picker,
+                    )
+                    return
+                for item in directory_items:
+                    records.pop(item, None)
+                    tree.delete(item)
+                directory_items.clear()
+                try:
+                    matches = search_directory_people(selected_account, needle)
+                except Exception as exc:
+                    messagebox.showerror("Annuaire Google indisponible", str(exc), parent=picker)
+                    return
+                for contact in matches:
+                    item = tree.insert("", "end", text=contact.name or contact.email, values=("Annuaire", contact.email))
+                    records[item] = ("contact", contact.email)
+                    directory_items.add(item)
+                if not matches:
+                    messagebox.showinfo(
+                        "Annuaire Google",
+                        "Aucun résultat. L’administrateur Workspace peut aussi avoir désactivé l’accès à l’annuaire.",
+                        parent=picker,
+                    )
+
+            ttk.Button(search_row, text="Rechercher dans l’annuaire", command=search_directory).pack(side="left", padx=(8, 0))
+            query_entry.bind("<Return>", lambda _event: search_directory())
 
             def filter_rows(*_args) -> None:
                 needle = query.get().casefold().strip()
@@ -14218,6 +14256,66 @@ class DocumentEditorWindow(tk.Toplevel):
         body = tk.Text(form, height=8, wrap="word", font=("Sans", 11))
         body.pack(fill="both", expand=True, pady=(2, 10))
         body.insert("1.0", settings.body)
+        template_row = ttk.Frame(form)
+        template_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(template_row, text="Modèle de courrier").pack(side="left")
+        template_name = tk.StringVar()
+        template_box = ttk.Combobox(
+            template_row,
+            textvariable=template_name,
+            values=sorted(library.templates),
+            state="readonly",
+            width=28,
+        )
+        template_box.pack(side="left", padx=8)
+
+        def apply_template(_event=None) -> None:
+            selected = library.templates.get(template_name.get())
+            if selected is None:
+                return
+            subject.set(selected.subject)
+            body.delete("1.0", "end")
+            body.insert("1.0", selected.body)
+
+        template_box.bind("<<ComboboxSelected>>", apply_template)
+
+        def save_template() -> None:
+            name = ask_text(
+                dialog,
+                "Nom du modèle de courrier",
+                "Nom de ce modèle :",
+                template_name.get() or "Courrier courant",
+            )
+            if not name:
+                return
+            clean_name = name.strip()
+            library.templates[clean_name] = MailTemplate(
+                subject=subject.get().strip(),
+                body=body.get("1.0", "end-1c"),
+            )
+            save_mail_library(library)
+            template_box.configure(values=sorted(library.templates))
+            template_name.set(clean_name)
+            show_dialog_status(f"Modèle de courrier enregistré : {clean_name}")
+
+        def delete_template() -> None:
+            name = template_name.get()
+            if not name or name not in library.templates:
+                return
+            if not messagebox.askyesno(
+                "Supprimer le modèle",
+                f"Supprimer le modèle « {name} » ?",
+                parent=dialog,
+            ):
+                return
+            library.templates.pop(name, None)
+            save_mail_library(library)
+            template_name.set("")
+            template_box.configure(values=sorted(library.templates))
+            show_dialog_status("Modèle de courrier supprimé.")
+
+        ttk.Button(template_row, text="Enregistrer ce courrier…", command=save_template).pack(side="right")
+        ttk.Button(template_row, text="Supprimer", command=delete_template).pack(side="right", padx=4)
         signature_row = ttk.Frame(form)
         signature_row.pack(fill="x")
         ttk.Label(signature_row, text="Signature").pack(side="left")

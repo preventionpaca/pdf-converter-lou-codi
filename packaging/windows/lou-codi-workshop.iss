@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a8"
+  #define AppVersion "2.0.0a9"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."

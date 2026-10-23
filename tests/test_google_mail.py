@@ -11,6 +11,7 @@ from lou_codi_pdf_converter.services.google_mail import (
     configured_client_file,
     install_client_file,
     list_accounts,
+    search_directory_people,
     send_pdf,
     set_active_account,
 )
@@ -100,3 +101,40 @@ def test_send_pdf_builds_gmail_message_with_attachment(monkeypatch, tmp_path: Pa
     assert parsed["To"] == "a@yahoo.fr, b@example.org"
     assert parsed["Subject"] == "Documents"
     assert parsed.get_payload()[1].get_filename() == "document.pdf"
+
+
+def test_workspace_directory_search_returns_named_addresses(monkeypatch) -> None:
+    class Request:
+        def execute(self):
+            return {
+                "people": [
+                    {
+                        "names": [{"displayName": "Alice Exemple"}],
+                        "emailAddresses": [{"value": "alice@example.org"}],
+                    }
+                ]
+            }
+
+    class People:
+        def searchDirectoryPeople(self, **kwargs):
+            assert kwargs["query"] == "Ali"
+            assert kwargs["sources"] == ["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"]
+            return Request()
+
+    class Service:
+        def people(self):
+            return People()
+
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail._dependencies",
+        lambda: (None, None, None, lambda *_args, **_kwargs: Service()),
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail.credentials_for", lambda _email: object()
+    )
+
+    results = search_directory_people("pro@example.org", "Ali")
+
+    assert [(item.name, item.email) for item in results] == [
+        ("Alice Exemple", "alice@example.org")
+    ]
