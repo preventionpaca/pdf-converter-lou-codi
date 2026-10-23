@@ -14141,7 +14141,83 @@ class DocumentEditorWindow(tk.Toplevel):
         subject = tk.StringVar(value=settings.subject)
         recipient_row = ttk.Frame(form)
         recipient_row.pack(fill="x")
-        ttk.Label(recipient_row, text="Destinataires (séparés par une virgule)").pack(side="left")
+        ttk.Label(recipient_row, text="Destinataires").pack(side="left")
+
+        def recipient_addresses() -> list[str]:
+            return list(
+                dict.fromkeys(
+                    value.strip()
+                    for value in recipient.get().replace(";", ",").split(",")
+                    if value.strip()
+                )
+            )
+
+        def set_recipient_addresses(addresses: list[str]) -> None:
+            recipient.set(", ".join(dict.fromkeys(address.strip() for address in addresses if address.strip())))
+
+        def manage_recipients() -> None:
+            manager = tk.Toplevel(dialog)
+            manager.title("Gérer les destinataires")
+            manager.geometry("650x520")
+            manager.transient(dialog)
+            frame = ttk.Frame(manager, padding=14)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(
+                frame,
+                text="Décochez les personnes à retirer, ou ajoutez une adresse.",
+            ).pack(anchor="w", pady=(0, 8))
+
+            canvas = tk.Canvas(frame, highlightthickness=0)
+            scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+            list_frame = ttk.Frame(canvas)
+            list_window = canvas.create_window((0, 0), window=list_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            list_frame.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+            canvas.bind("<Configure>", lambda event: canvas.itemconfigure(list_window, width=event.width))
+
+            selected: list[tuple[str, tk.BooleanVar]] = []
+
+            def add_row(address: str, checked: bool = True) -> None:
+                address = address.strip()
+                if not address or any(existing.casefold() == address.casefold() for existing, _var in selected):
+                    return
+                enabled = tk.BooleanVar(value=checked)
+                selected.append((address, enabled))
+                ttk.Checkbutton(list_frame, text=address, variable=enabled).pack(fill="x", anchor="w", pady=2)
+
+            for address in recipient_addresses():
+                add_row(address)
+
+            controls = ttk.Frame(frame)
+            controls.pack(fill="x", side="bottom", pady=(12, 0))
+            new_address = tk.StringVar()
+            entry = ttk.Entry(controls, textvariable=new_address)
+            entry.pack(side="left", fill="x", expand=True)
+
+            def add_manual(_event=None) -> None:
+                values = [part.strip() for part in new_address.get().replace(";", ",").split(",")]
+                for value in values:
+                    add_row(value)
+                new_address.set("")
+
+            def remove_unchecked() -> None:
+                kept = [address for address, enabled in selected if enabled.get()]
+                manager.destroy()
+                set_recipient_addresses(kept)
+                manage_recipients()
+
+            def apply_selection() -> None:
+                set_recipient_addresses([address for address, enabled in selected if enabled.get()])
+                manager.destroy()
+
+            entry.bind("<Return>", add_manual)
+            ttk.Button(controls, text="Ajouter", command=add_manual).pack(side="left", padx=(6, 0))
+            ttk.Button(controls, text="Tout décocher", command=lambda: [enabled.set(False) for _address, enabled in selected]).pack(side="left", padx=6)
+            ttk.Button(controls, text="Retirer les décochés", command=remove_unchecked).pack(side="left")
+            ttk.Button(controls, text="Valider", command=apply_selection, style="Primary.TButton").pack(side="right", padx=(6, 0))
+            manager.bind("<Escape>", lambda _event: manager.destroy())
 
         def choose_google_recipients() -> None:
             selected_account = account.get()
@@ -14183,7 +14259,7 @@ class DocumentEditorWindow(tk.Toplevel):
             query.trace_add("write", filter_rows)
 
             def add_selection() -> None:
-                addresses = [part.strip() for part in recipient.get().split(",") if part.strip()]
+                addresses = recipient_addresses()
                 try:
                     for item in tree.selection():
                         kind, value = records[item]
@@ -14194,7 +14270,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 except (GoogleMailUnavailable, OSError, ValueError) as exc:
                     messagebox.showerror("Groupe indisponible", str(exc), parent=picker)
                     return
-                recipient.set(", ".join(dict.fromkeys(addresses)))
+                set_recipient_addresses(addresses)
                 picker.destroy()
 
             buttons = ttk.Frame(frame)
@@ -14204,7 +14280,12 @@ class DocumentEditorWindow(tk.Toplevel):
             picker.bind("<Escape>", lambda _event: picker.destroy())
 
         ttk.Button(recipient_row, text="Contacts et groupes Google…", command=choose_google_recipients).pack(side="right")
-        ttk.Entry(form, textvariable=recipient).pack(fill="x", pady=(2, 10))
+        ttk.Button(recipient_row, text="Gérer la liste…", command=manage_recipients).pack(side="right", padx=6)
+        ttk.Button(recipient_row, text="Tout effacer", command=lambda: recipient.set("")).pack(side="right")
+        recipient_entry = ttk.Entry(form, textvariable=recipient)
+        recipient_entry.pack(fill="x", pady=(2, 10))
+        recipient_entry.bind("<Double-Button-1>", lambda _event: manage_recipients())
+        recipient_entry.bind("<Control-a>", lambda _event: (recipient_entry.selection_range(0, "end"), "break")[1])
         ttk.Label(form, text="Objet — {document} sera remplacé par le nom du PDF").pack(anchor="w")
         subject_box = ttk.Combobox(form, textvariable=subject, values=library.subjects)
         subject_box.pack(fill="x", pady=(2, 10))
