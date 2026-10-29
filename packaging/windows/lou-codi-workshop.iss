@@ -123,6 +123,7 @@ begin
   DependencyPage := CreateOutputMsgMemoPage(wpWelcome,
     'Vérification des composants',
     'Composants intégrés et logiciels facultatifs',
+    'État des dépendances',
     'Python et les bibliothèques PDF sont intégrés au paquet. LibreOffice reste indépendant et facultatif.');
   Notice := 'Les traitements documentaires sont réalisés localement.' + #13#10 + #13#10;
   if LibreOfficePresent then
