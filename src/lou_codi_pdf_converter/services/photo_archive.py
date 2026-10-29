@@ -106,7 +106,9 @@ def import_google_photos_archive(archive: Path, destination: Path, album_title: 
                     pass
                 extracted += 1
             records.append({
-                "path": str(target.relative_to(album_directory)),
+                # Manifests are portable data: always use ZIP/URL-style
+                # separators, including when the import runs on Windows.
+                "path": target.relative_to(album_directory).as_posix(),
                 "size": target.stat().st_size,
                 "sha256": incoming_digest,
                 "metadata": _metadata(target),
