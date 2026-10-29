@@ -17,15 +17,20 @@ mkdir -p \
   "$package_root/usr/bin" \
   "$package_root/usr/share/applications" \
   "$package_root/usr/share/icons/hicolor/256x256/apps" \
+  "$package_root/usr/share/icons/hicolor/scalable/mimetypes" \
   "$package_root/usr/share/mime/packages" \
   "$installer_dir"
 
 cp -a "$project_dir/dist/lou-codi-pdf-converter/." "$package_root/opt/lou-codi-workshop/"
 cp "$project_dir/src/lou_codi_pdf_converter/assets/croix-lou-codi.png" \
   "$package_root/usr/share/icons/hicolor/256x256/apps/lou-codi-workshop.png"
-mkdir -p "$package_root/usr/share/icons/hicolor/256x256/mimetypes"
-cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.png" \
-  "$package_root/usr/share/icons/hicolor/256x256/mimetypes/application-x-loucodi-document.png"
+for size in 16 24 32 48 64 128 256; do
+  mkdir -p "$package_root/usr/share/icons/hicolor/${size}x${size}/mimetypes"
+  cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document-$size.png" \
+    "$package_root/usr/share/icons/hicolor/${size}x${size}/mimetypes/application-x-loucodi-document.png"
+done
+cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.svg" \
+  "$package_root/usr/share/icons/hicolor/scalable/mimetypes/application-x-loucodi-document.svg"
 
 cat > "$package_root/usr/bin/lou-codi-workshop" <<'EOF'
 #!/usr/bin/env sh
@@ -61,7 +66,7 @@ Exec=lou-codi-workshop %f
 Icon=lou-codi-workshop
 Terminal=false
 Categories=Office;Graphics;Utility;
-MimeType=application/x-loucodi-document;
+MimeType=application/x-loucodi-document;application/x-loucodi-space;
 StartupNotify=true
 StartupWMClass=Loucodiworkshop
 EOF
@@ -71,9 +76,14 @@ cat > "$package_root/usr/share/mime/packages/lou-codi-document.xml" <<'EOF'
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-loucodi-document">
     <comment>Document Lou Còdi</comment>
+    <icon name="application-x-loucodi-document"/>
     <glob pattern="*.code"/>
     <glob pattern="*.cod"/>
     <glob pattern="*.loucodi-document"/>
+  </mime-type>
+  <mime-type type="application/x-loucodi-space">
+    <comment>Espace Lou Còdi</comment>
+    <glob pattern="*.loucodi-espace"/>
   </mime-type>
 </mime-info>
 EOF
@@ -86,6 +96,7 @@ Section: graphics
 Priority: optional
 Architecture: amd64
 Depends: libc6
+Suggests: libreoffice, xdg-utils, desktop-file-utils, shared-mime-info
 Installed-Size: $installed_size
 Maintainer: Lou Còdi <contact@lou-codi.fr>
 Homepage: https://github.com/preventionpaca/pdf-converter-lou-codi

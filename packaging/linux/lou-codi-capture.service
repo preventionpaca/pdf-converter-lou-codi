@@ -1,0 +1,12 @@
+[Unit]
+Description=Lou Còdi Capture — pont local pour le navigateur
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@PYTHON@ -m lou_codi_pdf_converter.services.capture_service
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

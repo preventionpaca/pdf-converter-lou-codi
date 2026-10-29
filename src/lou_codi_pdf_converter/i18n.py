@@ -145,6 +145,123 @@ _support_card_source = (
     "le projet, développer de nouvelles idées et maintenir ces logiciels utiles à tous."
 )
 
+_help_menu_translations = {
+    "en": ("Help", "Guides and user manuals", "Software registration", "Privacy", "About", "Contact"),
+    "de": ("Hilfe", "Anleitungen und Handbücher", "Software registrieren", "Datenschutz", "Über", "Kontakt"),
+    "es": ("Ayuda", "Guías y manuales", "Registro del software", "Privacidad", "Acerca de", "Contacto"),
+    "it": ("Aiuto", "Guide e manuali", "Registrazione del software", "Privacy", "Informazioni", "Contatto"),
+    "zh": ("帮助", "指南和用户手册", "软件注册", "隐私", "关于", "联系"),
+    "tr": ("Yardım", "Kılavuzlar ve kullanım belgeleri", "Yazılım kaydı", "Gizlilik", "Hakkında", "İletişim"),
+    "ar": ("المساعدة", "الأدلة وكتيبات الاستخدام", "تسجيل البرنامج", "الخصوصية", "حول", "اتصال"),
+}
+for _code, _labels in _help_menu_translations.items():
+    TRANSLATIONS[_code].update(dict(zip(
+        ("Aide", "Guides et modes d’emploi", "Enregistrement du logiciel", "Confidentialité", "À propos", "Contact"),
+        _labels,
+    )))
+
+# Shared navigation and list vocabulary used across the modules. Keeping this
+# set complete prevents one window from mixing French with the chosen locale.
+_shared_ui_sources = (
+    "Compte Google", "+ Compte", "+ Nouvel espace", "+ Sous-espace", "Supprimer l’espace",
+    "Classer l’espace", "+ Ajouter une ressource", "Ajouter lien ou texte copié",
+    "Lier un dossier Drive", "Ouvrir dossier Drive", "Actualiser Drive", "Archiver l’album Photos",
+    "Dossier albums NAS", "Rechercher", "Mes espaces", "Dictionnaire des tags", "À classer",
+    "Déposez ici fichiers, dossiers ou liens — images, ZIP, tableurs et documents sont acceptés.",
+    "Titre", "Expéditeur / destinataire", "Type", "Date d’ajout", "Tags", "Compte", "Emplacement",
+    "Ouvrir", "Modifier les tags", "Renommer", "Actualiser les infos", "Déplacer vers…",
+    "Retirer de l’espace", "Les éléments restent à leur emplacement d’origine.",
+    "Fiche de connaissance IA", "Fiche ChatGPT", "Fiche Claude", "Fiche Gemini",
+    "Conversation ChatGPT", "Conversation Claude", "Conversation Gemini", "Fichier local",
+    "Dossier local", "Dossier Google Drive", "Document Google Drive", "Tableur Google Sheets",
+    "Album Google Photos", "Courriel Gmail", "Lien Internet ou vidéo",
+)
+_shared_ui_translations = {
+    "en": ("Google account", "+ Account", "+ New space", "+ Subspace", "Delete space", "Organize space", "+ Add resource", "Add copied link or text", "Link a Drive folder", "Open Drive folder", "Refresh Drive", "Archive Photos album", "NAS albums folder", "Search", "My spaces", "Tag dictionary", "To classify", "Drop files, folders or links here — images, ZIP files, spreadsheets and documents are accepted.", "Title", "Sender / recipient", "Type", "Date added", "Tags", "Account", "Location", "Open", "Edit tags", "Rename", "Refresh information", "Move to…", "Remove from space", "Items remain in their original location.", "AI knowledge note", "ChatGPT note", "Claude note", "Gemini note", "ChatGPT conversation", "Claude conversation", "Gemini conversation", "Local file", "Local folder", "Google Drive folder", "Google Drive document", "Google Sheets spreadsheet", "Google Photos album", "Gmail message", "Web link or video"),
+    "de": ("Google-Konto", "+ Konto", "+ Neuer Bereich", "+ Unterbereich", "Bereich löschen", "Bereich einordnen", "+ Ressource hinzufügen", "Kopierten Link oder Text hinzufügen", "Drive-Ordner verknüpfen", "Drive-Ordner öffnen", "Drive aktualisieren", "Fotos-Album archivieren", "NAS-Albumordner", "Suchen", "Meine Bereiche", "Tag-Wörterbuch", "Einzuordnen", "Dateien, Ordner oder Links hier ablegen — Bilder, ZIP-Dateien, Tabellen und Dokumente werden akzeptiert.", "Titel", "Absender / Empfänger", "Typ", "Hinzugefügt am", "Tags", "Konto", "Speicherort", "Öffnen", "Tags bearbeiten", "Umbenennen", "Informationen aktualisieren", "Verschieben nach…", "Aus Bereich entfernen", "Elemente bleiben an ihrem ursprünglichen Speicherort.", "KI-Wissensnotiz", "ChatGPT-Notiz", "Claude-Notiz", "Gemini-Notiz", "ChatGPT-Unterhaltung", "Claude-Unterhaltung", "Gemini-Unterhaltung", "Lokale Datei", "Lokaler Ordner", "Google-Drive-Ordner", "Google-Drive-Dokument", "Google-Sheets-Tabelle", "Google-Fotos-Album", "Gmail-Nachricht", "Weblink oder Video"),
+    "es": ("Cuenta de Google", "+ Cuenta", "+ Nuevo espacio", "+ Subespacio", "Eliminar espacio", "Clasificar espacio", "+ Añadir recurso", "Añadir enlace o texto copiado", "Vincular carpeta de Drive", "Abrir carpeta de Drive", "Actualizar Drive", "Archivar álbum de Fotos", "Carpeta de álbumes NAS", "Buscar", "Mis espacios", "Diccionario de etiquetas", "Por clasificar", "Suelte aquí archivos, carpetas o enlaces — se aceptan imágenes, ZIP, hojas de cálculo y documentos.", "Título", "Remitente / destinatario", "Tipo", "Fecha de adición", "Etiquetas", "Cuenta", "Ubicación", "Abrir", "Editar etiquetas", "Renombrar", "Actualizar información", "Mover a…", "Quitar del espacio", "Los elementos permanecen en su ubicación original.", "Ficha de conocimiento IA", "Ficha ChatGPT", "Ficha Claude", "Ficha Gemini", "Conversación ChatGPT", "Conversación Claude", "Conversación Gemini", "Archivo local", "Carpeta local", "Carpeta de Google Drive", "Documento de Google Drive", "Hoja de Google Sheets", "Álbum de Google Fotos", "Correo de Gmail", "Enlace web o vídeo"),
+    "it": ("Account Google", "+ Account", "+ Nuovo spazio", "+ Sottospazio", "Elimina spazio", "Classifica spazio", "+ Aggiungi risorsa", "Aggiungi link o testo copiato", "Collega cartella Drive", "Apri cartella Drive", "Aggiorna Drive", "Archivia album Foto", "Cartella album NAS", "Cerca", "I miei spazi", "Dizionario tag", "Da classificare", "Trascina qui file, cartelle o link — sono accettati immagini, ZIP, fogli di calcolo e documenti.", "Titolo", "Mittente / destinatario", "Tipo", "Data di aggiunta", "Tag", "Account", "Posizione", "Apri", "Modifica tag", "Rinomina", "Aggiorna informazioni", "Sposta in…", "Rimuovi dallo spazio", "Gli elementi restano nella posizione originale.", "Scheda conoscenza IA", "Scheda ChatGPT", "Scheda Claude", "Scheda Gemini", "Conversazione ChatGPT", "Conversazione Claude", "Conversazione Gemini", "File locale", "Cartella locale", "Cartella Google Drive", "Documento Google Drive", "Foglio Google Sheets", "Album Google Foto", "Messaggio Gmail", "Link web o video"),
+    "zh": ("Google 账号", "+ 账号", "+ 新建空间", "+ 子空间", "删除空间", "空间分类", "+ 添加资源", "添加复制的链接或文本", "关联 Drive 文件夹", "打开 Drive 文件夹", "刷新 Drive", "归档相册", "NAS 相册文件夹", "搜索", "我的空间", "标签词典", "待分类", "将文件、文件夹或链接拖到此处 — 支持图片、ZIP、电子表格和文档。", "标题", "发件人 / 收件人", "类型", "添加日期", "标签", "账号", "位置", "打开", "编辑标签", "重命名", "刷新信息", "移动到…", "从空间移除", "项目仍保留在原始位置。", "AI 知识卡片", "ChatGPT 卡片", "Claude 卡片", "Gemini 卡片", "ChatGPT 对话", "Claude 对话", "Gemini 对话", "本地文件", "本地文件夹", "Google Drive 文件夹", "Google Drive 文档", "Google Sheets 表格", "Google Photos 相册", "Gmail 邮件", "网页链接或视频"),
+    "tr": ("Google hesabı", "+ Hesap", "+ Yeni alan", "+ Alt alan", "Alanı sil", "Alanı sınıflandır", "+ Kaynak ekle", "Kopyalanan bağlantı veya metni ekle", "Drive klasörü bağla", "Drive klasörünü aç", "Drive'ı yenile", "Fotoğraflar albümünü arşivle", "NAS albüm klasörü", "Ara", "Alanlarım", "Etiket sözlüğü", "Sınıflandırılacak", "Dosya, klasör veya bağlantıları buraya bırakın — resim, ZIP, tablo ve belgeler kabul edilir.", "Başlık", "Gönderen / alıcı", "Tür", "Eklenme tarihi", "Etiketler", "Hesap", "Konum", "Aç", "Etiketleri düzenle", "Yeniden adlandır", "Bilgileri yenile", "Şuraya taşı…", "Alandan kaldır", "Öğeler özgün konumlarında kalır.", "Yapay zekâ bilgi notu", "ChatGPT notu", "Claude notu", "Gemini notu", "ChatGPT konuşması", "Claude konuşması", "Gemini konuşması", "Yerel dosya", "Yerel klasör", "Google Drive klasörü", "Google Drive belgesi", "Google Sheets tablosu", "Google Fotoğraflar albümü", "Gmail iletisi", "Web bağlantısı veya video"),
+    "ar": ("حساب Google", "+ حساب", "+ مساحة جديدة", "+ مساحة فرعية", "حذف المساحة", "تصنيف المساحة", "+ إضافة مورد", "إضافة رابط أو نص منسوخ", "ربط مجلد Drive", "فتح مجلد Drive", "تحديث Drive", "أرشفة ألبوم الصور", "مجلد ألبومات NAS", "بحث", "مساحاتي", "قاموس الوسوم", "للتصنيف", "أفلت الملفات أو المجلدات أو الروابط هنا — الصور وملفات ZIP والجداول والمستندات مقبولة.", "العنوان", "المرسل / المستلم", "النوع", "تاريخ الإضافة", "الوسوم", "الحساب", "الموقع", "فتح", "تعديل الوسوم", "إعادة التسمية", "تحديث المعلومات", "نقل إلى…", "إزالة من المساحة", "تبقى العناصر في موقعها الأصلي.", "بطاقة معرفة بالذكاء الاصطناعي", "بطاقة ChatGPT", "بطاقة Claude", "بطاقة Gemini", "محادثة ChatGPT", "محادثة Claude", "محادثة Gemini", "ملف محلي", "مجلد محلي", "مجلد Google Drive", "مستند Google Drive", "جدول Google Sheets", "ألبوم Google Photos", "رسالة Gmail", "رابط ويب أو فيديو"),
+}
+for _code, _labels in _shared_ui_translations.items():
+    TRANSLATIONS[_code].update(dict(zip(_shared_ui_sources, _labels, strict=True)))
+
+_launcher_sources = (
+    "DES OUTILS PRATIQUES, EN LOCAL, POUR CRÉER ET FABRIQUER",
+    "Convertir, organiser et enrichir vos documents PDF.",
+    "Créer et mettre en page des documents, dessins et schémas.",
+    "Optimisation de découpe",
+    "Disposer les pièces, calculer les coupes et réduire les chutes.",
+    "Comprendre, expérimenter, modifier et créer avec Python, JavaScript, HTML et CSS.",
+    "Relier documents, Drive, courriels et albums Photos, et transformer vos échanges avec les IA en fiches de connaissance.",
+    "Calculateurs pratiques", "Regrouper les petits calculs utiles à l’atelier.",
+    "Domotique et automatismes", "Préparer des installations, commandes et automatismes simples.",
+    "Mémo d’atelier", "Lexique, conversions, formules et références techniques.",
+    "Préparer les trajectoires d’outil et les programmes d’usinage.",
+    "Bientôt disponible", "Module non installé", "Découvrir le module",
+    "Les outils PDF restent gratuits. Votre soutien aide à maintenir le projet et à développer les prochains modules.",
+)
+_launcher_translations = {
+    "en": ("PRACTICAL, LOCAL TOOLS FOR CREATING AND MAKING", "Convert, organize and enhance your PDF documents.", "Create and lay out documents, drawings and diagrams.", "Cutting optimization", "Arrange parts, calculate cuts and reduce waste.", "Learn, experiment, modify and create with Python, JavaScript, HTML and CSS.", "Connect documents, Drive, emails and Photos albums, and turn your AI conversations into knowledge notes.", "Practical calculators", "Bring together useful workshop calculations.", "Home automation and controls", "Prepare simple installations, controls and automation.", "Workshop memo", "Glossary, conversions, formulas and technical references.", "Prepare tool paths and machining programs.", "Coming soon", "Module not installed", "Discover module", "PDF tools remain free. Your support helps maintain the project and develop future modules."),
+    "de": ("PRAKTISCHE, LOKALE WERKZEUGE ZUM ERSTELLEN UND BAUEN", "PDF-Dokumente konvertieren, organisieren und erweitern.", "Dokumente, Zeichnungen und Diagramme erstellen und gestalten.", "Zuschnittoptimierung", "Teile anordnen, Schnitte berechnen und Verschnitt reduzieren.", "Mit Python, JavaScript, HTML und CSS lernen, experimentieren, ändern und erstellen.", "Dokumente, Drive, E-Mails und Fotos-Alben verknüpfen und KI-Unterhaltungen in Wissensnotizen umwandeln.", "Praktische Rechner", "Nützliche Werkstattberechnungen bündeln.", "Hausautomation und Steuerungen", "Einfache Installationen, Steuerungen und Automatisierungen vorbereiten.", "Werkstatt-Merkblatt", "Glossar, Umrechnungen, Formeln und technische Referenzen.", "Werkzeugwege und Bearbeitungsprogramme vorbereiten.", "Demnächst verfügbar", "Modul nicht installiert", "Modul entdecken", "Die PDF-Werkzeuge bleiben kostenlos. Ihre Unterstützung hilft, das Projekt zu pflegen und kommende Module zu entwickeln."),
+    "es": ("HERRAMIENTAS PRÁCTICAS Y LOCALES PARA CREAR Y FABRICAR", "Convierta, organice y mejore sus documentos PDF.", "Cree y diseñe documentos, dibujos y esquemas.", "Optimización de corte", "Disponga piezas, calcule cortes y reduzca desperdicios.", "Aprenda, experimente, modifique y cree con Python, JavaScript, HTML y CSS.", "Conecte documentos, Drive, correos y álbumes de Fotos, y transforme conversaciones con IA en fichas de conocimiento.", "Calculadoras prácticas", "Reúna cálculos útiles para el taller.", "Domótica y automatismos", "Prepare instalaciones, controles y automatismos sencillos.", "Memo de taller", "Glosario, conversiones, fórmulas y referencias técnicas.", "Prepare trayectorias de herramienta y programas de mecanizado.", "Próximamente", "Módulo no instalado", "Descubrir módulo", "Las herramientas PDF siguen siendo gratuitas. Su apoyo ayuda a mantener el proyecto y desarrollar próximos módulos."),
+    "it": ("STRUMENTI PRATICI E LOCALI PER CREARE E REALIZZARE", "Converti, organizza e arricchisci i tuoi documenti PDF.", "Crea e impagina documenti, disegni e schemi.", "Ottimizzazione del taglio", "Disponi i pezzi, calcola i tagli e riduci gli scarti.", "Impara, sperimenta, modifica e crea con Python, JavaScript, HTML e CSS.", "Collega documenti, Drive, e-mail e album Foto e trasforma le conversazioni con le IA in schede di conoscenza.", "Calcolatori pratici", "Riunisci i piccoli calcoli utili in officina.", "Domotica e automazioni", "Prepara installazioni, comandi e automazioni semplici.", "Promemoria d’officina", "Glossario, conversioni, formule e riferimenti tecnici.", "Prepara percorsi utensile e programmi di lavorazione.", "Prossimamente", "Modulo non installato", "Scopri il modulo", "Gli strumenti PDF restano gratuiti. Il tuo sostegno aiuta a mantenere il progetto e sviluppare i prossimi moduli."),
+    "zh": ("用于创作和制作的实用本地工具", "转换、整理和完善 PDF 文档。", "创建并排版文档、图纸和示意图。", "切割优化", "排列零件、计算切割并减少废料。", "使用 Python、JavaScript、HTML 和 CSS 学习、实验、修改和创作。", "关联文档、Drive、邮件和相册，并将 AI 对话转换为知识卡片。", "实用计算器", "汇集车间常用的小型计算。", "家庭自动化与控制", "准备简单的安装、控制和自动化方案。", "车间备忘录", "术语、换算、公式和技术参考。", "准备刀具路径和加工程序。", "即将推出", "模块未安装", "了解模块", "PDF 工具将继续免费。您的支持有助于维护项目并开发后续模块。"),
+    "tr": ("OLUŞTURMAK VE ÜRETMEK İÇİN PRATİK, YEREL ARAÇLAR", "PDF belgelerinizi dönüştürün, düzenleyin ve zenginleştirin.", "Belgeler, çizimler ve şemalar oluşturup düzenleyin.", "Kesim optimizasyonu", "Parçaları yerleştirin, kesimleri hesaplayın ve fireyi azaltın.", "Python, JavaScript, HTML ve CSS ile öğrenin, deneyin, değiştirin ve üretin.", "Belgeleri, Drive'ı, e-postaları ve Fotoğraflar albümlerini bağlayın; yapay zekâ konuşmalarını bilgi notlarına dönüştürün.", "Pratik hesaplayıcılar", "Atölyede yararlı küçük hesapları bir araya getirin.", "Ev otomasyonu ve kontroller", "Basit kurulumlar, kontroller ve otomasyonlar hazırlayın.", "Atölye notları", "Sözlük, dönüşümler, formüller ve teknik kaynaklar.", "Takım yollarını ve işleme programlarını hazırlayın.", "Yakında", "Modül yüklü değil", "Modülü keşfet", "PDF araçları ücretsiz kalır. Desteğiniz projenin bakımına ve gelecek modüllerin geliştirilmesine yardımcı olur."),
+    "ar": ("أدوات عملية ومحلية للإنشاء والتصنيع", "تحويل مستندات PDF وتنظيمها وتحسينها.", "إنشاء المستندات والرسومات والمخططات وتنسيقها.", "تحسين القص", "ترتيب القطع وحساب القصات وتقليل الهدر.", "التعلم والتجربة والتعديل والإنشاء باستخدام Python وJavaScript وHTML وCSS.", "ربط المستندات وDrive والبريد وألبومات الصور وتحويل محادثات الذكاء الاصطناعي إلى بطاقات معرفة.", "حاسبات عملية", "جمع الحسابات الصغيرة المفيدة في الورشة.", "المنزل الذكي والتحكم", "إعداد تركيبات وأوامر وأتمتة بسيطة.", "مذكرة الورشة", "مصطلحات وتحويلات وصيغ ومراجع تقنية.", "إعداد مسارات الأدوات وبرامج التشغيل.", "قريباً", "الوحدة غير مثبتة", "اكتشاف الوحدة", "تظل أدوات PDF مجانية. يساعد دعمكم على صيانة المشروع وتطوير الوحدات القادمة."),
+}
+for _code, _labels in _launcher_translations.items():
+    TRANSLATIONS[_code].update(dict(zip(_launcher_sources, _labels, strict=True)))
+
+# The generated catalogue contains every literal displayed by module widgets.
+# Curated entries above remain authoritative and override machine translations.
+_catalogue_path = Path(__file__).with_name("assets") / "i18n-static.json"
+if _catalogue_path.exists():
+    try:
+        _generated_catalogue = json.loads(_catalogue_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        _generated_catalogue = {}
+    for _code, _entries in _generated_catalogue.items():
+        if _code in TRANSLATIONS and isinstance(_entries, dict):
+            TRANSLATIONS[_code] = {**_entries, **TRANSLATIONS[_code]}
+
+_cutting_terms = {
+    "en": ("Sheet", "Wood", "Part"), "de": ("Platte", "Holz", "Teil"),
+    "es": ("Placa", "Madera", "Pieza"), "it": ("Pannello", "Legno", "Pezzo"),
+    "zh": ("板材", "木材", "零件"), "tr": ("Levha", "Ahşap", "Parça"),
+    "ar": ("لوح", "خشب", "قطعة"),
+}
+for _code, _labels in _cutting_terms.items():
+    TRANSLATIONS[_code].update(dict(zip(("Plaque", "Bois", "Pièce"), _labels, strict=True)))
+
+_office_banner_sources = (
+    "✓ LibreOffice détecté — conversion fidèle activée",
+    "Word, Excel, PowerPoint et OpenDocument seront convertis avec LibreOffice.",
+    "⚠ MODE DE CONVERSION ALLÉGÉE",
+    "LibreOffice n’est pas installé : DOCX et XLSX simples seront convertis localement. PPT/PPTX, anciens formats et mises en page complexes nécessitent LibreOffice.",
+)
+_office_banner_translations = {
+    "en": ("✓ LibreOffice detected — faithful conversion enabled", "Word, Excel, PowerPoint and OpenDocument files will be converted with LibreOffice.", "⚠ LIGHTWEIGHT CONVERSION MODE", "LibreOffice is not installed: simple DOCX and XLSX files will be converted locally. PPT/PPTX, legacy formats and complex layouts require LibreOffice."),
+    "de": ("✓ LibreOffice erkannt — originalgetreue Konvertierung aktiviert", "Word-, Excel-, PowerPoint- und OpenDocument-Dateien werden mit LibreOffice konvertiert.", "⚠ VEREINFACHTER KONVERTIERUNGSMODUS", "LibreOffice ist nicht installiert: Einfache DOCX- und XLSX-Dateien werden lokal konvertiert. PPT/PPTX, ältere Formate und komplexe Layouts erfordern LibreOffice."),
+    "es": ("✓ LibreOffice detectado — conversión fiel activada", "Los archivos Word, Excel, PowerPoint y OpenDocument se convertirán con LibreOffice.", "⚠ MODO DE CONVERSIÓN LIGERO", "LibreOffice no está instalado: los archivos DOCX y XLSX sencillos se convertirán localmente. PPT/PPTX, formatos antiguos y diseños complejos requieren LibreOffice."),
+    "it": ("✓ LibreOffice rilevato — conversione fedele attivata", "I file Word, Excel, PowerPoint e OpenDocument saranno convertiti con LibreOffice.", "⚠ MODALITÀ DI CONVERSIONE LEGGERA", "LibreOffice non è installato: i file DOCX e XLSX semplici saranno convertiti localmente. PPT/PPTX, formati precedenti e impaginazioni complesse richiedono LibreOffice."),
+    "zh": ("✓ 已检测到 LibreOffice — 已启用高保真转换", "Word、Excel、PowerPoint 和 OpenDocument 文件将使用 LibreOffice 转换。", "⚠ 轻量转换模式", "未安装 LibreOffice：简单的 DOCX 和 XLSX 文件将在本地转换。PPT/PPTX、旧格式和复杂版式需要 LibreOffice。"),
+    "tr": ("✓ LibreOffice algılandı — yüksek doğruluklu dönüştürme etkin", "Word, Excel, PowerPoint ve OpenDocument dosyaları LibreOffice ile dönüştürülecek.", "⚠ HAFİF DÖNÜŞTÜRME MODU", "LibreOffice yüklü değil: basit DOCX ve XLSX dosyaları yerel olarak dönüştürülecek. PPT/PPTX, eski biçimler ve karmaşık düzenler LibreOffice gerektirir."),
+    "ar": ("✓ تم اكتشاف LibreOffice — تم تفعيل التحويل الدقيق", "سيتم تحويل ملفات Word وExcel وPowerPoint وOpenDocument باستخدام LibreOffice.", "⚠ وضع التحويل الخفيف", "LibreOffice غير مثبت: سيتم تحويل ملفات DOCX وXLSX البسيطة محلياً. تتطلب ملفات PPT/PPTX والتنسيقات القديمة والتخطيطات المعقدة LibreOffice."),
+}
+for _code, _labels in _office_banner_translations.items():
+    TRANSLATIONS[_code].update(dict(zip(_office_banner_sources, _labels, strict=True)))
+
+_drive_ready_translations = {
+    "en": "Google Drive ready", "de": "Google Drive bereit", "es": "Google Drive listo",
+    "it": "Google Drive pronto", "zh": "Google Drive 已就绪", "tr": "Google Drive hazır",
+    "ar": "Google Drive جاهز",
+}
+for _code, _label in _drive_ready_translations.items():
+    TRANSLATIONS[_code]["Google Drive prêt"] = _label
+
 TRANSLATIONS["en"].update({
     "Soutenir Lou Còdi": "Support Lou Còdi",
     "Découvrir et soutenir ♥": "Discover and support ♥",
@@ -632,5 +749,22 @@ def translate_widget_tree(root: tk.Misc) -> None:
     if isinstance(root, ttk.Treeview):
         for column in ("#0", *root["columns"]):
             root.heading(column, text=tr(root.heading(column, "text")))
+    if isinstance(root, ttk.Combobox):
+        values = tuple(root.cget("values"))
+        if values:
+            root.configure(values=tuple(tr(str(value)) for value in values))
+    if isinstance(root, tk.Menu):
+        try:
+            end = root.index("end")
+        except tk.TclError:
+            end = None
+        if end is not None:
+            for index in range(end + 1):
+                try:
+                    label = root.entrycget(index, "label")
+                    if label:
+                        root.entryconfigure(index, label=tr(label))
+                except tk.TclError:
+                    continue
     for child in root.winfo_children():
         translate_widget_tree(child)

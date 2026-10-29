@@ -8,13 +8,131 @@ import pytest
 
 from lou_codi_pdf_converter.services.google_mail import (
     active_account,
+    check_drive_access,
     configured_client_file,
+    drive_space_index_name,
+    gmail_query_from_target,
+    google_resource_metadata,
+    google_resource_title,
     install_client_file,
     list_accounts,
     list_contacts,
     send_pdf,
     set_active_account,
 )
+
+
+def test_drive_space_index_name_uses_space_title_and_portable_characters() -> None:
+    assert drive_space_index_name("Sud Avenir Hélico") == "Sud Avenir Hélico.loucodi-espace"
+    assert drive_space_index_name('Projet: devis/clients?') == "Projet- devis-clients-.loucodi-espace"
+
+
+def test_gmail_query_uses_folder_or_browser_search() -> None:
+    assert gmail_query_from_target("https://mail.google.com/mail/u/0/#inbox/opaque") == "in:inbox"
+    assert gmail_query_from_target("https://mail.google.com/mail/u/0/#sent/opaque") == "in:sent"
+    assert gmail_query_from_target(
+        "https://mail.google.com/mail/u/0/#search/label%3AArchives+before%3A2020%2F01%2F01/opaque"
+    ) == "label:Archives before:2020/01/01"
+
+
+def test_google_resource_title_reads_drive_filename(monkeypatch) -> None:
+    class Request:
+        def execute(self):
+            return {"name": "Budget prévisionnel 2027"}
+
+    class Files:
+        def get(self, **kwargs):
+            assert kwargs == {"fileId": "sheet-id", "fields": "name"}
+            return Request()
+
+    class Drive:
+        def files(self):
+            return Files()
+
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail._dependencies",
+        lambda: (None, None, None, lambda *_args, **_kwargs: Drive()),
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail.credentials_for", lambda _email: object()
+    )
+
+    title = google_resource_title(
+        "pro@example.org", "google_sheets", "https://docs.google.com/spreadsheets/d/sheet-id/edit"
+    )
+
+    assert title == "Budget prévisionnel 2027"
+
+
+def test_google_resource_title_reads_gmail_subject_and_correspondent(monkeypatch) -> None:
+    class Request:
+        def execute(self):
+            return {"messages": [{"payload": {"headers": [
+                {"name": "Subject", "value": "Convention de stage"},
+                {"name": "From", "value": "Entreprise <contact@example.org>"},
+                {"name": "To", "value": "Rudy <pro@example.org>"},
+            ]}}]}
+
+    class Threads:
+        def get(self, **_kwargs):
+            return Request()
+
+    class Users:
+        def threads(self):
+            return Threads()
+
+    class Gmail:
+        def users(self):
+            return Users()
+
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail._dependencies",
+        lambda: (None, None, None, lambda *_args, **_kwargs: Gmail()),
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail.credentials_for", lambda _email: object()
+    )
+
+    title, correspondent = google_resource_metadata(
+        "pro@example.org", "gmail_message", "https://mail.google.com/mail/u/0/#inbox/thread-123"
+    )
+
+    assert title == "Convention de stage"
+    assert correspondent == "Entreprise <contact@example.org>"
+
+
+def test_drive_access_check_uses_drive_about(monkeypatch) -> None:
+    calls = []
+
+    class Request:
+        def execute(self):
+            calls.append("execute")
+            return {"user": {"permissionId": "permission-1"}}
+
+    class About:
+        def get(self, *, fields):
+            calls.append(fields)
+            return Request()
+
+    class Drive:
+        def about(self):
+            return About()
+
+    def build(api, version, **_kwargs):
+        assert (api, version) == ("drive", "v3")
+        return Drive()
+
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail._dependencies",
+        lambda: (None, None, None, build),
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.google_mail.credentials_for", lambda _email: object()
+    )
+
+    check_drive_access("perso@example.org")
+
+    assert calls == ["user(permissionId)", "execute"]
 
 
 def test_install_oauth_client_copies_private_configuration(tmp_path: Path) -> None:

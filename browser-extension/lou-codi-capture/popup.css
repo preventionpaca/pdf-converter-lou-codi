@@ -1,0 +1,26 @@
+:root { color-scheme: light; font-family: Arial, sans-serif; }
+body { width: 380px; margin: 0; color: #102d51; background: #f0f4f9; }
+header { padding: 18px 20px; color: white; background: #193b66; }
+h1 { margin: 0; font-size: 22px; }
+header p { margin: 5px 0 0; color: #cbdff5; font-size: 12px; text-transform: uppercase; }
+main { padding: 16px; }
+h2 { margin: 16px 0 8px; font-size: 15px; }
+.status { padding: 10px 12px; border-radius: 8px; background: #dcecff; }
+.status.offline { color: #8b1e17; background: #fde8e6; }
+.spaces { display: grid; gap: 7px; max-height: 245px; overflow: auto; }
+.space { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid #bfd1e6; border-radius: 8px; background: white; }
+.space button, #create { border: 0; border-radius: 6px; padding: 7px 10px; color: white; background: #2368af; cursor: pointer; }
+.space-actions { display: flex; gap: 5px; }
+.space-label { min-width: 0; }
+.space-account { display: block; margin-top: 3px; color: #60758b; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.space button.secondary { color: #183f70; background: #dcecff; }
+.row { display: flex; gap: 7px; }
+input { flex: 1; min-width: 0; padding: 9px; border: 1px solid #9db4cb; border-radius: 6px; }
+.capture-editor { margin-top: 12px; padding: 12px; border: 1px solid #9db4cb; border-radius: 8px; background: white; }
+.capture-editor h2 { margin-top: 0; color: #193b66; }
+.capture-editor label { display: block; margin: 8px 0 4px; color: #405a73; font-size: 12px; font-weight: bold; }
+.capture-editor input, .capture-editor textarea { box-sizing: border-box; width: 100%; }
+.capture-editor textarea { resize: vertical; padding: 9px; border: 1px solid #9db4cb; border-radius: 6px; font: inherit; }
+.source { margin: 8px 0 0; color: #60758b; font-size: 11px; overflow-wrap: anywhere; }
+select { box-sizing: border-box; width: 100%; margin-top: 7px; padding: 9px; border: 1px solid #9db4cb; border-radius: 6px; background: white; }
+.message { min-height: 18px; margin-bottom: 0; color: #4d6175; }

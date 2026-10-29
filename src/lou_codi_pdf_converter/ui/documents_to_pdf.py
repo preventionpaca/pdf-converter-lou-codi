@@ -77,12 +77,12 @@ class DocumentsToPdfWindow(tk.Toplevel):
         )
         engine_frame.pack(fill="x", pady=(0, 12))
         if office_engine:
-            engine_title = "✓ LibreOffice détecté — conversion fidèle activée"
-            engine_detail = "Word, Excel, PowerPoint et OpenDocument seront convertis avec LibreOffice."
+            engine_title = tr("✓ LibreOffice détecté — conversion fidèle activée")
+            engine_detail = tr("Word, Excel, PowerPoint et OpenDocument seront convertis avec LibreOffice.")
             engine_color = "#246A35"
         else:
-            engine_title = "⚠ MODE DE CONVERSION ALLÉGÉE"
-            engine_detail = (
+            engine_title = tr("⚠ MODE DE CONVERSION ALLÉGÉE")
+            engine_detail = tr(
                 "LibreOffice n’est pas installé : DOCX et XLSX simples seront convertis localement. "
                 "PPT/PPTX, anciens formats et mises en page complexes nécessitent LibreOffice."
             )

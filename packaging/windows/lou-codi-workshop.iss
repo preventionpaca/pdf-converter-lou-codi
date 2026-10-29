@@ -23,6 +23,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 WizardStyle=modern
 SetupLogging=yes
+CloseApplications=yes
+RestartApplications=no
+ChangesAssociations=yes
+UninstallDisplayName=Lou Còdi Workshop
 UninstallDisplayIcon={app}\lou-codi-pdf-converter.exe
 VersionInfoVersion=2.0.0.7
 
@@ -40,7 +44,7 @@ Name: "modules\pdfstudio"; Description: "PDF Studio"; Types: full custom
 Name: "modules\documentstudio"; Description: "Document Studio"; Types: full custom
 Name: "modules\cutting"; Description: "Optimisation de découpe"; Types: full custom
 Name: "modules\codelab"; Description: "Lou Còdi Code Lab"; Types: full custom
-Name: "modules\codispace"; Description: "Còdi Espace"; Types: full custom
+Name: "modules\codispace"; Description: "Lou Còdi Espace"; Types: full custom
 Name: "workspace"; Description: "Dossiers de travail LouCodi dans Téléchargements"; Types: full
 
 [Tasks]
@@ -66,7 +70,7 @@ Name: "{%USERPROFILE}\Downloads\LouCodi\Habillage PDF"; Components: workspace an
 Name: "{%USERPROFILE}\Downloads\LouCodi\Document Studio"; Components: workspace and modules\documentstudio
 Name: "{%USERPROFILE}\Downloads\LouCodi\Optimisation de découpe"; Components: workspace and modules\cutting
 Name: "{%USERPROFILE}\Downloads\LouCodi\Code Lab"; Components: workspace and modules\codelab
-Name: "{%USERPROFILE}\Downloads\LouCodi\Còdi Espace"; Components: workspace and modules\codispace
+Name: "{%USERPROFILE}\Downloads\LouCodi\Lou Còdi Espace"; Components: workspace and modules\codispace
 
 [Icons]
 Name: "{group}\Lou Còdi Workshop"; Filename: "{app}\lou-codi-pdf-converter.exe"; WorkingDir: "{app}"; AppUserModelID: "LouCodi.Workshop"
@@ -79,25 +83,52 @@ Root: HKA; Subkey: "Software\Classes\.loucodi-document"; ValueType: string; Valu
 Root: HKA; Subkey: "Software\Classes\LouCodi.Document"; ValueType: string; ValueData: "Document Lou Còdi"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\LouCodi.Document\DefaultIcon"; ValueType: string; ValueData: "{app}\lou-codi-document.ico,0"
 Root: HKA; Subkey: "Software\Classes\LouCodi.Document\shell\open\command"; ValueType: string; ValueData: """{app}\lou-codi-pdf-converter.exe"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.loucodi-espace"; ValueType: string; ValueData: "LouCodi.Space"; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\LouCodi.Space"; ValueType: string; ValueData: "Espace Lou Còdi"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\LouCodi.Space\DefaultIcon"; ValueType: string; ValueData: "{app}\lou-codi-document.ico,0"
+Root: HKA; Subkey: "Software\Classes\LouCodi.Space\shell\open\command"; ValueType: string; ValueData: """{app}\lou-codi-pdf-converter.exe"" ""%1"""
 
 [Run]
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden; StatusMsg: "Actualisation des icônes de fichiers..."
 Filename: "{app}\lou-codi-pdf-converter.exe"; Description: "Lancer Lou Còdi Workshop"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  DependencyPage: TOutputMsgMemoWizardPage;
+
 function LibreOfficePresent: Boolean;
 begin
   Result := FileExists(ExpandConstant('{pf}\LibreOffice\program\soffice.exe')) or
             FileExists(ExpandConstant('{pf32}\LibreOffice\program\soffice.exe'));
 end;
 
+function LibreOfficeVersion: String;
+var
+  Version: String;
+  ProgramPath: String;
+begin
+  ProgramPath := ExpandConstant('{pf}\LibreOffice\program\soffice.exe');
+  if not FileExists(ProgramPath) then
+    ProgramPath := ExpandConstant('{pf32}\LibreOffice\program\soffice.exe');
+  if FileExists(ProgramPath) and GetVersionNumbersString(ProgramPath, Version) then
+    Result := Version
+  else
+    Result := 'version inconnue';
+end;
+
 procedure InitializeWizard;
 var
   Notice: String;
 begin
+  DependencyPage := CreateOutputMsgMemoPage(wpWelcome,
+    'Vérification des composants',
+    'Composants intégrés et logiciels facultatifs',
+    'Python et les bibliothèques PDF sont intégrés au paquet. LibreOffice reste indépendant et facultatif.');
   Notice := 'Les traitements documentaires sont réalisés localement.' + #13#10 + #13#10;
   if LibreOfficePresent then
-    Notice := Notice + 'LibreOffice a été détecté : les conversions Office fidèles seront disponibles.'
+    Notice := Notice + 'LibreOffice détecté (' + LibreOfficeVersion + '). Les conversions Office fidèles seront disponibles.'
   else
     Notice := Notice + 'LibreOffice n''a pas été détecté. Lou Còdi utilisera son moteur local allégé pour les documents simples. Les anciens formats, PowerPoint et les mises en page complexes nécessitent LibreOffice, qui reste facultatif et indépendant.';
-  MsgBox(Notice, mbInformation, MB_OK);
+  DependencyPage.RichEditViewer.Lines.Text := Notice + #13#10 + #13#10 +
+    'L''installateur met automatiquement à niveau une installation Lou Còdi existante et conserve les documents personnels.';
 end;

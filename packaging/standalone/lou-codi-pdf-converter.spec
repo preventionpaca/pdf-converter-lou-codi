@@ -18,6 +18,9 @@ datas += [
     (str(project / "THIRD_PARTY_NOTICES.md"), "."),
     (str(project / "SOURCE_DISTRIBUTION.md"), "."),
 ]
+if sys.platform == "darwin":
+    # Finder resolves CFBundleTypeIconFile from Contents/Resources.
+    datas.append((str(source / "lou_codi_pdf_converter" / "assets" / "lou-codi-document.icns"), "."))
 a = Analysis(
     [str(project / "packaging" / "standalone" / "entrypoint.py")],
     pathex=[str(source)],
@@ -47,7 +50,12 @@ if sys.platform == "darwin":
             "NSHighResolutionCapable": True,
             "CFBundleDocumentTypes": [{
                 "CFBundleTypeName": "Document Lou Còdi",
-                "CFBundleTypeExtensions": ["cod", "loucodi-document"],
+                "CFBundleTypeExtensions": ["code", "cod", "loucodi-document"],
+                "CFBundleTypeRole": "Editor",
+                "CFBundleTypeIconFile": "lou-codi-document.icns",
+            }, {
+                "CFBundleTypeName": "Espace Lou Còdi",
+                "CFBundleTypeExtensions": ["loucodi-espace"],
                 "CFBundleTypeRole": "Editor",
             }],
         },

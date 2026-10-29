@@ -19,6 +19,8 @@ from ..code_lab_library import (
 )
 from ..paths import application_data_directory
 from ..telemetry import track_event
+from .module_links import add_help_contact_buttons
+from ..i18n import translate_widget_tree
 
 NAVY = "#193B66"
 BLUE = "#2368AF"
@@ -349,12 +351,14 @@ class CodeLabWindow(tk.Toplevel):
         self.editors: dict[str, CodeEditor] = {}
         self._untitled = 0
         self._build()
+        translate_widget_tree(self)
         self.new_file()
         track_event("code_lab", "open")
 
     def _build(self) -> None:
         header = tk.Frame(self, bg=NAVY, padx=18, pady=13)
         header.pack(fill="x")
+        add_help_contact_buttons(header, "code-lab")
         tk.Label(header, text="Lou Còdi Code Lab", bg=NAVY, fg="white", font=("Sans", 20, "bold")).pack(side="left")
         tk.Label(header, text="COMPRENDRE · EXPÉRIMENTER · MODIFIER · CRÉER", bg=NAVY, fg="#CBDFF5", font=("Sans", 9)).pack(side="left", padx=18)
         for text, command in (("Nouveau", self.new_file), ("Ouvrir", self.open_file), ("Enregistrer", self.save_file), ("Enregistrer sous", lambda: self.save_file(save_as=True)), ("Fermer l’onglet", self.close_tab)):

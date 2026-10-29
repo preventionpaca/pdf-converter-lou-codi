@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <path fill="#fff" stroke="#d71920" stroke-width="10" stroke-linejoin="round" d="M47 12h126l54 54v178H29V30c0-10 8-18 18-18z"/>
+  <path fill="#ffe5e6" stroke="#d71920" stroke-width="8" stroke-linejoin="round" d="M173 12v54h54z"/>
+  <text x="128" y="142" fill="#d71920" font-family="DejaVu Sans,Arial,sans-serif" font-size="62" font-weight="700" text-anchor="middle">COD</text>
+  <path stroke="#d71920" stroke-width="7" d="M62 166h132"/>
+  <path stroke="#e78b8f" stroke-width="6" d="M62 190h112M62 214h89"/>
+</svg>

@@ -116,6 +116,7 @@ from .input_dialogs import ask_number, ask_table_size, ask_text, choose_color, p
 from .destination_settings import configure_document_destinations
 from .directory_picker import choose_save_path
 from .pdf_picker import choose_documents
+from .module_links import add_help_contact_buttons
 from .windowing import center_window, make_modal, maximize_window
 
 NAVY = "#193B66"
@@ -1698,6 +1699,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self._text_draw_start: tuple[float, float] | None = None
         self._modifier_keys: set[str] = set()
         self._context_menu_visible = False
+        self._main_menus: list[tk.Menu] = []
+        self._main_menu_watch_after_id: str | None = None
         self._pdf_font_pick_mode = False
         self._pending_corner_treatment: tuple[int, str, float] | None = None
         self._pending_edge_snap: dict[str, object] | None = None
@@ -1777,6 +1780,7 @@ class DocumentEditorWindow(tk.Toplevel):
         ttk.Style(self).configure("PaletteTool.TButton", padding=(5, 5), font=("Sans", 14, "bold"))
         header = tk.Frame(self, bg=NAVY, padx=22, pady=10)
         header.pack(fill="x")
+        add_help_contact_buttons(header, "document-studio")
         tk.Label(header, text="Créer un modèle" if self.template_mode else "Créer un document", bg=NAVY, fg="white", font=("Sans", 19, "bold")).pack(side="left")
         tk.Button(
             header,
@@ -2593,7 +2597,7 @@ class DocumentEditorWindow(tk.Toplevel):
         file_menu.add_command(label="Envoyer le PDF par e-mail…", command=self._email_pdf)
         file_menu.add_command(label="Imprimer…", command=self._print, accelerator="Ctrl+P")
         file_menu.add_separator()
-        file_menu.add_command(label="Fermer", command=self._request_close)
+        file_menu.add_command(label="Fermer", command=self._request_close_from_menu)
         menu.add_cascade(label="Fichier", menu=file_menu)
 
         view_menu = tk.Menu(menu, tearoff=False)
@@ -2646,7 +2650,25 @@ class DocumentEditorWindow(tk.Toplevel):
             command=self._show_google_email_notice,
         )
         menu.add_cascade(label="Aide", menu=help_menu)
+        for top_level_menu in (file_menu, view_menu, tools_menu, help_menu):
+            top_level_menu.configure(postcommand=self._main_menu_posted)
+        self._main_menus = [
+            menu,
+            file_menu,
+            destinations_menu,
+            view_menu,
+            palettes_menu,
+            size_menu,
+            tools_menu,
+            help_menu,
+        ]
         self.configure(menu=menu)
+        # Explicitly unpost native menus when the editor is hidden, closed or
+        # loses activation. This avoids an occasional X11/Tk popup left above
+        # every other window after a workspace change.
+        self.bind("<Unmap>", self._dismiss_main_menus_on_window_event, add="+")
+        self.bind("<Destroy>", self._dismiss_main_menus_on_window_event, add="+")
+        self.bind("<FocusOut>", self._schedule_main_menu_focus_check, add="+")
         self.bind("<Control-n>", lambda _event: self._new())
         self.bind("<Control-o>", lambda _event: self._load())
         self.bind("<Control-s>", lambda _event: self._save())
@@ -3348,6 +3370,63 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self.destroy()
 
+    def _request_close_from_menu(self) -> None:
+        # Do not destroy a toplevel while Tk is still executing a native menu
+        # callback. Unpost/release first, then close on the next event-loop turn.
+        self._dismiss_main_menus()
+        self.after_idle(self._request_close)
+
+    def _dismiss_main_menus(self) -> None:
+        # Calling ``Menu.unpost`` alone only hides the surface. On X11, Tk's
+        # menubar may still own a *global* grab, which explains a menu left
+        # floating over every other application. The Tk helper also unwinds
+        # cascades, restores focus and releases/restores the previous grab.
+        try:
+            self.tk.call("tk::MenuUnpost", "")
+        except tk.TclError:
+            pass
+        for menu in getattr(self, "_main_menus", ()):
+            try:
+                menu.postcascade("none")
+                menu.activate("none")
+                menu.unpost()
+            except tk.TclError:
+                pass
+
+    def _dismiss_main_menus_on_window_event(self, event: tk.Event[tk.Misc]) -> None:
+        # Toplevel is part of every descendant's bind tags: without this
+        # guard, destroying the editor calls the menu cleanup once per child
+        # widget and can prevent the close operation from completing.
+        if event.widget is self:
+            self._dismiss_main_menus()
+
+    def _main_menu_posted(self) -> None:
+        if self._main_menu_watch_after_id is None:
+            self._main_menu_watch_after_id = self.after(120, self._watch_main_menu)
+
+    def _watch_main_menu(self) -> None:
+        self._main_menu_watch_after_id = None
+        try:
+            mapped = any(menu.winfo_ismapped() for menu in self._main_menus)
+            if not mapped:
+                return
+            if not self.winfo_viewable() or self.focus_displayof() is None:
+                self._dismiss_main_menus()
+                return
+            self._main_menu_watch_after_id = self.after(120, self._watch_main_menu)
+        except tk.TclError:
+            self._main_menu_watch_after_id = None
+
+    def _schedule_main_menu_focus_check(self, _event: tk.Event[tk.Misc]) -> None:
+        self.after(60, self._dismiss_main_menus_if_inactive)
+
+    def _dismiss_main_menus_if_inactive(self) -> None:
+        try:
+            if not self.winfo_viewable() or self.focus_displayof() is None:
+                self._dismiss_main_menus()
+        except tk.TclError:
+            pass
+
     def _undo(self) -> None:
         if self.undo_stack:
             self.redo_stack.append(copy.deepcopy(self.document))
@@ -3440,16 +3519,34 @@ class DocumentEditorWindow(tk.Toplevel):
             child.destroy()
         for index, tab in enumerate(self._document_tabs):
             active = index == self._active_document_tab
-            tk.Button(
+            tab_frame = tk.Frame(
                 self.document_tab_bar,
+                bg="#FFFFFF" if active else "#BFCBDA",
+                bd=1,
+                relief="sunken" if active else "raised",
+            )
+            tab_frame.pack(side="left", padx=(0, 3))
+            tk.Button(
+                tab_frame,
                 text=str(tab.get("title", f"Document {index + 1}")),
                 command=lambda selected=index: self._switch_document_tab(selected),
                 bg="#FFFFFF" if active else "#BFCBDA",
                 fg=NAVY,
-                relief="sunken" if active else "raised",
+                relief="flat",
                 padx=12,
                 pady=3,
-            ).pack(side="left", padx=(0, 3))
+            ).pack(side="left")
+            tk.Button(
+                tab_frame,
+                text="×",
+                command=lambda selected=index: self._close_document_tab_at(selected),
+                bg="#FFFFFF" if active else "#BFCBDA",
+                fg="#7A2730",
+                activeforeground="#A00018",
+                relief="flat",
+                padx=5,
+                pady=3,
+            ).pack(side="left")
         tk.Button(
             self.document_tab_bar,
             text="＋",
@@ -3459,15 +3556,13 @@ class DocumentEditorWindow(tk.Toplevel):
             relief="flat",
             padx=10,
         ).pack(side="left", padx=2)
-        tk.Button(
-            self.document_tab_bar,
-            text="× Fermer l’onglet",
-            command=self._close_document_tab,
-            bg="#E4ECF4",
-            fg="#7A2730",
-            relief="flat",
-            padx=8,
-        ).pack(side="right")
+
+    def _close_document_tab_at(self, index: int) -> None:
+        if not 0 <= index < len(self._document_tabs):
+            return
+        if index != self._active_document_tab:
+            self._switch_document_tab(index)
+        self._close_document_tab()
 
     def _close_document_tab(self) -> None:
         self._commit_inline_editor(render=False)
@@ -13669,6 +13764,20 @@ class DocumentEditorWindow(tk.Toplevel):
     def _project_directory(self) -> Path:
         return settings_path().parent / "modeles" if self.template_mode else document_destination()
 
+    def _suggested_document_stem(self) -> str:
+        """Prefer the current/imported document name over a generic filename."""
+        if self.project_path:
+            return self.project_path.stem
+        if self.document.source_pdf:
+            return Path(self.document.source_pdf).stem
+        if getattr(self, "_document_tabs", None):
+            title = str(
+                self._document_tabs[self._active_document_tab].get("title", "")
+            ).strip()
+            if title and title.casefold() != "nouveau document":
+                return Path(title).stem
+        return "nouveau_document"
+
     def _save(self) -> bool:
         self._commit_inline_editor(render=False)
         if self.project_path is None:
@@ -13685,7 +13794,7 @@ class DocumentEditorWindow(tk.Toplevel):
         """Save a new independent project and make it the current project."""
         if commit_inline:
             self._commit_inline_editor(render=False)
-        initial_name = self.project_path.stem if self.project_path else "nouveau_document"
+        initial_name = self._suggested_document_stem()
         destination = initial_directory or self._project_directory()
         destination.mkdir(parents=True, exist_ok=True)
         selected = choose_save_path(
@@ -14040,7 +14149,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text="OCR terminé : le texte reconnu a été ajouté dans une zone modifiable.")
 
     def _choose_export(self, extension: str, label: str) -> Path | None:
-        stem = self.project_path.stem if self.project_path else "nouveau_document"
+        stem = self._suggested_document_stem()
         return choose_save_path(self, document_destination(), stem, extension)
 
     def _email_settings_dialog(self, *, prepare: bool) -> None:

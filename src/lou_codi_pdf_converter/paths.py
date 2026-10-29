@@ -53,7 +53,7 @@ WORKSHOP_MODULE_DIRECTORIES = (
     "Habillage PDF",
     "Document Studio",
     "Optimisation de découpe",
-    "Còdi Espace",
+    "Lou Còdi Espace",
 )
 
 

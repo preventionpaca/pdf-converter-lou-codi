@@ -12,6 +12,8 @@ mime_packages_dir="$data_root/mime/packages"
 install_launcher=1
 create_workspace=1
 selected_modules="pdf_studio document_studio cutting_optimization code_lab codi_space"
+bundle_version=$(head -n 1 "$bundle_dir/VERSION" 2>/dev/null || printf 'version inconnue')
+installed_version=$(head -n 1 "$application_target/VERSION" 2>/dev/null || true)
 
 if [ ! -x "$application_source/lou-codi-pdf-converter" ]; then
   echo "Paquet incomplet : l’exécutable Lou Còdi Workshop est absent." >&2
@@ -29,13 +31,44 @@ echo "- Sans LibreOffice : conversion allégée des DOCX et XLSX simples."
 echo "- Avec LibreOffice : conversion fidèle et prise en charge de PowerPoint,"
 echo "  OpenDocument et des anciens formats Office."
 echo "LibreOffice est un logiciel indépendant et n’est pas fourni par Lou Còdi."
+echo "Version du paquet : $bundle_version"
+if [ -n "$installed_version" ]; then
+  echo "Version déjà installée : $installed_version (elle sera mise à niveau en conservant les données)."
+else
+  echo "Aucune installation autonome précédente détectée."
+fi
+echo
+"$bundle_dir/check-requirements.sh"
 if command -v libreoffice >/dev/null 2>&1 || command -v soffice >/dev/null 2>&1; then
   echo "État : LibreOffice détecté, conversion fidèle disponible."
 else
   echo "État : LibreOffice non détecté, le moteur allégé sera utilisé."
 fi
 echo
-if [ -t 0 ]; then
+gui=0
+if command -v zenity >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+  gui=1
+  mode=$(zenity --list --radiolist --title="Installation de Lou Còdi Workshop" \
+    --text="Choisissez le type d’installation. La version $bundle_version sera installée." \
+    --column="" --column="Type" --column="Contenu" \
+    TRUE "Complète (recommandée)" "Application, tous les modules, raccourci et dossiers" \
+    FALSE "Personnalisée" "Choisir les modules et les options" \
+    --width=760 --height=360 2>/dev/null || true)
+  [ -n "$mode" ] || { echo "Installation annulée."; exit 0; }
+  if [ "$mode" = "Personnalisée" ]; then
+    selected_modules=$(zenity --list --checklist --title="Modules Lou Còdi" \
+      --text="Cochez les modules à installer." --separator=" " \
+      --column="Installer" --column="Identifiant" --column="Module" \
+      TRUE pdf_studio "PDF Studio" TRUE document_studio "Document Studio" \
+      TRUE cutting_optimization "Optimisation de découpe" TRUE code_lab "Lou Còdi Code Lab" \
+      TRUE codi_space "Lou Còdi Espace" --hide-column=2 --width=720 --height=430 2>/dev/null || true)
+    options=$(zenity --list --checklist --title="Options d’installation" --separator=" " \
+      --column="Activer" --column="Option" \
+      TRUE shortcut TRUE workspace --hide-column=2 --width=620 --height=300 2>/dev/null || true)
+    case " $options " in *" shortcut "*) ;; *) install_launcher=0 ;; esac
+    case " $options " in *" workspace "*) ;; *) create_workspace=0 ;; esac
+  fi
+elif [ -t 0 ]; then
   echo "1 - Installation complète (recommandée)"
   echo "    Application + raccourci + dossiers de travail."
   echo "2 - Installation personnalisée"
@@ -49,7 +82,7 @@ if [ -t 0 ]; then
       selected_modules=""
       for module_spec in "pdf_studio:PDF Studio" "document_studio:Document Studio" \
         "cutting_optimization:Optimisation de découpe" "code_lab:Lou Còdi Code Lab" \
-        "codi_space:Còdi Espace"; do
+        "codi_space:Lou Còdi Espace"; do
         module_id=${module_spec%%:*}
         module_name=${module_spec#*:}
         printf "Installer %s ? [O/n] " "$module_name"
@@ -70,6 +103,9 @@ fi
 
 install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir"
 cp -a "$application_source/." "$application_target/"
+install -m 0644 "$bundle_dir/VERSION" "$application_target/VERSION"
+install -m 0755 "$bundle_dir/uninstaller.sh" "$application_target/uninstall.sh"
+install -m 0755 "$bundle_dir/check-requirements.sh" "$application_target/check-requirements.sh"
 install -d "$application_target/selected-modules"
 for module in pdf_studio document_studio cutting_optimization code_lab codi_space; do
   marker="$application_target/selected-modules/$module.enabled"
@@ -90,12 +126,20 @@ if [ "$create_workspace" -eq 1 ]; then
   case " $selected_modules " in *" document_studio "*) install -d "$downloads_dir/LouCodi/Document Studio" ;; esac
   case " $selected_modules " in *" cutting_optimization "*) install -d "$downloads_dir/LouCodi/Optimisation de découpe" ;; esac
   case " $selected_modules " in *" code_lab "*) install -d "$downloads_dir/LouCodi/Code Lab" ;; esac
-  case " $selected_modules " in *" codi_space "*) install -d "$downloads_dir/LouCodi/Còdi Espace" ;; esac
+  case " $selected_modules " in *" codi_space "*) install -d "$downloads_dir/LouCodi/Lou Còdi Espace" ;; esac
 fi
 
 if [ "$install_launcher" -eq 1 ]; then
   install -m 0644 "$bundle_dir/lou-codi-workshop.png" "$icons_dir/lou-codi-workshop.png"
-  install -m 0644 "$bundle_dir/lou-codi-document.png" "$mime_icons_dir/application-x-loucodi-document.png"
+  for size in 16 24 32 48 64 128 256; do
+    destination="$data_root/icons/hicolor/${size}x${size}/mimetypes"
+    install -d "$destination"
+    install -m 0644 "$bundle_dir/lou-codi-document-$size.png" \
+      "$destination/application-x-loucodi-document.png"
+  done
+  install -d "$data_root/icons/hicolor/scalable/mimetypes"
+  install -m 0644 "$bundle_dir/lou-codi-document.svg" \
+    "$data_root/icons/hicolor/scalable/mimetypes/application-x-loucodi-document.svg"
 
 # Migrate installations made under the former PDF Converter desktop identity.
 # Keeping both launchers makes Linux associate the running window with a generic
@@ -115,7 +159,7 @@ desktop_file="$applications_dir/lou-codi-workshop.desktop"
   echo 'Type=Application'
   echo 'Categories=Office;Graphics;Utility;'
   echo 'Keywords=PDF;DOCX;dessin;découpe;atelier;conversion;'
-  echo 'MimeType=application/x-loucodi-document;'
+  echo 'MimeType=application/x-loucodi-document;application/x-loucodi-space;'
   echo 'StartupWMClass=Loucodiworkshop'
 } > "$desktop_file"
 chmod 0644 "$desktop_file"
@@ -125,9 +169,14 @@ cat > "$mime_packages_dir/lou-codi-document.xml" <<'EOF'
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-loucodi-document">
     <comment>Document Lou Còdi</comment>
+    <icon name="application-x-loucodi-document"/>
     <glob pattern="*.code"/>
     <glob pattern="*.cod"/>
     <glob pattern="*.loucodi-document"/>
+  </mime-type>
+  <mime-type type="application/x-loucodi-space">
+    <comment>Espace Lou Còdi</comment>
+    <glob pattern="*.loucodi-espace"/>
   </mime-type>
 </mime-info>
 EOF
@@ -138,6 +187,9 @@ fi
 if command -v update-mime-database >/dev/null 2>&1; then
   update-mime-database "$data_root/mime"
 fi
+if command -v xdg-mime >/dev/null 2>&1; then
+  xdg-mime default lou-codi-workshop.desktop application/x-loucodi-document || true
+fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "$data_root/icons/hicolor" >/dev/null 2>&1 || true
 fi
@@ -145,8 +197,14 @@ fi
 
 echo
 echo "Installation terminée."
+echo "- Désinstallation : $application_target/uninstall.sh"
 if [ "$install_launcher" -eq 1 ]; then
   echo "- Raccourci : disponible dans le menu des applications."
 else
   echo "- Raccourci : non créé. Exécutable : $application_target/lou-codi-pdf-converter"
+fi
+if [ "$gui" -eq 1 ]; then
+  zenity --info --title="Lou Còdi Workshop" \
+    --text="Installation terminée.\n\nVersion : $bundle_version\nDésinstallation : $application_target/uninstall.sh" \
+    --width=560 2>/dev/null || true
 fi

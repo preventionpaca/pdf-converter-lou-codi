@@ -213,8 +213,12 @@ class CanvasDocument:
                     for cell in row:
                         if isinstance(cell, dict):
                             cell["image_path"] = materialize(cell.get("image_path", ""))
+            source_pdf = materialize(data.get("source_pdf", ""))
         return cls(
-            source_pdf=materialize(data.get("source_pdf", "")),
+            # Assets must be materialized while the ZIP archive is still open.
+            # In particular, a PDF used as the document background previously
+            # triggered "Attempt to use ZIP archive that was already closed".
+            source_pdf=source_pdf,
             page_count=max(1, int(data.get("page_count", 1))),
             page_width=float(data.get("page_width", A4_WIDTH)),
             page_height=float(data.get("page_height", A4_HEIGHT)),
@@ -1124,13 +1128,18 @@ def _draw_table(page: pymupdf.Page, rectangle: pymupdf.Rect, item: PageObject, t
                         fill=_rgb(highlight),
                         overlay=True,
                     )
-                page.insert_textbox(
-                    line_box,
+                # ``insert_textbox`` refuses a line when its rectangle is only
+                # one nominal line high (it returns a negative value without
+                # raising). Spreadsheet cells therefore exported with borders
+                # and fills but no values. Position the already-fitted line at
+                # its baseline instead; horizontal alignment is calculated by
+                # ``line_x`` above.
+                page.insert_text(
+                    pymupdf.Point(line_x, line_top + cell_font_size),
                     line,
                     fontsize=cell_font_size,
                     fontname=font_name,
                     color=_rgb(cell_color),
-                    align=text_align,
                     overlay=True,
                 )
             bottom_text = str(metadata.get("bottom_text", "")).strip()

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lou Còdi Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>Lou Còdi Capture</h1>
+    <p>Relier le Web à vos espaces</p>
+  </header>
+  <main>
+    <div id="connection" class="status">Connexion au Workshop…</div>
+    <section id="capture-editor" class="capture-editor" hidden>
+      <h2>Fiche de connaissance IA</h2>
+      <label for="capture-title">Titre proposé — modifiable</label>
+      <input id="capture-title" maxlength="180">
+      <label for="capture-excerpt">Passage mémorisé</label>
+      <textarea id="capture-excerpt" rows="5"></textarea>
+      <p id="capture-source" class="source"></p>
+    </section>
+    <section>
+      <h2>Mes espaces</h2>
+      <div id="spaces" class="spaces"></div>
+    </section>
+    <section class="create">
+      <h2>Nouvel espace</h2>
+      <div class="row">
+        <input id="space-title" placeholder="Nom de l’espace" maxlength="120">
+        <button id="create">Créer</button>
+      </div>
+      <select id="space-account" aria-label="Compte Google de l’espace"></select>
+    </section>
+    <p id="message" class="message"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -3,6 +3,8 @@ Add-Type -AssemblyName System.Windows.Forms
 
 $Source = Join-Path $PSScriptRoot "app"
 $Target = Join-Path $env:LOCALAPPDATA "LouCodi\Workshop"
+$PackageVersion = if (Test-Path (Join-Path $PSScriptRoot "VERSION")) { (Get-Content (Join-Path $PSScriptRoot "VERSION") -First 1).Trim() } else { "version inconnue" }
+$InstalledVersion = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\LouCodiWorkshop" -ErrorAction SilentlyContinue).DisplayVersion
 
 if (-not (Test-Path (Join-Path $Source "lou-codi-pdf-converter.exe"))) {
   [System.Windows.Forms.MessageBox]::Show(
@@ -32,6 +34,9 @@ $officeStatus
 
 LibreOffice est indépendant : Lou Còdi ne l'installe pas et ne revendique aucun lien avec ce logiciel.
 
+Version du paquet : $PackageVersion
+Version installée : $(if ($InstalledVersion) { $InstalledVersion } else { "aucune" })
+
 Oui : installation complète (recommandée)
 Non : installation personnalisée
 Annuler : quitter sans installer
@@ -57,7 +62,7 @@ if ($mode -eq "No") {
     @{ Id = "document_studio"; Label = "Document Studio" },
     @{ Id = "cutting_optimization"; Label = "Optimisation de découpe" },
     @{ Id = "code_lab"; Label = "Lou Còdi Code Lab" },
-    @{ Id = "codi_space"; Label = "Còdi Espace" }
+    @{ Id = "codi_space"; Label = "Lou Còdi Espace" }
   ) | ForEach-Object {
     $enabled = [System.Windows.Forms.MessageBox]::Show(
       "Installer $($_.Label) ?", "Choix des modules", "YesNo", "Question"
@@ -69,6 +74,9 @@ if ($mode -eq "No") {
 if (Test-Path $Target) { Remove-Item $Target -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Target | Out-Null
 Copy-Item (Join-Path $Source "*") $Target -Recurse -Force
+Copy-Item (Join-Path $PSScriptRoot "VERSION") (Join-Path $Target "VERSION") -Force
+Copy-Item (Join-Path $PSScriptRoot "uninstaller.ps1") (Join-Path $Target "uninstaller.ps1") -Force
+Copy-Item (Join-Path $PSScriptRoot "check-requirements.ps1") (Join-Path $Target "check-requirements.ps1") -Force
 $moduleDirectory = Join-Path $Target "selected-modules"
 New-Item -ItemType Directory -Force -Path $moduleDirectory | Out-Null
 Get-ChildItem $moduleDirectory -Filter "*.enabled" -ErrorAction SilentlyContinue | Remove-Item -Force
@@ -77,6 +85,7 @@ $selectedModules | ForEach-Object {
 }
 
 $classes = "HKCU:\Software\Classes"
+New-Item -Force -Path "$classes\.code" -Value "LouCodi.Document" | Out-Null
 New-Item -Force -Path "$classes\.cod" -Value "LouCodi.Document" | Out-Null
 New-Item -Force -Path "$classes\.loucodi-document" -Value "LouCodi.Document" | Out-Null
 New-Item -Force -Path "$classes\LouCodi.Document" -Value "Document Lou Còdi" | Out-Null
@@ -86,6 +95,23 @@ Set-Item "$classes\LouCodi.Document\DefaultIcon" -Value "$installedDocumentIcon,
 New-Item -ItemType Directory -Force -Path "$classes\LouCodi.Document\shell\open\command" | Out-Null
 $openCommand = ('"{0}" "%1"' -f (Join-Path $Target "lou-codi-pdf-converter.exe"))
 Set-Item "$classes\LouCodi.Document\shell\open\command" -Value $openCommand
+New-Item -Force -Path "$classes\.loucodi-espace" -Value "LouCodi.Space" | Out-Null
+New-Item -Force -Path "$classes\LouCodi.Space" -Value "Espace Lou Còdi" | Out-Null
+New-Item -ItemType Directory -Force -Path "$classes\LouCodi.Space\DefaultIcon" | Out-Null
+Set-Item "$classes\LouCodi.Space\DefaultIcon" -Value "$installedDocumentIcon,0"
+New-Item -ItemType Directory -Force -Path "$classes\LouCodi.Space\shell\open\command" | Out-Null
+Set-Item "$classes\LouCodi.Space\shell\open\command" -Value $openCommand
+
+# Ask Explorer to discard its association/icon cache immediately.
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class LouCodiShellNotify {
+  [DllImport("shell32.dll")] public static extern void SHChangeNotify(
+    uint eventId, uint flags, IntPtr item1, IntPtr item2);
+}
+"@
+[LouCodiShellNotify]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 
 if ($createWorkspace) {
   try {
@@ -99,7 +125,7 @@ if ($createWorkspace) {
     @{ Module = "document_studio"; Folders = @("Document Studio") },
     @{ Module = "cutting_optimization"; Folders = @("Optimisation de découpe") },
     @{ Module = "code_lab"; Folders = @("Code Lab") },
-    @{ Module = "codi_space"; Folders = @("Còdi Espace") }
+    @{ Module = "codi_space"; Folders = @("Lou Còdi Espace") }
   ) | Where-Object { $selectedModules -contains $_.Module } | ForEach-Object {
     $_.Folders | ForEach-Object {
       New-Item -ItemType Directory -Force -Path (Join-Path $Workspace $_) | Out-Null
@@ -118,6 +144,16 @@ if ($installShortcut) {
 } elseif (Test-Path $shortcutPath) {
   Remove-Item $shortcutPath -Force
 }
+
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\LouCodiWorkshop"
+New-Item -Force -Path $uninstallKey | Out-Null
+Set-ItemProperty $uninstallKey DisplayName "Lou Còdi Workshop"
+Set-ItemProperty $uninstallKey DisplayVersion $PackageVersion
+Set-ItemProperty $uninstallKey Publisher "Lou Còdi"
+Set-ItemProperty $uninstallKey DisplayIcon (Join-Path $Target "lou-codi-pdf-converter.exe")
+Set-ItemProperty $uninstallKey UninstallString ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f (Join-Path $Target "uninstaller.ps1"))
+Set-ItemProperty $uninstallKey NoModify 1 -Type DWord
+Set-ItemProperty $uninstallKey NoRepair 1 -Type DWord
 
 $shortcutStatus = if ($installShortcut) {
   "Raccourci : créé dans le menu Démarrer."

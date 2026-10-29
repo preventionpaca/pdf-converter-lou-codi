@@ -8,4 +8,7 @@ if (Test-Path $Bundle) { Remove-Item $Bundle -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "app"), $Installers | Out-Null
 Copy-Item (Join-Path $Project "dist\lou-codi-pdf-converter\*") (Join-Path $Bundle "app") -Recurse -Force
 Copy-Item (Join-Path $Project "packaging\windows\install.ps1") (Join-Path $Bundle "installer.ps1")
+Copy-Item (Join-Path $Project "packaging\windows\uninstall.ps1") (Join-Path $Bundle "uninstaller.ps1")
+Copy-Item (Join-Path $Project "packaging\windows\check-requirements.ps1") (Join-Path $Bundle "check-requirements.ps1")
+Set-Content (Join-Path $Bundle "VERSION") $Version -Encoding Ascii
 Compress-Archive -Path $Bundle -DestinationPath (Join-Path $Installers "Lou-Codi-Workshop-$Version-windows-x86_64.zip") -Force

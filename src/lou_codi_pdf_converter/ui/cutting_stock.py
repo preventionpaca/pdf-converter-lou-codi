@@ -3,7 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from ..i18n import translate_widget_tree
+from ..i18n import tr, translate_widget_tree
 from ..services.canvas_document import CanvasDocument
 from ..services.cutting_optimizer import Part, Sheet, optimize_cutting
 from ..services.local_database import (
@@ -13,6 +13,7 @@ from ..services.local_database import (
     set_stock_sheet_status,
 )
 from .pdf_picker import choose_documents
+from .module_links import add_help_contact_buttons
 from .windowing import make_modal, maximize_window
 
 NAVY = "#193B66"
@@ -39,6 +40,7 @@ class CuttingStockWindow(tk.Toplevel):
         header = tk.Frame(self, bg=NAVY, height=94)
         header.pack(fill="x")
         header.pack_propagate(False)
+        add_help_contact_buttons(header, "optimisation-decoupe")
         tk.Label(
             header,
             text="Stock et plan de découpe",
@@ -85,8 +87,8 @@ class CuttingStockWindow(tk.Toplevel):
         form = ttk.Frame(stock_box)
         form.pack(fill="x", pady=(0, 8))
         self.stock_vars = {
-            "label": tk.StringVar(value="Plaque"),
-            "material": tk.StringVar(value="Bois"),
+            "label": tk.StringVar(value=tr("Plaque")),
+            "material": tk.StringVar(value=tr("Bois")),
             "width": tk.StringVar(value="2500"),
             "height": tk.StringVar(value="1250"),
             "thickness": tk.StringVar(value="18"),
@@ -132,7 +134,7 @@ class CuttingStockWindow(tk.Toplevel):
         form = ttk.Frame(part_box)
         form.pack(fill="x", pady=(0, 8))
         self.part_vars = {
-            "label": tk.StringVar(value="Pièce"),
+            "label": tk.StringVar(value=tr("Pièce")),
             "width": tk.StringVar(value="500"),
             "height": tk.StringVar(value="300"),
             "quantity": tk.StringVar(value="1"),
@@ -209,7 +211,7 @@ class CuttingStockWindow(tk.Toplevel):
     def _refresh_stock(self) -> None:
         for item in self.stock_tree.get_children():
             self.stock_tree.delete(item)
-        labels = {"available": "Disponible", "reserved": "Réservée", "used": "Utilisée", "scrap": "Inutilisable"}
+        labels = {"available": tr("Disponible"), "reserved": tr("Réservée"), "used": tr("Utilisée"), "scrap": tr("Inutilisable")}
         for sheet in list_stock_sheets():
             self.stock_tree.insert(
                 "",
@@ -258,7 +260,7 @@ class CuttingStockWindow(tk.Toplevel):
             return
         self.parts.append(part)
         self.parts_tree.insert(
-            "", "end", iid=str(len(self.parts) - 1), values=(part.label, f"{part.width:g} × {part.height:g}", part.quantity, "Oui" if part.rotation_allowed else "Non")
+            "", "end", iid=str(len(self.parts) - 1), values=(part.label, f"{part.width:g} × {part.height:g}", part.quantity, tr("Oui") if part.rotation_allowed else tr("Non"))
         )
 
     def _remove_part(self) -> None:
@@ -274,7 +276,7 @@ class CuttingStockWindow(tk.Toplevel):
         for item in self.parts_tree.get_children():
             self.parts_tree.delete(item)
         for index, part in enumerate(self.parts):
-            self.parts_tree.insert("", "end", iid=str(index), values=(part.label, f"{part.width:g} × {part.height:g}", part.quantity, "Oui" if part.rotation_allowed else "Non"))
+            self.parts_tree.insert("", "end", iid=str(index), values=(part.label, f"{part.width:g} × {part.height:g}", part.quantity, tr("Oui") if part.rotation_allowed else tr("Non")))
 
     def _import_drawing_rectangles(self) -> None:
         files = choose_documents(self, {".code", ".cod", ".loucodi-document"})

@@ -4,14 +4,50 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox, ttk
+from typing import Literal
 
-from ..i18n import translate_widget_tree
+from ..i18n import tr, translate_widget_tree
 from ..paths import downloads_directory
 from .windowing import make_modal, maximize_window
 from .input_dialogs import ask_text
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
+SortColumn = Literal["name", "modified", "size"]
+
+
+def _sorted_entries(
+    directory: Path,
+    allowed_suffixes: set[str],
+    sort_column: SortColumn,
+    descending: bool,
+) -> list[tuple[Path, float, int]]:
+    """Read a directory afresh and return visible entries in the requested order."""
+    rows: list[tuple[Path, float, int]] = []
+    for path in directory.iterdir():
+        if not (path.is_dir() or path.suffix.lower() in allowed_suffixes):
+            continue
+        try:
+            statistics = path.stat()
+        except OSError:
+            continue
+        rows.append((path, statistics.st_mtime, statistics.st_size))
+
+    def value(row: tuple[Path, float, int]) -> str | float | int:
+        path, modified, size = row
+        if sort_column == "modified":
+            return modified
+        if sort_column == "size":
+            return size
+        return path.name.casefold()
+
+    # Directories remain grouped above files, while each group follows the
+    # selected ordering. This keeps navigation predictable even for a size sort.
+    directories = [row for row in rows if row[0].is_dir()]
+    files = [row for row in rows if not row[0].is_dir()]
+    directories.sort(key=value, reverse=descending)
+    files.sort(key=value, reverse=descending)
+    return directories + files
 
 
 class PdfPicker(tk.Toplevel):
@@ -42,6 +78,10 @@ class PdfPicker(tk.Toplevel):
             initial_directory if initial_directory and initial_directory.is_dir() else downloads_directory()
         )
         self.paths: dict[str, Path] = {}
+        # A file picker is most useful when the document just downloaded is
+        # immediately visible. Users can then switch to name or size sorting.
+        self.sort_column: SortColumn = "modified"
+        self.sort_descending = True
         self.path_text = tk.StringVar(value=str(self.current_directory))
         self._build()
         translate_widget_tree(self)
@@ -100,9 +140,9 @@ class PdfPicker(tk.Toplevel):
             show="tree headings",
             selectmode="extended",
         )
-        self.tree.heading("#0", text="Nom du fichier ou dossier")
-        self.tree.heading("modified", text="Modifié le")
-        self.tree.heading("size", text="Taille")
+        self.tree.heading("#0", command=lambda: self._change_sort("name"))
+        self.tree.heading("modified", command=lambda: self._change_sort("modified"))
+        self.tree.heading("size", command=lambda: self._change_sort("size"))
         self.tree.column("#0", width=650, minwidth=300, stretch=True)
         self.tree.column("modified", width=180, stretch=False, anchor="center")
         self.tree.column("size", width=120, stretch=False, anchor="e")
@@ -112,6 +152,7 @@ class PdfPicker(tk.Toplevel):
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.bind("<Double-1>", self._double_click)
         self.bind("<FocusIn>", self._refresh_on_focus, add="+")
+        self._update_headings()
 
         footer = ttk.Frame(self, padding=(20, 6, 20, 18))
         footer.pack(fill="x")
@@ -126,7 +167,13 @@ class PdfPicker(tk.Toplevel):
 
     def _show_directory(self, directory: Path) -> None:
         try:
-            entries = sorted(directory.iterdir(), key=lambda path: (not path.is_dir(), path.name.casefold()))
+            directory = directory.expanduser().resolve()
+            entries = _sorted_entries(
+                directory,
+                self.allowed_suffixes,
+                self.sort_column,
+                self.sort_descending,
+            )
         except (OSError, PermissionError) as exc:
             messagebox.showerror("Dossier inaccessible", str(exc), parent=self)
             return
@@ -134,18 +181,35 @@ class PdfPicker(tk.Toplevel):
         self.path_text.set(str(directory))
         self.paths.clear()
         self.tree.delete(*self.tree.get_children())
-        for path in entries:
-            if not (path.is_dir() or path.suffix.lower() in self.allowed_suffixes):
-                continue
-            try:
-                statistics = path.stat()
-            except OSError:
-                continue
-            modified = datetime.fromtimestamp(statistics.st_mtime).strftime("%d/%m/%Y %H:%M")
-            size = "" if path.is_dir() else _format_size(statistics.st_size)
+        for path, modified_timestamp, byte_count in entries:
+            modified = datetime.fromtimestamp(modified_timestamp).strftime("%d/%m/%Y %H:%M")
+            size = "" if path.is_dir() else _format_size(byte_count)
             prefix = "📁  " if path.is_dir() else "📄  "
             item = self.tree.insert("", "end", text=prefix + path.name, values=(modified, size))
             self.paths[item] = path
+
+    def _change_sort(self, column: SortColumn) -> None:
+        if column == self.sort_column:
+            self.sort_descending = not self.sort_descending
+        else:
+            self.sort_column = column
+            self.sort_descending = column in {"modified", "size"}
+        self._update_headings()
+        self._refresh_current_directory()
+
+    def _update_headings(self) -> None:
+        labels: dict[SortColumn, str] = {
+            "name": tr("Nom du fichier ou dossier"),
+            "modified": tr("Modifié le"),
+            "size": tr("Taille"),
+        }
+        tree_columns = {"name": "#0", "modified": "modified", "size": "size"}
+        for column, label in labels.items():
+            marker = " ▼" if self.sort_descending else " ▲"
+            self.tree.heading(
+                tree_columns[column],
+                text=label + (marker if column == self.sort_column else ""),
+            )
 
     def _refresh_current_directory(self) -> None:
         selected_paths = {

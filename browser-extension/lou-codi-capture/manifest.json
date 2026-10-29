@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Lou Còdi Capture",
+  "version": "0.1.0",
+  "description": "Relier une page, un lien, une image ou une fiche issue d’un échange IA à un espace Lou Còdi.",
+  "permissions": ["contextMenus", "storage", "activeTab"],
+  "host_permissions": ["http://127.0.0.1:47632/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["context.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "Lou Còdi Capture",
+    "default_popup": "popup.html"
+  }
+}

@@ -130,6 +130,30 @@ def test_document_tabs_keep_independent_documents_and_history() -> None:
     assert editor.project_path is None
 
 
+def test_menu_cleanup_ignores_descendant_destroy_events() -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    calls: list[str] = []
+    editor._dismiss_main_menus = lambda: calls.append("dismiss")  # type: ignore[method-assign]
+
+    editor._dismiss_main_menus_on_window_event(type("Event", (), {"widget": object()})())
+    assert calls == []
+
+    editor._dismiss_main_menus_on_window_event(type("Event", (), {"widget": editor})())
+    assert calls == ["dismiss"]
+
+
+def test_close_from_menu_unposts_before_deferred_window_close() -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    calls: list[str] = []
+    editor._dismiss_main_menus = lambda: calls.append("dismiss")  # type: ignore[method-assign]
+    editor._request_close = lambda: calls.append("close")  # type: ignore[method-assign]
+    editor.after_idle = lambda callback: (calls.append("defer"), callback())  # type: ignore[method-assign]
+
+    editor._request_close_from_menu()
+
+    assert calls == ["dismiss", "defer", "close"]
+
+
 def test_available_font_families_includes_local_fonts_in_alphabetic_order(
     monkeypatch,
 ) -> None:
@@ -825,6 +849,22 @@ def test_table_cells_keep_multiline_text_links_and_images(tmp_path: Path) -> Non
     assert cell["text"] == "Première ligne\nDeuxième ligne"
     assert cell["hyperlink"] == "https://example.com"
     assert Path(cell["image_path"]).is_file()
+
+
+def test_project_with_pdf_background_loads_before_archive_closes(tmp_path: Path) -> None:
+    background = tmp_path / "fond.pdf"
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((72, 72), "Document source")
+        pdf.save(background)
+    project = tmp_path / "avec-fond.loucodi-document"
+
+    CanvasDocument(source_pdf=str(background)).save(project)
+    restored = CanvasDocument.load(project)
+
+    assert Path(restored.source_pdf).is_file()
+    with pymupdf.open(restored.source_pdf) as pdf:
+        assert "Document source" in pdf[0].get_text()
 
 
 def test_table_border_settings_survive_project_roundtrip(tmp_path: Path) -> None:
@@ -1838,6 +1878,36 @@ def test_spreadsheet_html_clipboard_keeps_formula_styles_and_dimensions() -> Non
     assert cells[0][1]["horizontal_align"] == "right"
     assert widths == [90.0, 72.0]
     assert heights == [24.0]
+
+
+def test_spreadsheet_clipboard_roundtrip_exports_visible_cell_values(tmp_path: Path) -> None:
+    html = """
+    <table>
+      <tr><td>Nom</td><td>Quantité</td></tr>
+      <tr><td>Vis</td><td>12</td></tr>
+    </table>
+    """
+    cells, widths, heights = parse_tabular_clipboard_html(html)
+    project = tmp_path / "tableau-excel.loucodi-document"
+    target = tmp_path / "tableau-excel.pdf"
+    document = CanvasDocument(objects=[PageObject(
+        "table", 0, 70, 80, 300, 120,
+        table_cells=cells,
+        table_column_widths=widths,
+        table_row_heights=heights,
+        font_size=10,
+    )])
+
+    document.save(project)
+    restored = CanvasDocument.load(project)
+    export_canvas_pdf(restored, target)
+
+    with pymupdf.open(target) as pdf:
+        exported_text = "\n".join(page.get_text() for page in pdf)
+    assert "Nom" in exported_text
+    assert "Quantité" in exported_text
+    assert "Vis" in exported_text
+    assert "12" in exported_text
 
 
 def test_spreadsheet_html_clipboard_resolves_office_css_classes_and_nested_formatting() -> None:
