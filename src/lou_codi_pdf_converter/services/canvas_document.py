@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import re
@@ -15,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import pymupdf
-from PIL import ImageFont
+from PIL import Image, ImageFont, PngImagePlugin
 
 from .font_catalog import font_file as system_font_file
 from .table_formulas import evaluate_table, evaluate_table_cells
@@ -30,6 +31,43 @@ TABLE_STYLE_PALETTES: dict[str, tuple[str, str, str, str]] = {
     "blue": ("#193F6A", "#FFFFFF", "#EAF3FC", "#D5E7F7"),
     "green": ("#087F6A", "#FFFFFF", "#E9F7F2", "#D2EEE5"),
 }
+
+
+def write_loucodi_document_thumbnail(path: Path) -> None:
+    """Publish the branded COD tile in the freedesktop thumbnail cache.
+
+    Some GNOME installations ignore per-user MIME icons when their shared
+    hicolor cache contains an unrelated invalid icon. A standards-compliant
+    thumbnail keeps Lou Còdi documents recognisable without altering that
+    user-owned icon collection.
+    """
+    if sys.platform != "linux" or not path.is_file():
+        return
+    icon = Path(__file__).resolve().parents[1] / "assets" / "lou-codi-document.png"
+    if not icon.is_file():
+        return
+    try:
+        uri = path.resolve().as_uri()
+        digest = hashlib.md5(uri.encode("utf-8"), usedforsecurity=False).hexdigest()
+        modified = str(int(path.stat().st_mtime))
+        original_size = str(path.stat().st_size)
+        cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "thumbnails"
+        with Image.open(icon) as source:
+            branded = source.convert("RGBA")
+            for cache_name, size in (("normal", 128), ("large", 256), ("x-large", 512)):
+                cache_dir = cache_root / cache_name
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                target = cache_dir / f"{digest}.png"
+                metadata = PngImagePlugin.PngInfo()
+                metadata.add_text("Thumb::URI", uri)
+                metadata.add_text("Thumb::MTime", modified)
+                metadata.add_text("Thumb::Size", original_size)
+                image = branded.copy()
+                image.thumbnail((size, size), Image.Resampling.LANCZOS)
+                image.save(target, format="PNG", pnginfo=metadata)
+    except (OSError, ValueError):
+        # Thumbnailing is cosmetic and must never make document saving fail.
+        return
 
 
 def table_cell_colors(style: str, row: int) -> tuple[str, str]:
@@ -173,6 +211,7 @@ class CanvasDocument:
                     json.dumps(manifest, ensure_ascii=False, indent=2),
                 )
             os.replace(temporary, path)
+            write_loucodi_document_thumbnail(path)
         finally:
             temporary.unlink(missing_ok=True)
 

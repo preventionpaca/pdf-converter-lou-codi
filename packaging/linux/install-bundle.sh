@@ -9,6 +9,7 @@ applications_dir="$data_root/applications"
 icons_dir="$data_root/icons/hicolor/256x256/apps"
 mime_icons_dir="$data_root/icons/hicolor/256x256/mimetypes"
 mime_packages_dir="$data_root/mime/packages"
+thumbnailers_dir="$data_root/thumbnailers"
 install_launcher=1
 create_workspace=1
 selected_modules="pdf_studio document_studio cutting_optimization code_lab codi_space"
@@ -101,7 +102,7 @@ elif [ -t 0 ]; then
   esac
 fi
 
-install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir"
+install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir" "$thumbnailers_dir"
 cp -a "$application_source/." "$application_target/"
 install -m 0644 "$bundle_dir/VERSION" "$application_target/VERSION"
 install -m 0755 "$bundle_dir/uninstaller.sh" "$application_target/uninstall.sh"
@@ -200,6 +201,23 @@ EOF
     "$data_root/icons/application-x-loucodi-document.svg"
   install -m 0644 "$bundle_dir/lou-codi-document.svg" \
     "$data_root/icons/application-x-loucodi-document-symbolic.svg"
+  install -m 0644 "$bundle_dir/lou-codi-document.png" \
+    "$application_target/lou-codi-document-thumbnail.png"
+
+  thumbnailer_script="$application_target/lou-codi-document-thumbnailer"
+  cat > "$thumbnailer_script" <<EOF
+#!/bin/sh
+# Nautilus asks thumbnailers for an output PNG. The Lou Còdi file contents do
+# not need to be opened: the branded COD tile itself is the intended preview.
+cp "$application_target/lou-codi-document-thumbnail.png" "\$2"
+EOF
+  chmod 0755 "$thumbnailer_script"
+  cat > "$thumbnailers_dir/lou-codi-document.thumbnailer" <<EOF
+[Thumbnailer Entry]
+TryExec=$thumbnailer_script
+Exec=$thumbnailer_script %i %o %s
+MimeType=application/x-loucodi-document;
+EOF
 
 # Migrate installations made under the former PDF Converter desktop identity.
 # Keeping both launchers makes Linux associate the running window with a generic

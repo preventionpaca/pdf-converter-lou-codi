@@ -1514,6 +1514,20 @@ def test_rotation_pivot_is_persisted_in_document_archive(tmp_path: Path) -> None
     assert loaded.objects[0].rotation_pivot_y == 30.25
 
 
+def test_saving_cod_creates_a_valid_linux_thumbnail(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    path = tmp_path / "dessin.cod"
+
+    CanvasDocument().save(path)
+
+    thumbnails = list((cache / "thumbnails" / "normal").glob("*.png"))
+    assert len(thumbnails) == 1
+    with Image.open(thumbnails[0]) as thumbnail:
+        assert thumbnail.info["Thumb::URI"] == path.resolve().as_uri()
+        assert thumbnail.info["Thumb::MTime"] == str(int(path.stat().st_mtime))
+
+
 def test_rotated_text_frame_keeps_all_corners_around_the_same_centre() -> None:
     item = PageObject("text", 0, 10, 20, 100, 40, rotation=90)
 
