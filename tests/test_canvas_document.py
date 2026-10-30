@@ -693,6 +693,75 @@ class _BooleanValue:
         return self.value
 
 
+class _MeasurementCanvasRecorder:
+    def __init__(self) -> None:
+        self.deleted: list[object] = []
+        self.created: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    def delete(self, item: object) -> None:
+        self.deleted.append(item)
+
+    def configure(self, **_values: object) -> None:
+        pass
+
+    def create_oval(self, *values: object, **options: object) -> None:
+        self.created.append(("oval", values, options))
+
+    def create_text(self, *values: object, **options: object) -> None:
+        self.created.append(("text", values, options))
+
+    def create_line(self, *values: object, **options: object) -> None:
+        self.created.append(("line", values, options))
+
+    def create_arc(self, *values: object, **options: object) -> None:
+        self.created.append(("arc", values, options))
+
+
+def _angle_measurement_editor() -> DocumentEditorWindow:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument()
+    editor.current_page = 0
+    editor.zoom = 1.0
+    editor.page_x = 0.0
+    editor.page_y = 0.0
+    editor.canvas = _MeasurementCanvasRecorder()
+    editor.status = _StatusRecorder()
+    editor.measurement_result = _StatusRecorder()
+    editor.write_measurement_var = _BooleanValue(False)
+    editor.show_measurement_length_var = _BooleanValue(False)
+    editor._measurement_mode = "angle"
+    editor._measurement_points = []
+    editor._page_size = lambda: (500.0, 500.0)
+    return editor
+
+
+def test_invalid_third_angle_point_keeps_the_first_two_points_for_retry() -> None:
+    editor = _angle_measurement_editor()
+    editor._measurement_points = [(100.0, 100.0), (200.0, 100.0)]
+
+    editor._capture_measurement_point(200.0, 100.0)
+
+    assert editor._measurement_mode == "angle"
+    assert editor._measurement_points == [(100.0, 100.0), (200.0, 100.0)]
+    assert "cliquez un autre point" in editor.status.text
+
+
+def test_completed_angle_measurement_stays_visible_on_the_drawing() -> None:
+    editor = _angle_measurement_editor()
+    editor._measurement_points = [(100.0, 200.0), (100.0, 100.0)]
+
+    editor._capture_measurement_point(200.0, 100.0)
+
+    canvas = editor.canvas
+    assert isinstance(canvas, _MeasurementCanvasRecorder)
+    assert editor._measurement_mode == ""
+    assert editor._measurement_points == []
+    assert editor.measurement_result.text == "Angle intérieur : 90.0°"
+    assert [kind for kind, _values, _options in canvas.created[-4:]] == [
+        "line", "line", "arc", "text"
+    ]
+
+
 def test_measurement_label_contains_only_requested_fields() -> None:
     editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
     editor.document = CanvasDocument()

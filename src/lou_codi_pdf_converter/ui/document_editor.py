@@ -11141,9 +11141,72 @@ class DocumentEditorWindow(tk.Toplevel):
         self._measurement_mode = "angle"
         self._measurement_points.clear()
         self.canvas.delete("measurement-anchor")
+        self.canvas.delete("angle-measurement-result")
         self.canvas.configure(cursor="crosshair")
         self.status.configure(
             text="Angle : cliquez un point du premier côté, le sommet, puis un point du second côté."
+        )
+
+    def _draw_angle_measurement_result(
+        self,
+        first: tuple[float, float],
+        vertex: tuple[float, float],
+        second: tuple[float, float],
+        angle: float,
+    ) -> None:
+        """Keep the completed three-point angle visible on the drawing."""
+        self.canvas.delete("angle-measurement-result")
+
+        def canvas_point(point: tuple[float, float]) -> tuple[float, float]:
+            return self.page_x + point[0] * self.zoom, self.page_y + point[1] * self.zoom
+
+        first_canvas = canvas_point(first)
+        vertex_canvas = canvas_point(vertex)
+        second_canvas = canvas_point(second)
+        tags = ("angle-measurement-result",)
+        self.canvas.create_line(
+            *vertex_canvas, *first_canvas, fill="#E87524", width=2, dash=(5, 3), tags=tags
+        )
+        self.canvas.create_line(
+            *vertex_canvas, *second_canvas, fill="#E87524", width=2, dash=(5, 3), tags=tags
+        )
+
+        first_angle = math.degrees(math.atan2(
+            -(first_canvas[1] - vertex_canvas[1]), first_canvas[0] - vertex_canvas[0]
+        ))
+        second_angle = math.degrees(math.atan2(
+            -(second_canvas[1] - vertex_canvas[1]), second_canvas[0] - vertex_canvas[0]
+        ))
+        extent = (second_angle - first_angle + 180.0) % 360.0 - 180.0
+        radius = max(
+            16.0,
+            min(
+                38.0,
+                math.dist(vertex_canvas, first_canvas) * 0.35,
+                math.dist(vertex_canvas, second_canvas) * 0.35,
+            ),
+        )
+        self.canvas.create_arc(
+            vertex_canvas[0] - radius,
+            vertex_canvas[1] - radius,
+            vertex_canvas[0] + radius,
+            vertex_canvas[1] + radius,
+            start=first_angle,
+            extent=extent,
+            style="arc",
+            outline="#1769AA",
+            width=3,
+            tags=tags,
+        )
+        middle_angle = math.radians(first_angle + extent / 2)
+        label_radius = radius + 15
+        self.canvas.create_text(
+            vertex_canvas[0] + math.cos(middle_angle) * label_radius,
+            vertex_canvas[1] - math.sin(middle_angle) * label_radius,
+            text=f"{angle:.1f}°",
+            fill="#1769AA",
+            font=("Sans", 10, "bold"),
+            tags=tags,
         )
 
     def _start_right_triangle(self) -> None:
@@ -11375,16 +11438,20 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if self._measurement_mode == "angle":
             first, vertex, second = self._measurement_points[:3]
+            try:
+                angle = angle_at_vertex(first, vertex, second)
+            except ValueError as error:
+                self._measurement_points.pop()
+                self._draw_measurement_anchor_markers()
+                self.status.configure(
+                    text=f"{error} Le troisième point n’a pas été retenu : cliquez un autre point du second côté."
+                )
+                return
             self._measurement_mode = ""
             self._measurement_points.clear()
             self.canvas.delete("measurement-anchor")
             self.canvas.configure(cursor="")
             self.canvas.delete("snap-preview")
-            try:
-                angle = angle_at_vertex(first, vertex, second)
-            except ValueError as error:
-                self.status.configure(text=str(error))
-                return
             first_length = math.dist(first, vertex) * 25.4 / 72 * self.document.measurement_scale
             second_length = math.dist(second, vertex) * 25.4 / 72 * self.document.measurement_scale
             length_detail = f"  •  prises de cote {first_length:.2f} / {second_length:.2f} mm" if self.show_measurement_length_var.get() else ""
@@ -11396,8 +11463,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 if self.show_measurement_length_var.get():
                     label += f"  ({first_length:.1f} / {second_length:.1f} mm)"
                 self._write_measurement_label(label, vertex[0] + 10, vertex[1] - 30)
-            self.after_idle(self._render)
-            self.after(1, self._render)
+            self._draw_angle_measurement_result(first, vertex, second, angle)
             return
         start, end = self._measurement_points[:2]
         raw_mm = math.dist(start, end) * 25.4 / 72
