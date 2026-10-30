@@ -130,6 +130,58 @@ if [ "$create_workspace" -eq 1 ]; then
 fi
 
 if [ "$install_launcher" -eq 1 ]; then
+  # A per-user hicolor directory is not considered a complete icon theme
+  # without index.theme. GTK then refuses to build its cache and Nautilus
+  # silently falls back to the generic ZIP/document icon.
+  if [ ! -f "$data_root/icons/hicolor/index.theme" ]; then
+    if [ -f /usr/share/icons/hicolor/index.theme ]; then
+      install -m 0644 /usr/share/icons/hicolor/index.theme \
+        "$data_root/icons/hicolor/index.theme"
+    else
+      cat > "$data_root/icons/hicolor/index.theme" <<'EOF'
+[Icon Theme]
+Name=Hicolor
+Comment=Fallback icon theme
+Hidden=true
+Directories=16x16/mimetypes,24x24/mimetypes,32x32/mimetypes,48x48/mimetypes,64x64/mimetypes,128x128/mimetypes,256x256/mimetypes,scalable/mimetypes
+
+[16x16/mimetypes]
+Size=16
+Type=Fixed
+Context=MimeTypes
+[24x24/mimetypes]
+Size=24
+Type=Fixed
+Context=MimeTypes
+[32x32/mimetypes]
+Size=32
+Type=Fixed
+Context=MimeTypes
+[48x48/mimetypes]
+Size=48
+Type=Fixed
+Context=MimeTypes
+[64x64/mimetypes]
+Size=64
+Type=Fixed
+Context=MimeTypes
+[128x128/mimetypes]
+Size=128
+Type=Fixed
+Context=MimeTypes
+[256x256/mimetypes]
+Size=256
+Type=Fixed
+Context=MimeTypes
+[scalable/mimetypes]
+Size=48
+MinSize=16
+MaxSize=512
+Type=Scalable
+Context=MimeTypes
+EOF
+    fi
+  fi
   install -m 0644 "$bundle_dir/lou-codi-workshop.png" "$icons_dir/lou-codi-workshop.png"
   for size in 16 24 32 48 64 128 256; do
     destination="$data_root/icons/hicolor/${size}x${size}/mimetypes"
@@ -140,6 +192,14 @@ if [ "$install_launcher" -eq 1 ]; then
   install -d "$data_root/icons/hicolor/scalable/mimetypes"
   install -m 0644 "$bundle_dir/lou-codi-document.svg" \
     "$data_root/icons/hicolor/scalable/mimetypes/application-x-loucodi-document.svg"
+  # Unthemed fallbacks are looked up directly and remain available even when
+  # another application has left the user's shared hicolor cache invalid.
+  install -m 0644 "$bundle_dir/lou-codi-document.png" \
+    "$data_root/icons/application-x-loucodi-document.png"
+  install -m 0644 "$bundle_dir/lou-codi-document.svg" \
+    "$data_root/icons/application-x-loucodi-document.svg"
+  install -m 0644 "$bundle_dir/lou-codi-document.svg" \
+    "$data_root/icons/application-x-loucodi-document-symbolic.svg"
 
 # Migrate installations made under the former PDF Converter desktop identity.
 # Keeping both launchers makes Linux associate the running window with a generic
