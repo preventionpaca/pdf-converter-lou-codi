@@ -5424,6 +5424,17 @@ class DocumentEditorWindow(tk.Toplevel):
             point = min(intersections, key=lambda candidate: math.dist((x, y), candidate))
             if math.dist((x, y), point) <= threshold:
                 return point, "sommet / intersection"
+        # Keep midpoints ahead of the generic projection on an edge.  Otherwise
+        # the edge candidate wins first and drawing from the exact middle of a
+        # side is needlessly imprecise.
+        midpoints = [
+            ((segment.x1 + segment.x2) / 2, (segment.y1 + segment.y2) / 2)
+            for segment, _label in segments
+        ]
+        if midpoints:
+            point = min(midpoints, key=lambda candidate: math.dist((x, y), candidate))
+            if math.dist((x, y), point) <= threshold:
+                return point, "milieu"
         candidates = [
             (closest_point_on_segment(x, y, segment), label)
             for segment, label in segments
@@ -5599,11 +5610,18 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         px = self.page_x + point[0] * self.zoom
         py = self.page_y + point[1] * self.zoom
-        self.canvas.create_oval(
-            px - 6, py - 6, px + 6, py + 6,
-            fill="#D9F5E5", outline="#14804A", width=2,
-            tags=("snap-preview",),
-        )
+        if label == "milieu":
+            self.canvas.create_polygon(
+                px, py - 7, px + 7, py, px, py + 7, px - 7, py,
+                fill="#D9F5E5", outline="#14804A", width=2,
+                tags=("snap-preview",),
+            )
+        else:
+            self.canvas.create_oval(
+                px - 6, py - 6, px + 6, py + 6,
+                fill="#D9F5E5", outline="#14804A", width=2,
+                tags=("snap-preview",),
+            )
         self.canvas.create_text(px + 9, py - 9, text=f"Accroché : {label}", anchor="sw", fill="#14804A", font=("Sans", 8, "bold"), tags=("snap-preview",))
 
     def _draw_measurement_anchor_markers(self) -> None:

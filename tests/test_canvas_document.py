@@ -633,6 +633,50 @@ def test_dimension_snap_detects_circle_center_midpoint_and_intersection() -> Non
     assert reference["kind"] == "intersection"
 
 
+@pytest.mark.parametrize(
+    ("item", "pointer", "expected"),
+    [
+        (PageObject("line", 0, 20, 40, 100, 0), (69, 43), (70.0, 40.0)),
+        (PageObject("shape", 0, 100, 80, 120, 60, shape="rectangle"), (160, 84), (160.0, 80.0)),
+        (PageObject("shape", 0, 260, 100, 100, 80, shape="triangle"), (334, 141), (335.0, 140.0)),
+        (
+            PageObject(
+                "polyline", 0, 20, 220, 100, 60,
+                points=[[0, 0], [100, 0], [100, 60]],
+            ),
+            (70, 224),
+            (70.0, 220.0),
+        ),
+    ],
+)
+def test_drawing_snap_finds_the_middle_of_every_straight_side(
+    item: PageObject,
+    pointer: tuple[float, float],
+    expected: tuple[float, float],
+) -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[item])
+    editor.current_page = 0
+    editor.zoom = 1.0
+
+    point, label = editor._snap_drawing_point(*pointer)
+
+    assert point == expected
+    assert label == "milieu"
+
+
+def test_drawing_snap_keeps_an_endpoint_ahead_of_a_nearby_midpoint() -> None:
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[PageObject("line", 0, 20, 40, 8, 0)])
+    editor.current_page = 0
+    editor.zoom = 1.0
+
+    point, label = editor._snap_drawing_point(21, 40)
+
+    assert point == (20, 40)
+    assert label == "extrémité"
+
+
 class _StatusRecorder:
     def __init__(self) -> None:
         self.text = ""
