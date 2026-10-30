@@ -1294,6 +1294,31 @@ def dimension_label_layout(
     )
 
 
+def rectangle_edge_toward(
+    center: tuple[float, float],
+    target: tuple[float, float],
+    width: float,
+    height: float,
+    gap: float = 0.0,
+) -> tuple[float, float]:
+    """Return the rectangle edge facing target, optionally just outside it."""
+    dx, dy = target[0] - center[0], target[1] - center[1]
+    distance = math.hypot(dx, dy)
+    if distance <= 1e-9:
+        return center
+    half_width, half_height = max(0.5, width / 2), max(0.5, height / 2)
+    scales = []
+    if abs(dx) > 1e-9:
+        scales.append(half_width / abs(dx))
+    if abs(dy) > 1e-9:
+        scales.append(half_height / abs(dy))
+    scale = min(scales, default=0.0)
+    return (
+        center[0] + dx * scale + dx / distance * gap,
+        center[1] + dy * scale + dy / distance * gap,
+    )
+
+
 def resized_circle_diameter(
     old_diameter: float, delta_x: float, delta_y: float
 ) -> float:
@@ -1696,6 +1721,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._crop_box: list[float] | None = None
         self._crop_drag_edge: str | None = None
         self._vertex_drag_origin: tuple[int, int, list[list[float]]] | None = None
+        self._drag_snap_preview: tuple[tuple[float, float], str] | None = None
         self._selected_vertex: tuple[int, int] | None = None
         self._marquee_origin: tuple[float, float] | None = None
         self._marquee_initial_selection: set[int] = set()
@@ -3726,6 +3752,9 @@ class DocumentEditorWindow(tk.Toplevel):
         for index, item in render_order:
             if self.current_page in pages_for_object(item, self.document.page_count):
                 self._draw_object(index, item)
+        drag_snap_preview = getattr(self, "_drag_snap_preview", None)
+        if drag_snap_preview is not None:
+            self._draw_snap_marker(*drag_snap_preview)
         self._draw_crop_overlay()
         if self._coincident_edge_highlight is not None:
             edge = self._coincident_edge_highlight
@@ -4633,7 +4662,10 @@ class DocumentEditorWindow(tk.Toplevel):
         label_center = (x + width / 2, y + height / 2)
         # Le cartouche sert aussi de poignée de placement : en l'éloignant du
         # sommet, l'arc de cote grandit et les rappels s'allongent avec lui.
-        radius = max(18.0, math.dist(vertex, label_center) - max(22.0, min(width, height) / 2))
+        label_edge = rectangle_edge_toward(
+            label_center, vertex, width, height
+        )
+        radius = max(18.0, math.dist(vertex, label_edge) - 14.0)
         for endpoint in (first, second):
             arm_length = math.dist(vertex, endpoint)
             if arm_length <= 1e-9:
@@ -4656,9 +4688,12 @@ class DocumentEditorWindow(tk.Toplevel):
             vertex[0] + math.cos(middle_angle) * radius,
             vertex[1] - math.sin(middle_angle) * radius,
         )
+        leader_end = rectangle_edge_toward(
+            label_center, arc_point, width, height, gap=6.0
+        )
         self.canvas.create_line(
-            *arc_point, *label_center, fill="#1769AA", width=2,
-            dash=(4, 3), arrow="last", tags=tags,
+            *arc_point, *leader_end, fill="#1769AA", width=2,
+            dash=(4, 3), tags=tags,
         )
         self.canvas.create_rectangle(
             x, y, x + width, y + height, fill="#FFF8DB", outline="#1769AA",
@@ -5433,9 +5468,13 @@ class DocumentEditorWindow(tk.Toplevel):
             return x, y
         return self._constrained_drawing_point(self._polyline_points[-1], x, y, state)
 
-    def _drawing_segments(self) -> list[tuple[Segment, str]]:
+    def _drawing_segments(
+        self, excluded_object_ids: set[str] | None = None
+    ) -> list[tuple[Segment, str]]:
         segments: list[tuple[Segment, str]] = []
         for item in self.document.objects:
+            if excluded_object_ids and item.object_id in excluded_object_ids:
+                continue
             if self.current_page not in pages_for_object(item, self.document.page_count):
                 continue
             if item.kind == "line":
@@ -5448,9 +5487,11 @@ class DocumentEditorWindow(tk.Toplevel):
             segments.extend((Segment(*start, *end), "contour") for start, end in pairwise(points))
         return segments
 
-    def _snap_drawing_point(self, x: float, y: float) -> tuple[tuple[float, float], str]:
+    def _snap_drawing_point(
+        self, x: float, y: float, excluded_object_ids: set[str] | None = None
+    ) -> tuple[tuple[float, float], str]:
         threshold = max(4.0, 11.0 / self.zoom)
-        segments = self._drawing_segments()
+        segments = self._drawing_segments(excluded_object_ids)
         endpoints = [
             ((point_x, point_y), "extrémité")
             for segment, _label in segments
@@ -6788,6 +6829,7 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._dismiss_context_menu()
+        self._drag_snap_preview = None
         if self._choosing_rotation_pivot:
             self._set_rotation_pivot_from_event(event)
             return
@@ -7243,9 +7285,18 @@ class DocumentEditorWindow(tk.Toplevel):
                 absolute = constrained_right_triangle_vertices(
                     absolute, point_index, target
                 )
+                self._drag_snap_preview = None
                 self.status.configure(text="Triangle rectangle : l’angle A reste verrouillé à 90°.")
             else:
+                target, snap_label = self._snap_drawing_point(
+                    *target, excluded_object_ids={item.object_id}
+                )
                 absolute[point_index] = target
+                self._drag_snap_preview = (target, snap_label) if snap_label else None
+                if snap_label:
+                    self.status.configure(
+                        text=f"Sommet accroché sur une {snap_label}."
+                    )
             self._set_polyline_absolute_points(item, absolute)
             self._schedule_live_render()
             return
@@ -7295,14 +7346,29 @@ class DocumentEditorWindow(tk.Toplevel):
             delta_x = (self.canvas.canvasx(event.x) - sx) / self.zoom
             delta_y = (self.canvas.canvasy(event.y) - sy) / self.zoom
             if item.kind == "line":
+                excluded = {item.object_id}
                 if mode == "resize-start":
-                    item.x = old_x + delta_x
-                    item.y = old_y + delta_y
-                    new_width = old_width - delta_x
-                    new_height = old_height - delta_y
+                    target, snap_label = self._snap_drawing_point(
+                        old_x + delta_x, old_y + delta_y,
+                        excluded_object_ids=excluded,
+                    )
+                    fixed_end = (old_x + old_width, old_y + old_height)
+                    item.x, item.y = target
+                    new_width = fixed_end[0] - target[0]
+                    new_height = fixed_end[1] - target[1]
                 else:
-                    new_width = old_width + delta_x
-                    new_height = old_height + delta_y
+                    target, snap_label = self._snap_drawing_point(
+                        old_x + old_width + delta_x,
+                        old_y + old_height + delta_y,
+                        excluded_object_ids=excluded,
+                    )
+                    new_width = target[0] - old_x
+                    new_height = target[1] - old_y
+                self._drag_snap_preview = (target, snap_label) if snap_label else None
+                if snap_label:
+                    self.status.configure(
+                        text=f"Extrémité accrochée sur une {snap_label}."
+                    )
             else:
                 new_width = max(20, old_width + delta_x)
                 new_height = max(20, old_height + delta_y)
@@ -7454,6 +7520,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_geometry_fields(self.document.objects[self.selected])
 
     def _release(self, event: tk.Event[tk.Misc]) -> None:
+        self._drag_snap_preview = None
         if self._crop_drag_edge is not None:
             self._drag_crop_edge(event)
             self._apply_visual_crop()

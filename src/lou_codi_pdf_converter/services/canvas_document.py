@@ -443,10 +443,24 @@ def _draw_object(
         second_angle = math.atan2(second.y - vertex.y, second.x - vertex.x)
         extent = (second_angle - first_angle + math.pi) % (2 * math.pi) - math.pi
         label_center = pymupdf.Point(item.x + item.width / 2, item.y + item.height / 2)
-        radius = max(
-            12.0,
-            math.dist(vertex, label_center) - max(15.0, min(item.width, item.height) / 2),
-        )
+
+        def label_edge_toward(target: pymupdf.Point, gap: float = 0.0) -> pymupdf.Point:
+            dx, dy = target.x - label_center.x, target.y - label_center.y
+            distance = math.hypot(dx, dy)
+            if distance <= 1e-9:
+                return label_center
+            scales = []
+            if abs(dx) > 1e-9:
+                scales.append(max(0.5, item.width / 2) / abs(dx))
+            if abs(dy) > 1e-9:
+                scales.append(max(0.5, item.height / 2) / abs(dy))
+            scale = min(scales, default=0.0)
+            return pymupdf.Point(
+                label_center.x + dx * scale + dx / distance * gap,
+                label_center.y + dy * scale + dy / distance * gap,
+            )
+
+        radius = max(12.0, math.dist(vertex, label_edge_toward(vertex)) - 10.0)
         for endpoint in (first, second):
             arm_length = math.dist(vertex, endpoint)
             if arm_length <= 1e-9:
@@ -469,7 +483,10 @@ def _draw_object(
         ]
         for start, end in pairwise(arc_points):
             page.draw_line(start, end, color=color, width=1.5, overlay=True)
-        page.draw_line(arc_points[12], label_center, color=color, width=0.8, dashes="[4 3]", overlay=True)
+        page.draw_line(
+            arc_points[12], label_edge_toward(arc_points[12], gap=4.0),
+            color=color, width=0.8, dashes="[4 3]", overlay=True,
+        )
         page.draw_rect(
             rectangle, color=color, fill=_rgb(item.fill), width=max(0.5, item.border_width), overlay=True
         )

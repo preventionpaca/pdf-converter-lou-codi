@@ -61,6 +61,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     parse_rich_clipboard_rtf,
     proportional_resize,
     remap_text_ranges_after_edit,
+    rectangle_edge_toward,
     point_hits_rotation_handle,
     nearest_rotation_snap_point,
     polygon_area,
@@ -675,6 +676,30 @@ def test_drawing_snap_keeps_an_endpoint_ahead_of_a_nearby_midpoint() -> None:
 
     assert point == (20, 40)
     assert label == "extrémité"
+
+
+def test_drawing_snap_can_ignore_the_object_whose_endpoint_is_being_moved() -> None:
+    moving = PageObject("line", 0, 20, 40, 80, 0)
+    target = PageObject("shape", 0, 180, 20, 100, 80, shape="rectangle")
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[moving, target])
+    editor.current_page = 0
+    editor.zoom = 1.0
+
+    point, label = editor._snap_drawing_point(
+        230, 24, excluded_object_ids={moving.object_id}
+    )
+
+    assert point == (230.0, 20.0)
+    assert label == "milieu"
+
+
+def test_angle_leader_stops_outside_the_label_rectangle() -> None:
+    center = (100.0, 100.0)
+
+    endpoint = rectangle_edge_toward(center, (100.0, 0.0), 80.0, 30.0, gap=6.0)
+
+    assert endpoint == (100.0, 79.0)
 
 
 class _StatusRecorder:
