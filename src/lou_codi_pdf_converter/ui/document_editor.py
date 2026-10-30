@@ -3283,7 +3283,7 @@ class DocumentEditorWindow(tk.Toplevel):
             image_menu.add_command(label="Exporter en PNG ou JPEG…", command=self._export_selected_image)
             menu.add_cascade(label="Image", menu=image_menu)
 
-        technical_kinds = {"shape", "polyline", "line", "dimension", "origin"}
+        technical_kinds = {"shape", "polyline", "line", "dimension", "angle_dimension", "origin"}
         if kinds & technical_kinds:
             has_hatches = any(item.shape == "hatch" for item in objects)
             groups = {item.group for item in objects if item.group}
@@ -3900,7 +3900,7 @@ class DocumentEditorWindow(tk.Toplevel):
             kind = self.document.objects[self.selected].kind
         states = {
             "table": kind == "table",
-            "technical": kind in {"line", "polyline", "shape", "dimension", "origin"}
+            "technical": kind in {"line", "polyline", "shape", "dimension", "angle_dimension", "origin"}
             or len(self.selected_indices) > 1,
         }
         current = self.ribbon.select()
@@ -4209,6 +4209,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.canvas.create_text(x + w, y - 8, text="🔒 axe 3D", fill="#14804A", anchor="se", font=("Sans", 8, "bold"), tags=tags)
         elif item.kind == "dimension":
             self._draw_dimension(item, x, y, w, h, tags, selected)
+        elif item.kind == "angle_dimension":
+            self._draw_angle_dimension(item, x, y, w, h, tags, selected)
         elif item.kind == "polyline":
             dash = (5, 3) if item.border_style == "dashed" else (1, 3) if item.border_style == "dotted" else None
             closed = (
@@ -4621,6 +4623,45 @@ class DocumentEditorWindow(tk.Toplevel):
             anchor="center",
             angle=label_angle,
             tags=tags,
+        )
+
+    def _draw_angle_dimension(
+        self, item: PageObject, x: float, y: float, width: float, height: float,
+        tags: tuple[str, ...], selected: bool,
+    ) -> None:
+        if len(item.points) != 3:
+            return
+        first, vertex, second = [
+            (self.page_x + float(point[0]) * self.zoom, self.page_y + float(point[1]) * self.zoom)
+            for point in item.points
+        ]
+        first_angle = math.degrees(math.atan2(-(first[1] - vertex[1]), first[0] - vertex[0]))
+        second_angle = math.degrees(math.atan2(-(second[1] - vertex[1]), second[0] - vertex[0]))
+        extent = (second_angle - first_angle + 180.0) % 360.0 - 180.0
+        radius = max(18.0, min(42.0, math.dist(vertex, first) * 0.35, math.dist(vertex, second) * 0.35))
+        self.canvas.create_line(*vertex, *first, fill="#E87524", width=2, dash=(5, 3), tags=tags)
+        self.canvas.create_line(*vertex, *second, fill="#E87524", width=2, dash=(5, 3), tags=tags)
+        self.canvas.create_arc(
+            vertex[0] - radius, vertex[1] - radius, vertex[0] + radius, vertex[1] + radius,
+            start=first_angle, extent=extent, style="arc", outline="#1769AA", width=3, tags=tags,
+        )
+        middle_angle = math.radians(first_angle + extent / 2)
+        arc_point = (
+            vertex[0] + math.cos(middle_angle) * radius,
+            vertex[1] - math.sin(middle_angle) * radius,
+        )
+        label_center = (x + width / 2, y + height / 2)
+        self.canvas.create_line(
+            *arc_point, *label_center, fill="#1769AA", width=2,
+            dash=(4, 3), arrow="last", tags=tags,
+        )
+        self.canvas.create_rectangle(
+            x, y, x + width, y + height, fill="#FFF8DB", outline="#1769AA",
+            width=3 if selected else 1, tags=tags,
+        )
+        self.canvas.create_text(
+            *label_center, text=f"∠ {item.text}°", fill="#123E70",
+            font=("Sans", max(11, round(item.font_size * self.zoom)), "bold"), tags=tags,
         )
 
     def _table_cell_preview(
@@ -5612,10 +5653,12 @@ class DocumentEditorWindow(tk.Toplevel):
         py = self.page_y + point[1] * self.zoom
         if label == "milieu":
             self.canvas.create_polygon(
-                px, py - 7, px + 7, py, px, py + 7, px - 7, py,
-                fill="#D9F5E5", outline="#14804A", width=2,
+                px, py - 10, px + 10, py, px, py + 10, px - 10, py,
+                fill="#FFF2A8", outline="#087A43", width=3,
                 tags=("snap-preview",),
             )
+            self.canvas.create_line(px - 14, py, px + 14, py, fill="#087A43", width=2, tags=("snap-preview",))
+            self.canvas.create_line(px, py - 14, px, py + 14, fill="#087A43", width=2, tags=("snap-preview",))
         else:
             self.canvas.create_oval(
                 px - 6, py - 6, px + 6, py + 6,
@@ -5623,6 +5666,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 tags=("snap-preview",),
             )
         self.canvas.create_text(px + 9, py - 9, text=f"Accroché : {label}", anchor="sw", fill="#14804A", font=("Sans", 8, "bold"), tags=("snap-preview",))
+        self.canvas.tag_raise("snap-preview")
 
     def _draw_measurement_anchor_markers(self) -> None:
         self.canvas.delete("measurement-anchor")
@@ -7341,6 +7385,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 projected = dx * normal_x + dy * normal_y
                 new_x = start_x + projected * normal_x
                 new_y = start_y + projected * normal_y
+            elif item.kind == "angle_dimension":
+                new_x = max(0, min(pw - item.width, start_x + dx))
+                new_y = max(0, min(ph - item.height, start_y + dy))
             elif item.kind == "line":
                 minimum_x, maximum_x = min(0.0, item.width), max(0.0, item.width)
                 minimum_y, maximum_y = min(0.0, item.height), max(0.0, item.height)
@@ -7355,6 +7402,8 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas.move(f"object:{index}", move_x, move_y)
             self.canvas.move(f"resize-start:{index}", move_x, move_y)
             self.canvas.move(f"resize-end:{index}", move_x, move_y)
+            if item.kind == "angle_dimension":
+                self._schedule_live_render()
         moved_ids = {
             self.document.objects[index].object_id for index in self._drag_positions
         }
@@ -11458,12 +11507,31 @@ class DocumentEditorWindow(tk.Toplevel):
             result = f"Angle intérieur : {angle:.1f}°{length_detail}"
             self.measurement_result.configure(text=result)
             self.status.configure(text=result)
-            if self.write_measurement_var.get() and self.measurement_label_vars["angle"].get():
-                label = f"∠ {angle:.1f}°"
-                if self.show_measurement_length_var.get():
-                    label += f"  ({first_length:.1f} / {second_length:.1f} mm)"
-                self._write_measurement_label(label, vertex[0] + 10, vertex[1] - 30)
-            self._draw_angle_measurement_result(first, vertex, second, angle)
+            first_vector = (first[0] - vertex[0], first[1] - vertex[1])
+            second_vector = (second[0] - vertex[0], second[1] - vertex[1])
+            first_size, second_size = math.hypot(*first_vector), math.hypot(*second_vector)
+            bisector = (
+                first_vector[0] / first_size + second_vector[0] / second_size,
+                first_vector[1] / first_size + second_vector[1] / second_size,
+            )
+            bisector_size = math.hypot(*bisector)
+            if bisector_size <= 1e-8:
+                bisector = (-first_vector[1] / first_size, first_vector[0] / first_size)
+                bisector_size = 1.0
+            label_center = (
+                vertex[0] - bisector[0] / bisector_size * 78,
+                vertex[1] - bisector[1] / bisector_size * 78,
+            )
+            label_width, label_height = 100.0, 34.0
+            self._add_object(PageObject(
+                "angle_dimension", self.current_page,
+                label_center[0] - label_width / 2,
+                label_center[1] - label_height / 2,
+                label_width, label_height,
+                text=f"{angle:.1f}", font_size=12, bold=True,
+                color="#123E70", fill="#FFF8DB", border_color="#1769AA", border_width=1.0,
+                points=[list(first), list(vertex), list(second)],
+            ))
             return
         start, end = self._measurement_points[:2]
         raw_mm = math.dist(start, end) * 25.4 / 72

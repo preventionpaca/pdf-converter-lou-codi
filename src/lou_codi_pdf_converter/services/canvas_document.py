@@ -12,6 +12,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from functools import lru_cache
+from itertools import pairwise
 from pathlib import Path
 from typing import Callable
 
@@ -432,6 +433,35 @@ def _draw_object(
             color=_rgb(item.border_color),
             morph=(label_position, pymupdf.Matrix(angle)),
             overlay=True,
+        )
+    elif item.kind == "angle_dimension" and len(item.points) == 3:
+        first, vertex, second = [
+            pymupdf.Point(float(point[0]), float(point[1])) for point in item.points
+        ]
+        color = _rgb(item.border_color)
+        page.draw_line(vertex, first, color=color, width=1, dashes="[5 3]", overlay=True)
+        page.draw_line(vertex, second, color=color, width=1, dashes="[5 3]", overlay=True)
+        first_angle = math.atan2(first.y - vertex.y, first.x - vertex.x)
+        second_angle = math.atan2(second.y - vertex.y, second.x - vertex.x)
+        extent = (second_angle - first_angle + math.pi) % (2 * math.pi) - math.pi
+        radius = max(12.0, min(30.0, math.dist(first, vertex) * 0.35, math.dist(second, vertex) * 0.35))
+        arc_points = [
+            pymupdf.Point(
+                vertex.x + math.cos(first_angle + extent * step / 24) * radius,
+                vertex.y + math.sin(first_angle + extent * step / 24) * radius,
+            )
+            for step in range(25)
+        ]
+        for start, end in pairwise(arc_points):
+            page.draw_line(start, end, color=color, width=1.5, overlay=True)
+        label_center = pymupdf.Point(item.x + item.width / 2, item.y + item.height / 2)
+        page.draw_line(arc_points[12], label_center, color=color, width=0.8, dashes="[4 3]", overlay=True)
+        page.draw_rect(
+            rectangle, color=color, fill=_rgb(item.fill), width=max(0.5, item.border_width), overlay=True
+        )
+        page.insert_textbox(
+            rectangle, f"∠ {item.text}°", fontsize=max(9, item.font_size),
+            color=_rgb(item.color), align=pymupdf.TEXT_ALIGN_CENTER, overlay=True,
         )
     elif item.kind == "polyline" and len(item.points) >= 2:
         points = [(item.x + point[0], item.y + point[1]) for point in item.points]
