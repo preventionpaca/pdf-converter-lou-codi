@@ -439,12 +439,27 @@ def _draw_object(
             pymupdf.Point(float(point[0]), float(point[1])) for point in item.points
         ]
         color = _rgb(item.border_color)
-        page.draw_line(vertex, first, color=color, width=1, dashes="[5 3]", overlay=True)
-        page.draw_line(vertex, second, color=color, width=1, dashes="[5 3]", overlay=True)
         first_angle = math.atan2(first.y - vertex.y, first.x - vertex.x)
         second_angle = math.atan2(second.y - vertex.y, second.x - vertex.x)
         extent = (second_angle - first_angle + math.pi) % (2 * math.pi) - math.pi
-        radius = max(12.0, min(30.0, math.dist(first, vertex) * 0.35, math.dist(second, vertex) * 0.35))
+        label_center = pymupdf.Point(item.x + item.width / 2, item.y + item.height / 2)
+        radius = max(
+            12.0,
+            math.dist(vertex, label_center) - max(15.0, min(item.width, item.height) / 2),
+        )
+        for endpoint in (first, second):
+            arm_length = math.dist(vertex, endpoint)
+            if arm_length <= 1e-9:
+                continue
+            reminder_length = max(arm_length, radius + 8.0)
+            reminder_end = pymupdf.Point(
+                vertex.x + (endpoint.x - vertex.x) / arm_length * reminder_length,
+                vertex.y + (endpoint.y - vertex.y) / arm_length * reminder_length,
+            )
+            page.draw_line(
+                vertex, reminder_end, color=color, width=1,
+                dashes="[5 3]", overlay=True,
+            )
         arc_points = [
             pymupdf.Point(
                 vertex.x + math.cos(first_angle + extent * step / 24) * radius,
@@ -454,7 +469,6 @@ def _draw_object(
         ]
         for start, end in pairwise(arc_points):
             page.draw_line(start, end, color=color, width=1.5, overlay=True)
-        label_center = pymupdf.Point(item.x + item.width / 2, item.y + item.height / 2)
         page.draw_line(arc_points[12], label_center, color=color, width=0.8, dashes="[4 3]", overlay=True)
         page.draw_rect(
             rectangle, color=color, fill=_rgb(item.fill), width=max(0.5, item.border_width), overlay=True

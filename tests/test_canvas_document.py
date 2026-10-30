@@ -716,6 +716,15 @@ class _MeasurementCanvasRecorder:
     def create_arc(self, *values: object, **options: object) -> None:
         self.created.append(("arc", values, options))
 
+    def create_rectangle(self, *values: object, **options: object) -> None:
+        self.created.append(("rectangle", values, options))
+
+    def create_polygon(self, *values: object, **options: object) -> None:
+        self.created.append(("polygon", values, options))
+
+    def tag_raise(self, _item: object) -> None:
+        pass
+
 
 def _angle_measurement_editor() -> DocumentEditorWindow:
     editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
@@ -764,6 +773,27 @@ def test_completed_angle_measurement_stays_visible_on_the_drawing() -> None:
     assert angle.kind == "angle_dimension"
     assert angle.text == "90.0"
     assert angle.points == [[100.0, 200.0], [100.0, 100.0], [200.0, 100.0]]
+
+
+def test_moving_angle_label_away_from_vertex_enlarges_the_arc() -> None:
+    editor = _angle_measurement_editor()
+    angle = PageObject(
+        "angle_dimension", 0, 145, 145, 100, 34,
+        text="90.0", font_size=12,
+        points=[[100, 200], [100, 100], [200, 100]],
+    )
+
+    editor._draw_angle_dimension(angle, angle.x, angle.y, angle.width, angle.height, ("angle",), False)
+    first_arc = next(values for kind, values, _options in editor.canvas.created if kind == "arc")
+    first_diameter = float(first_arc[2]) - float(first_arc[0])
+
+    editor.canvas.created.clear()
+    angle.x += 150
+    editor._draw_angle_dimension(angle, angle.x, angle.y, angle.width, angle.height, ("angle",), False)
+    second_arc = next(values for kind, values, _options in editor.canvas.created if kind == "arc")
+    second_diameter = float(second_arc[2]) - float(second_arc[0])
+
+    assert second_diameter > first_diameter
 
 
 def test_angle_dimension_survives_project_save_and_pdf_export(tmp_path: Path) -> None:

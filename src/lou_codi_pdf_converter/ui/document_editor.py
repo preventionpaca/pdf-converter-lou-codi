@@ -3962,18 +3962,10 @@ class DocumentEditorWindow(tk.Toplevel):
     def _draw_object(self, index: int, item: PageObject) -> None:
         x, y = self.page_x + item.x * self.zoom, self.page_y + item.y * self.zoom
         w, h = item.width * self.zoom, item.height * self.zoom
-        if self.zoom > 1.6:
-            visible_left = self.canvas.canvasx(0) - 40
-            visible_top = self.canvas.canvasy(0) - 40
-            visible_right = self.canvas.canvasx(self.canvas.winfo_width()) + 40
-            visible_bottom = self.canvas.canvasy(self.canvas.winfo_height()) + 40
-            if (
-                x + w < visible_left
-                or x > visible_right
-                or y + h < visible_top
-                or y > visible_bottom
-            ):
-                return
+        # Les formes vectorielles sont peu coûteuses à dessiner. L'ancienne
+        # élimination hors écran utilisait le viewport de l'ancien zoom pendant
+        # le recalcul de la zone défilable ; certaines formes disparaissaient
+        # ainsi vers 200–260 % alors qu'elles étaient bien dans la page.
         tag, selected = f"object:{index}", index in self.selected_indices
         if self._pending_text_link_id and item.kind == "text":
             outline = "#E47D16" if item.object_id == self._pending_text_link_id else "#1E9B66"
@@ -4638,9 +4630,23 @@ class DocumentEditorWindow(tk.Toplevel):
         first_angle = math.degrees(math.atan2(-(first[1] - vertex[1]), first[0] - vertex[0]))
         second_angle = math.degrees(math.atan2(-(second[1] - vertex[1]), second[0] - vertex[0]))
         extent = (second_angle - first_angle + 180.0) % 360.0 - 180.0
-        radius = max(18.0, min(42.0, math.dist(vertex, first) * 0.35, math.dist(vertex, second) * 0.35))
-        self.canvas.create_line(*vertex, *first, fill="#E87524", width=2, dash=(5, 3), tags=tags)
-        self.canvas.create_line(*vertex, *second, fill="#E87524", width=2, dash=(5, 3), tags=tags)
+        label_center = (x + width / 2, y + height / 2)
+        # Le cartouche sert aussi de poignée de placement : en l'éloignant du
+        # sommet, l'arc de cote grandit et les rappels s'allongent avec lui.
+        radius = max(18.0, math.dist(vertex, label_center) - max(22.0, min(width, height) / 2))
+        for endpoint in (first, second):
+            arm_length = math.dist(vertex, endpoint)
+            if arm_length <= 1e-9:
+                continue
+            reminder_length = max(arm_length, radius + 12.0)
+            reminder_end = (
+                vertex[0] + (endpoint[0] - vertex[0]) / arm_length * reminder_length,
+                vertex[1] + (endpoint[1] - vertex[1]) / arm_length * reminder_length,
+            )
+            self.canvas.create_line(
+                *vertex, *reminder_end, fill="#E87524", width=2,
+                dash=(5, 3), tags=tags,
+            )
         self.canvas.create_arc(
             vertex[0] - radius, vertex[1] - radius, vertex[0] + radius, vertex[1] + radius,
             start=first_angle, extent=extent, style="arc", outline="#1769AA", width=3, tags=tags,
@@ -4650,7 +4656,6 @@ class DocumentEditorWindow(tk.Toplevel):
             vertex[0] + math.cos(middle_angle) * radius,
             vertex[1] - math.sin(middle_angle) * radius,
         )
-        label_center = (x + width / 2, y + height / 2)
         self.canvas.create_line(
             *arc_point, *label_center, fill="#1769AA", width=2,
             dash=(4, 3), arrow="last", tags=tags,
@@ -5799,6 +5804,35 @@ class DocumentEditorWindow(tk.Toplevel):
                     self.status.configure(
                         text=f"Accrochage de mesure : {snap_label}. Cliquez pour mémoriser ce point exact."
                     )
+            return
+        if self._drawing_line and not self._line_points:
+            x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+            y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+            width, height = self._page_size()
+            if 0 <= x <= width and 0 <= y <= height:
+                point, snap_label = self._snap_drawing_point(x, y)
+                self._draw_snap_marker(point, snap_label)
+                self.status.configure(
+                    text=(
+                        f"Départ prêt sur une {snap_label} — cliquez pour l’utiliser."
+                        if snap_label else "Choisissez le point de départ du trait."
+                    )
+                )
+            return
+        if self._drawing_polyline and not self._polyline_points:
+            x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+            y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+            width, height = self._page_size()
+            if 0 <= x <= width and 0 <= y <= height:
+                point = self._constrained_polyline_point(x, y, event.state)
+                point, snap_label = self._snap_drawing_point(*point)
+                self._draw_snap_marker(point, snap_label)
+                self.status.configure(
+                    text=(
+                        f"Premier sommet prêt sur une {snap_label} — cliquez pour l’utiliser."
+                        if snap_label else "Choisissez le premier sommet de la polyligne."
+                    )
+                )
             return
         if self._drawing_line and self._line_points:
             x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
