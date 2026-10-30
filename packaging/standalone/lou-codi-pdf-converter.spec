@@ -9,7 +9,7 @@ binaries = []
 # These imports are deliberately lazy in the application. The other packages are
 # discovered normally by PyInstaller and must not use collect_all, which used to pull
 # test data and optional modules into every installer.
-hiddenimports = ["pdf2docx", "pdfplumber"]
+hiddenimports = ["pdf2docx", "pdfplumber", "PIL._tkinter_finder"]
 
 datas += [
     (str(source / "lou_codi_pdf_converter" / "assets"), "lou_codi_pdf_converter/assets"),

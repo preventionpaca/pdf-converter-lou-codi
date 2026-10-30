@@ -3446,7 +3446,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 menu.postcascade("none")
                 menu.activate("none")
                 menu.unpost()
-            except tk.TclError:
+            except (tk.TclError, AttributeError):
                 pass
 
     def _dismiss_main_menus_on_window_event(self, event: tk.Event[tk.Misc]) -> None:
@@ -3470,7 +3470,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._dismiss_main_menus()
                 return
             self._main_menu_watch_after_id = self.after(120, self._watch_main_menu)
-        except tk.TclError:
+        except (tk.TclError, KeyError):
             self._main_menu_watch_after_id = None
 
     def _schedule_main_menu_focus_check(self, _event: tk.Event[tk.Misc]) -> None:
@@ -3480,7 +3480,7 @@ class DocumentEditorWindow(tk.Toplevel):
         try:
             if not self.winfo_viewable() or self.focus_displayof() is None:
                 self._dismiss_main_menus()
-        except tk.TclError:
+        except (tk.TclError, KeyError):
             pass
 
     def _undo(self) -> None:
@@ -7681,8 +7681,14 @@ class DocumentEditorWindow(tk.Toplevel):
         except (OSError, TypeError):
             font = ImageFont.load_default()
         draw.text((4, 3), "AaBb 123", font=font, fill="#193B66")
-        self._font_sample_image = ImageTk.PhotoImage(preview)
-        self.font_sample.configure(image=self._font_sample_image)
+        try:
+            self._font_sample_image = ImageTk.PhotoImage(preview)
+            self.font_sample.configure(image=self._font_sample_image, text="")
+        except (tk.TclError, ModuleNotFoundError):
+            # A font sample is cosmetic: a missing optional Pillow/Tk bridge
+            # must never prevent the complete document editor from opening.
+            self._font_sample_image = None
+            self.font_sample.configure(image="", text="AaBb 123")
 
     def _configure_text_style_tag(
         self, widget: tk.Text, tag: str, item: PageObject, style: dict[str, object]
