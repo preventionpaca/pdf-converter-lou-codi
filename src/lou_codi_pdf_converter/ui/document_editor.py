@@ -1309,6 +1309,53 @@ def point_hits_rotation_handle(
     return math.dist(pointer, handle) <= radius
 
 
+def object_rotation_snap_points(item: PageObject) -> list[tuple[str, float, float]]:
+    """Return useful CAD-like pivot points in absolute page coordinates."""
+    if item.kind == "line":
+        start = (item.x, item.y)
+        end = (item.x + item.width, item.y + item.height)
+        return [
+            ("extrémité", *start),
+            ("milieu", (start[0] + end[0]) / 2, (start[1] + end[1]) / 2),
+            ("extrémité", *end),
+        ]
+    if item.kind == "polyline" and item.points:
+        absolute = [(item.x + x, item.y + y) for x, y in item.points]
+        result = [("sommet", x, y) for x, y in absolute]
+        result.extend(
+            ("milieu", (start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+            for start, end in pairwise(absolute)
+        )
+        return result
+    corners = rotated_rectangle_points(item)
+    center = (item.x + item.width / 2, item.y + item.height / 2)
+    result = [("centre", *center)]
+    result.extend(("angle", *point) for point in corners)
+    result.extend(
+        ("milieu", (start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+        for start, end in pairwise([*corners, corners[0]])
+    )
+    return result
+
+
+def nearest_rotation_snap_point(
+    objects: list[PageObject], pointer: tuple[float, float], tolerance: float
+) -> tuple[str, float, float] | None:
+    """Find the closest endpoint, midpoint, centre or corner under the pointer."""
+    candidates = [point for item in objects for point in object_rotation_snap_points(item)]
+    if len(objects) > 1:
+        left, top, width, height = objects_bounds(objects)
+        candidates.extend((
+            ("centre de l’assemblage", left + width / 2, top + height / 2),
+            ("angle de l’assemblage", left, top),
+            ("angle de l’assemblage", left + width, top),
+            ("angle de l’assemblage", left + width, top + height),
+            ("angle de l’assemblage", left, top + height),
+        ))
+    close = [point for point in candidates if math.dist(pointer, (point[1], point[2])) <= tolerance]
+    return min(close, key=lambda point: math.dist(pointer, (point[1], point[2])), default=None)
+
+
 def spreadsheet_column_name(index: int) -> str:
     name = ""
     index += 1
@@ -1640,6 +1687,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self._rotation_drag_delta = 0.0
         self._rotation_drag_before: CanvasDocument | None = None
         self._rotation_preview_applied = False
+        self._choosing_rotation_pivot = False
+        self._rotation_pivot_mode = False
+        self._rotation_custom_pivot: tuple[float, float] | None = None
+        self._rotation_snap_candidate: tuple[str, float, float] | None = None
+        self._rotation_drag_uses_custom_pivot = False
         self._crop_mode_index: int | None = None
         self._crop_box: list[float] | None = None
         self._crop_drag_edge: str | None = None
@@ -3266,6 +3318,10 @@ class DocumentEditorWindow(tk.Toplevel):
             for degrees in (15, 30, 45, 90, 180):
                 rotation.add_command(label=f"Tourner de {degrees}°", command=lambda value=degrees: self._rotate_selected_degrees(value))
             rotation.add_separator()
+            rotation.add_command(
+                label="Définir un axe sur un point remarquable…",
+                command=self._choose_rotation_pivot,
+            )
             rotation.add_command(label="Angle libre…", command=self._rotate_free)
             rotation.add_command(label="Tourner avec copie…", command=self._rotate_with_copy)
             menu.add_cascade(label="Rotation", menu=rotation)
@@ -3786,6 +3842,22 @@ class DocumentEditorWindow(tk.Toplevel):
                 handle_x, handle_y, text="↻", fill="#1769AA",
                 font=("Sans", 11, "bold"), tags=("rotation-handle",),
             )
+            pivot = self._selection_rotation_pivot()
+            if pivot is not None:
+                pivot_x = self.page_x + pivot[0] * self.zoom
+                pivot_y = self.page_y + pivot[1] * self.zoom
+                self.canvas.create_oval(
+                    pivot_x - 8, pivot_y - 8, pivot_x + 8, pivot_y + 8,
+                    outline="#E47D16", width=2, tags=("rotation-pivot",),
+                )
+                self.canvas.create_line(
+                    pivot_x - 12, pivot_y, pivot_x + 12, pivot_y,
+                    fill="#E47D16", width=2, tags=("rotation-pivot",),
+                )
+                self.canvas.create_line(
+                    pivot_x, pivot_y - 12, pivot_x, pivot_y + 12,
+                    fill="#E47D16", width=2, tags=("rotation-pivot",),
+                )
         if self._pending_text_link_id:
             self.canvas.create_rectangle(
                 self.page_x,
@@ -5608,6 +5680,9 @@ class DocumentEditorWindow(tk.Toplevel):
             )
 
     def _polyline_motion(self, event: tk.Event[tk.Misc]) -> None:
+        if self._choosing_rotation_pivot:
+            self._preview_rotation_pivot(event)
+            return
         if self._drawing_rectangle and self._rectangle_points:
             x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
             y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
@@ -5776,6 +5851,15 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _cancel_current_action(self, _event: object = None) -> str:
         self._dismiss_context_menu()
+        if self._choosing_rotation_pivot or self._rotation_pivot_mode:
+            self._choosing_rotation_pivot = False
+            self._rotation_pivot_mode = False
+            self._rotation_snap_candidate = None
+            self.canvas.delete("rotation-snap-preview")
+            self.canvas.configure(cursor="")
+            self.status.configure(text="Mode de rotation sur axe terminé.")
+            self._render()
+            return "break"
         if self._pdf_font_pick_mode:
             self._pdf_font_pick_mode = False
             self.canvas.configure(cursor="")
@@ -6608,6 +6692,9 @@ class DocumentEditorWindow(tk.Toplevel):
 
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._dismiss_context_menu()
+        if self._choosing_rotation_pivot:
+            self._set_rotation_pivot_from_event(event)
+            return
         if self._pdf_font_pick_mode:
             self._pick_pdf_font(event)
             return
@@ -6866,6 +6953,26 @@ class DocumentEditorWindow(tk.Toplevel):
         if any(item.locked for item in objects):
             return False
         left, top, width, height = objects_bounds(objects)
+        pointer = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
+        custom_pivot = self._selection_rotation_pivot()
+        if self._rotation_pivot_mode and custom_pivot is not None:
+            clicked = self._object_at_event(event)
+            if clicked not in indices:
+                return False
+            pivot_x, pivot_y = custom_pivot
+            pointer_x = (pointer[0] - self.page_x) / self.zoom
+            pointer_y = (pointer[1] - self.page_y) / self.zoom
+            start_angle = math.degrees(math.atan2(pointer_y - pivot_y, pointer_x - pivot_x))
+            self.selected_indices = indices
+            self.selected = min(indices)
+            self._rotation_drag_origin = (pivot_x, pivot_y, start_angle)
+            self._rotation_drag_delta = 0.0
+            self._rotation_drag_before = copy.deepcopy(self.document)
+            self._rotation_preview_applied = False
+            self._rotation_drag_uses_custom_pivot = True
+            self._drag_origin = None
+            self.status.configure(text="Rotation sur axe : déplacez la souris autour du pivot orange.")
+            return True
         handle = (
             self.page_x + (left + width / 2) * self.zoom,
             self.page_y + top * self.zoom - 30,
@@ -6882,7 +6989,6 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.page_x + top_middle_x * self.zoom + normal_x / normal_length * 30,
                 self.page_y + top_middle_y * self.zoom + normal_y / normal_length * 30,
             )
-        pointer = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         if not point_hits_rotation_handle(pointer, handle):
             return False
         if getattr(self, "_editing_widget", None) is not None:
@@ -6897,6 +7003,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._rotation_drag_delta = 0.0
         self._rotation_drag_before = copy.deepcopy(self.document)
         self._rotation_preview_applied = False
+        self._rotation_drag_uses_custom_pivot = False
         self._drag_origin = None
         self.status.configure(
             text="Rotation guidée : maintenez le clic et déplacez la poignée autour de l’objet."
@@ -6961,7 +7068,9 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                 for index in indices:
                     item = self.document.objects[index]
-                    item_pivot = (pivot_x, pivot_y) if item.group else (
+                    item_pivot = (pivot_x, pivot_y) if (
+                        self._rotation_drag_uses_custom_pivot or item.group
+                    ) else (
                         item.x + item.width / 2,
                         item.y + item.height / 2,
                     )
@@ -7253,6 +7362,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self._rotation_drag_origin = None
             self._rotation_drag_delta = 0.0
             self.canvas.delete("rotation-guide")
+            self._rotation_drag_uses_custom_pivot = False
             if self._rotation_preview_applied and self._rotation_drag_before is not None:
                 if abs(degrees) > 1e-8:
                     self.undo_stack.append(self._rotation_drag_before)
@@ -12593,6 +12703,83 @@ class DocumentEditorWindow(tk.Toplevel):
             text="Sélection par zone : cliquez dans un espace vide puis entourez les objets. Ctrl ajoute à la sélection."
         )
 
+    def _selection_rotation_pivot(self) -> tuple[float, float] | None:
+        indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        pivots = {
+            (item.rotation_pivot_x, item.rotation_pivot_y)
+            for index in indices
+            if (item := self.document.objects[index]).rotation_pivot_x is not None
+            and item.rotation_pivot_y is not None
+        }
+        if len(pivots) == 1:
+            pivot = next(iter(pivots))
+            return float(pivot[0]), float(pivot[1])
+        return None
+
+    def _choose_rotation_pivot(self) -> None:
+        if not self.selected_indices:
+            self.status.configure(text="Sélectionnez d’abord un objet ou un assemblage.")
+            return
+        self.selected_indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        self.selected = min(self.selected_indices)
+        self._choosing_rotation_pivot = True
+        self._rotation_pivot_mode = False
+        self._rotation_snap_candidate = None
+        self.canvas.configure(cursor="crosshair")
+        self.status.configure(
+            text="Axe de rotation : approchez une extrémité, un milieu, un centre ou un angle, puis cliquez."
+        )
+        self._render()
+
+    def _preview_rotation_pivot(self, event: tk.Event[tk.Misc]) -> None:
+        pointer = (
+            (self.canvas.canvasx(event.x) - self.page_x) / self.zoom,
+            (self.canvas.canvasy(event.y) - self.page_y) / self.zoom,
+        )
+        objects = [self.document.objects[index] for index in self.selected_indices]
+        candidate = nearest_rotation_snap_point(objects, pointer, max(5.0, 14.0 / self.zoom))
+        self._rotation_snap_candidate = candidate
+        self.canvas.delete("rotation-snap-preview")
+        if candidate is None:
+            return
+        label, x, y = candidate
+        canvas_x = self.page_x + x * self.zoom
+        canvas_y = self.page_y + y * self.zoom
+        self.canvas.create_oval(
+            canvas_x - 9, canvas_y - 9, canvas_x + 9, canvas_y + 9,
+            fill="#FFF2D9", outline="#E47D16", width=3,
+            tags=("rotation-snap-preview",),
+        )
+        self.canvas.create_text(
+            canvas_x + 12, canvas_y - 12, text=label, anchor="sw",
+            fill="#A34D00", font=("Sans", 9, "bold"),
+            tags=("rotation-snap-preview",),
+        )
+
+    def _set_rotation_pivot_from_event(self, event: tk.Event[tk.Misc]) -> None:
+        pointer = (
+            (self.canvas.canvasx(event.x) - self.page_x) / self.zoom,
+            (self.canvas.canvasy(event.y) - self.page_y) / self.zoom,
+        )
+        objects = [self.document.objects[index] for index in self.selected_indices]
+        candidate = nearest_rotation_snap_point(objects, pointer, max(5.0, 14.0 / self.zoom))
+        label, pivot_x, pivot_y = candidate or ("point libre", *pointer)
+        self._checkpoint()
+        for index in self.selected_indices:
+            item = self.document.objects[index]
+            item.rotation_pivot_x = pivot_x
+            item.rotation_pivot_y = pivot_y
+        self._rotation_custom_pivot = (pivot_x, pivot_y)
+        self._rotation_snap_candidate = None
+        self._choosing_rotation_pivot = False
+        self._rotation_pivot_mode = True
+        self.canvas.delete("rotation-snap-preview")
+        self.canvas.configure(cursor="exchange")
+        self.status.configure(
+            text=f"Axe fixé sur {label}. Saisissez maintenant n’importe où sur la sélection pour la faire tourner ; Échap termine."
+        )
+        self._render()
+
     def _rotate_selected(self, direction: int = 1) -> None:
         if not self.selected_indices:
             return
@@ -12610,7 +12797,8 @@ class DocumentEditorWindow(tk.Toplevel):
         indices = expanded_group_indices(self.document.objects, self.selected_indices)
         objects = [self.document.objects[index] for index in indices]
         left, top, width, height = objects_bounds(objects)
-        assembly_pivot = (left + width / 2, top + height / 2)
+        assembly_pivot = self._selection_rotation_pivot() or (left + width / 2, top + height / 2)
+        use_shared_pivot = self._selection_rotation_pivot() is not None
         self._checkpoint()
         for index in indices:
             item = self.document.objects[index]
@@ -12621,7 +12809,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     self._replace_image_pixels(item, rotated)
                 except OSError:
                     pass
-            pivot = assembly_pivot if item.group else (
+            pivot = assembly_pivot if (use_shared_pivot or item.group) else (
                 item.x + item.width / 2,
                 item.y + item.height / 2,
             )

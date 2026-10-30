@@ -52,6 +52,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     normalize_plain_paste,
     normalize_rich_plain_fallback,
     objects_bounds,
+    object_rotation_snap_points,
     paragraph_alignment_at,
     parse_tabular_clipboard,
     parse_tabular_clipboard_html,
@@ -61,6 +62,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     proportional_resize,
     remap_text_ranges_after_edit,
     point_hits_rotation_handle,
+    nearest_rotation_snap_point,
     polygon_area,
     revolution_axis_target,
     revolution_stations,
@@ -1479,6 +1481,37 @@ def test_rotation_handle_uses_shortest_delta_and_configured_step() -> None:
     assert snapped_rotation_delta(-90, -52, 15) == 45
     assert snapped_rotation_delta(170, -170, 5) == 20
     assert snapped_rotation_delta(-170, 170, 10) == -20
+
+
+def test_rotation_pivot_snap_points_cover_line_ends_and_middle() -> None:
+    item = PageObject("line", 0, 10, 20, 40, 20)
+
+    assert object_rotation_snap_points(item) == [
+        ("extrémité", 10, 20),
+        ("milieu", 30, 30),
+        ("extrémité", 50, 40),
+    ]
+
+
+def test_rotation_pivot_prefers_nearest_point_and_respects_tolerance() -> None:
+    item = PageObject("shape", 0, 10, 20, 100, 40)
+
+    assert nearest_rotation_snap_point([item], (61, 41), 4) == ("centre", 60, 40)
+    assert nearest_rotation_snap_point([item], (80, 80), 4) is None
+
+
+def test_rotation_pivot_is_persisted_in_document_archive(tmp_path: Path) -> None:
+    path = tmp_path / "pivot.loucodi-document"
+    document = CanvasDocument(objects=[PageObject(
+        "shape", 0, 10, 20, 100, 40,
+        rotation_pivot_x=25.5, rotation_pivot_y=30.25,
+    )])
+
+    document.save(path)
+    loaded = CanvasDocument.load(path)
+
+    assert loaded.objects[0].rotation_pivot_x == 25.5
+    assert loaded.objects[0].rotation_pivot_y == 30.25
 
 
 def test_rotated_text_frame_keeps_all_corners_around_the_same_centre() -> None:

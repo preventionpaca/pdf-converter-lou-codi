@@ -72,6 +72,8 @@ class PageObject:
     border_width: float = 0.0
     border_style: str = "solid"
     rotation: int = 0
+    rotation_pivot_x: float | None = None
+    rotation_pivot_y: float | None = None
     flip_horizontal: bool = False
     flip_vertical: bool = False
     locked: bool = False
