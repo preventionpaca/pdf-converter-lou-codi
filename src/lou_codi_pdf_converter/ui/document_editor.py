@@ -1069,6 +1069,33 @@ def objects_bounds(objects: list[PageObject]) -> tuple[float, float, float, floa
     return left, top, right - left, bottom - top
 
 
+def alignment_snap_translation(
+    moving_bounds: tuple[float, float, float, float],
+    target_x: list[float],
+    target_y: list[float],
+    delta_x: float,
+    delta_y: float,
+    threshold: float,
+) -> tuple[float, float, float | None, float | None]:
+    """Snap left/centre/right and top/centre/bottom independently."""
+    left, top, width, height = moving_bounds
+    moving_x = (left + delta_x, left + width / 2 + delta_x, left + width + delta_x)
+    moving_y = (top + delta_y, top + height / 2 + delta_y, top + height + delta_y)
+
+    def closest(values: tuple[float, ...], targets: list[float]) -> tuple[float, float | None]:
+        candidates = [
+            (target - value, target)
+            for value in values
+            for target in targets
+            if abs(target - value) <= threshold
+        ]
+        return min(candidates, key=lambda candidate: abs(candidate[0])) if candidates else (0.0, None)
+
+    correction_x, guide_x = closest(moving_x, target_x)
+    correction_y, guide_y = closest(moving_y, target_y)
+    return delta_x + correction_x, delta_y + correction_y, guide_x, guide_y
+
+
 def rotated_rectangle_points(item: PageObject) -> list[tuple[float, float]]:
     """Return an object's four corners after rotation around its centre."""
     center_x = item.x + item.width / 2
@@ -1722,6 +1749,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._crop_drag_edge: str | None = None
         self._vertex_drag_origin: tuple[int, int, list[list[float]]] | None = None
         self._drag_snap_preview: tuple[tuple[float, float], str] | None = None
+        self._alignment_snap_guides: tuple[float | None, float | None] | None = None
         self._selected_vertex: tuple[int, int] | None = None
         self._marquee_origin: tuple[float, float] | None = None
         self._marquee_initial_selection: set[int] = set()
@@ -3337,6 +3365,14 @@ class DocumentEditorWindow(tk.Toplevel):
             menu.add_command(label="Assembler la sélection", command=self._group_selected)
         if any(item.group for item in objects):
             menu.add_command(label="Dissocier l’assemblage", command=self._ungroup_selected)
+        menu.add_command(
+            label=(
+                "Déverrouiller les dimensions"
+                if objects and all(item.geometry_locked for item in objects)
+                else "Verrouiller les dimensions (déplacement seul)"
+            ),
+            command=self._toggle_geometry_lock,
+        )
 
         transformable = kinds - {"table"}
         if transformable:
@@ -3755,6 +3791,7 @@ class DocumentEditorWindow(tk.Toplevel):
         drag_snap_preview = getattr(self, "_drag_snap_preview", None)
         if drag_snap_preview is not None:
             self._draw_snap_marker(*drag_snap_preview)
+        self._draw_alignment_snap_guides()
         self._draw_crop_overlay()
         if self._coincident_edge_highlight is not None:
             edge = self._coincident_edge_highlight
@@ -3822,16 +3859,17 @@ class DocumentEditorWindow(tk.Toplevel):
                 font=("Sans", 9, "bold"),
                 tags=("assembly-bounds",),
             )
-            size = 14
-            self.canvas.create_rectangle(
-                x2 - size / 2,
-                y2 - size / 2,
-                x2 + size / 2,
-                y2 + size / 2,
-                fill="#E47D16",
-                outline="white",
-                tags=("assembly-resize", "resize"),
-            )
+            if not any(item.geometry_locked for item in objects):
+                size = 14
+                self.canvas.create_rectangle(
+                    x2 - size / 2,
+                    y2 - size / 2,
+                    x2 + size / 2,
+                    y2 + size / 2,
+                    fill="#E47D16",
+                    outline="white",
+                    tags=("assembly-resize", "resize"),
+                )
         if self.selected_indices:
             rotation_objects = [
                 self.document.objects[index]
@@ -4255,7 +4293,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
                 else:
                     self.canvas.create_line(*coordinates, fill=item.border_color, width=max(1, item.border_width * self.zoom), dash=dash, tags=tags)
-            if selected and len(self.selected_indices) == 1:
+            if selected and len(self.selected_indices) == 1 and not item.geometry_locked:
                 for point_index, point in enumerate(item.points):
                     px = self.page_x + (item.x + point[0]) * self.zoom
                     py = self.page_y + (item.y + point[1]) * self.zoom
@@ -4433,7 +4471,7 @@ class DocumentEditorWindow(tk.Toplevel):
             )
         if selected and len(self.selected_indices) == 1:
             self._draw_visual_dimensions(item, tags)
-        if selected and len(self.selected_indices) == 1:
+        if selected and len(self.selected_indices) == 1 and not item.geometry_locked:
             size = 12
             if item.kind == "line":
                 self.canvas.create_rectangle(
@@ -4458,6 +4496,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 fill="#1769AA",
                 outline="white",
                 tags=(f"resize-end:{index}", "resize"),
+            )
+        elif selected and len(self.selected_indices) == 1 and item.geometry_locked:
+            self.canvas.create_text(
+                x + w, y - 7, text="🔒 dimensions", anchor="se",
+                fill="#A34D00", font=("Sans", 9, "bold"), tags=tags,
             )
 
     def _visual_dimension_label(
@@ -5714,6 +5757,48 @@ class DocumentEditorWindow(tk.Toplevel):
         self.canvas.create_text(px + 9, py - 9, text=f"Accroché : {label}", anchor="sw", fill="#14804A", font=("Sans", 8, "bold"), tags=("snap-preview",))
         self.canvas.tag_raise("snap-preview")
 
+    def _alignment_targets(self, excluded_indices: set[int]) -> tuple[list[float], list[float]]:
+        target_x: list[float] = []
+        target_y: list[float] = []
+        for index, item in enumerate(self.document.objects):
+            if index in excluded_indices or self.current_page not in pages_for_object(
+                item, self.document.page_count
+            ):
+                continue
+            if item.kind == "line":
+                if abs(item.width) <= max(2.0, abs(item.height) * 0.02):
+                    target_x.append(item.x + item.width / 2)
+                if abs(item.height) <= max(2.0, abs(item.width) * 0.02):
+                    target_y.append(item.y + item.height / 2)
+                continue
+            left, top, width, height = objects_bounds([item])
+            target_x.extend((left, left + width / 2, left + width))
+            target_y.extend((top, top + height / 2, top + height))
+        return target_x, target_y
+
+    def _draw_alignment_snap_guides(self) -> None:
+        self.canvas.delete("alignment-snap-guide")
+        guides = getattr(self, "_alignment_snap_guides", None)
+        if guides is None:
+            return
+        guide_x, guide_y = guides
+        width, height = self._page_size()
+        if guide_x is not None:
+            canvas_x = self.page_x + guide_x * self.zoom
+            self.canvas.create_line(
+                canvas_x, self.page_y, canvas_x, self.page_y + height * self.zoom,
+                fill="#13A36D", width=2, dash=(7, 4),
+                tags=("alignment-snap-guide",),
+            )
+        if guide_y is not None:
+            canvas_y = self.page_y + guide_y * self.zoom
+            self.canvas.create_line(
+                self.page_x, canvas_y, self.page_x + width * self.zoom, canvas_y,
+                fill="#13A36D", width=2, dash=(7, 4),
+                tags=("alignment-snap-guide",),
+            )
+        self.canvas.tag_raise("alignment-snap-guide")
+
     def _draw_measurement_anchor_markers(self) -> None:
         self.canvas.delete("measurement-anchor")
         for number, point in enumerate(self._measurement_points, start=1):
@@ -6830,6 +6915,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._dismiss_context_menu()
         self._drag_snap_preview = None
+        self._alignment_snap_guides = None
         if self._choosing_rotation_pivot:
             self._set_rotation_pivot_from_event(event)
             return
@@ -6963,6 +7049,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 if tag.startswith("vertex:"):
                     _, object_index, point_index = tag.split(":")
                     index = int(object_index)
+                    if self.document.objects[index].geometry_locked:
+                        self.status.configure(
+                            text="Dimensions verrouillées : la polyligne peut seulement être déplacée."
+                        )
+                        return
                     self.selected = index
                     self.selected_indices = {index}
                     self._vertex_drag_origin = (
@@ -6979,6 +7070,11 @@ class DocumentEditorWindow(tk.Toplevel):
                 and len(self.selected_indices) > 1
             ):
                 objects = [self.document.objects[index] for index in self.selected_indices]
+                if any(item.geometry_locked for item in objects):
+                    self.status.configure(
+                        text="Dimensions verrouillées : cet assemblage peut seulement être déplacé."
+                    )
+                    return
                 if any(item.locked for item in objects):
                     self.status.configure(
                         text="L’assemblage contient un axe 3D verrouillé. Déverrouillez-le avant le redimensionnement."
@@ -7003,6 +7099,11 @@ class DocumentEditorWindow(tk.Toplevel):
                     item = self.document.objects[self.selected]
                     if item.locked:
                         self.status.configure(text="Cet objet est verrouillé.")
+                        return
+                    if item.geometry_locked:
+                        self.status.configure(
+                            text="Dimensions verrouillées : cet objet peut seulement être déplacé."
+                        )
                         return
                     self._resize_origin = (
                         mode,
@@ -7463,6 +7564,22 @@ class DocumentEditorWindow(tk.Toplevel):
         if abs(dx) > 1e-8 or abs(dy) > 1e-8:
             self._coincident_edge_highlight = None
         moving_assembly = len(self._drag_positions) > 1
+        shift_alignment = bool(event.state & 0x0001) or "shift" in self._modifier_keys
+        if shift_alignment and self._drag_positions:
+            moving_indices = expanded_group_indices(
+                self.document.objects, set(self._drag_positions)
+            )
+            source_document = self._drag_before or self.document
+            moving_objects = [source_document.objects[index] for index in moving_indices]
+            target_x, target_y = self._alignment_targets(moving_indices)
+            dx, dy, guide_x, guide_y = alignment_snap_translation(
+                objects_bounds(moving_objects), target_x, target_y, dx, dy,
+                threshold=max(4.0, 11.0 / self.zoom),
+            )
+            self._alignment_snap_guides = (guide_x, guide_y)
+        else:
+            self._alignment_snap_guides = None
+            self.canvas.delete("alignment-snap-guide")
         if moving_assembly:
             original_objects = [
                 self._drag_before.objects[index]
@@ -7518,9 +7635,12 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_assembly_geometry_fields()
             else:
                 self._update_geometry_fields(self.document.objects[self.selected])
+        self._draw_alignment_snap_guides()
 
     def _release(self, event: tk.Event[tk.Misc]) -> None:
         self._drag_snap_preview = None
+        self._alignment_snap_guides = None
+        self.canvas.delete("alignment-snap-guide")
         if self._crop_drag_edge is not None:
             self._drag_crop_edge(event)
             self._apply_visual_crop()
@@ -13444,6 +13564,11 @@ class DocumentEditorWindow(tk.Toplevel):
             self.status.configure(text="Sélectionnez d’abord un objet ou un assemblage.")
             return
         objects = [self.document.objects[index] for index in indices]
+        if any(item.geometry_locked for item in objects):
+            self.status.configure(
+                text="Dimensions verrouillées : déverrouillez la sélection avant de la redimensionner."
+            )
+            return
         left, top, width, height = objects_bounds(objects)
         self._checkpoint()
         transform_object_assembly(objects, left, top, width * factor, height * factor)
@@ -13451,6 +13576,24 @@ class DocumentEditorWindow(tk.Toplevel):
         self.selected = min(indices)
         self.status.configure(
             text=("Sélection agrandie de 10 %." if factor > 1 else "Sélection réduite de 10 %.")
+        )
+        self._render()
+
+    def _toggle_geometry_lock(self) -> None:
+        indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        if not indices:
+            return
+        lock = not all(self.document.objects[index].geometry_locked for index in indices)
+        self._checkpoint()
+        for index in indices:
+            self.document.objects[index].geometry_locked = lock
+        self.selected_indices = indices
+        self.selected = min(indices)
+        self.status.configure(
+            text=(
+                "Dimensions verrouillées : la sélection reste déplaçable sans pouvoir être étirée."
+                if lock else "Dimensions déverrouillées : les poignées de redimensionnement sont réactivées."
+            )
         )
         self._render()
 
@@ -13942,6 +14085,14 @@ class DocumentEditorWindow(tk.Toplevel):
         ):
             object_index, point_index = self._selected_vertex
             item = self.document.objects[object_index]
+            if item.geometry_locked:
+                if not silent:
+                    messagebox.showinfo(
+                        "Dimensions verrouillées",
+                        "Déverrouillez les dimensions avant de déplacer un sommet.",
+                        parent=self,
+                    )
+                return
             absolute = [(item.x + x, item.y + y) for x, y in item.points]
             if point_index >= len(absolute):
                 return
@@ -13969,9 +14120,15 @@ class DocumentEditorWindow(tk.Toplevel):
             target_height = max(0.1, values["height"] * 72 / 25.4)
             self._checkpoint()
             objects = [self.document.objects[index] for index in self.selected_indices]
-            transform_object_assembly(
-                objects, target_x, target_y, target_width, target_height
-            )
+            if any(item.geometry_locked for item in objects):
+                current_x, current_y, _width, _height = objects_bounds(objects)
+                for item in objects:
+                    item.x += target_x - current_x
+                    item.y += target_y - current_y
+            else:
+                transform_object_assembly(
+                    objects, target_x, target_y, target_width, target_height
+                )
             for item in objects:
                 item.font_size = max(6.0, values["font_size"])
                 item.level = round(values["level"])
@@ -13992,6 +14149,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 values["width"] *= 25.4 / 72
                 values["height"] *= 25.4 / 72
             for key, value in values.items():
+                if item.geometry_locked and key in {"width", "height"}:
+                    continue
                 if key in {"x", "y", "width", "height"}:
                     value = value * 72 / 25.4
                 if key == "level":

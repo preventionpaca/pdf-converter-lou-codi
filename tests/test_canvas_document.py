@@ -32,6 +32,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     _replace_text_ranges,
     _slice_text_ranges,
     aligned_text_x,
+    alignment_snap_translation,
     dimension_label_layout,
     dimension_line_geometry,
     driving_dimension_translation,
@@ -692,6 +693,33 @@ def test_drawing_snap_can_ignore_the_object_whose_endpoint_is_being_moved() -> N
 
     assert point == (230.0, 20.0)
     assert label == "milieu"
+
+
+def test_shift_alignment_can_snap_horizontal_and_vertical_edges_at_once() -> None:
+    # Blue rectangle: left=100, bottom=100. Desired references: x=96 and y=104.
+    dx, dy, guide_x, guide_y = alignment_snap_translation(
+        (100.0, 60.0, 80.0, 40.0),
+        [96.0],
+        [104.0],
+        delta_x=0.0,
+        delta_y=0.0,
+        threshold=6.0,
+    )
+
+    assert (dx, dy) == (-4.0, 4.0)
+    assert (guide_x, guide_y) == (96.0, 104.0)
+
+
+def test_geometry_lock_survives_project_roundtrip(tmp_path: Path) -> None:
+    target = tmp_path / "locked.cod"
+    document = CanvasDocument(objects=[
+        PageObject("shape", 0, 10, 20, 100, 50, geometry_locked=True),
+    ])
+
+    document.save(target)
+    restored = CanvasDocument.load(target)
+
+    assert restored.objects[0].geometry_locked is True
 
 
 def test_angle_leader_stops_outside_the_label_rectangle() -> None:

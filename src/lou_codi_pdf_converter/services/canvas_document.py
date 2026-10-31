@@ -116,6 +116,7 @@ class PageObject:
     flip_horizontal: bool = False
     flip_vertical: bool = False
     locked: bool = False
+    geometry_locked: bool = False
     level: int = 0
     hyperlink: str = ""
     text_links: list[dict[str, object]] = field(default_factory=list)
