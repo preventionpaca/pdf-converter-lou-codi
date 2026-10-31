@@ -722,6 +722,19 @@ def test_geometry_lock_survives_project_roundtrip(tmp_path: Path) -> None:
     assert restored.objects[0].geometry_locked is True
 
 
+def test_position_lock_survives_project_roundtrip(tmp_path: Path) -> None:
+    target = tmp_path / "anchored.cod"
+    document = CanvasDocument(objects=[
+        PageObject("text", 0, 10, 20, 100, 50, text="Fixe", position_locked=True),
+        PageObject("polyline", 0, 30, 40, 80, 60, points=[[0, 0], [40, 20], [80, 60]], position_locked=True),
+    ])
+
+    document.save(target)
+    restored = CanvasDocument.load(target)
+
+    assert all(item.position_locked for item in restored.objects)
+
+
 def test_angle_leader_stops_outside_the_label_rectangle() -> None:
     center = (100.0, 100.0)
 

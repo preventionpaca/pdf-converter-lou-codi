@@ -1837,7 +1837,7 @@ class DocumentEditorWindow(tk.Toplevel):
         }
         self.tool_palettes: dict[str, tk.Widget] = {}
         self.palette_positions = {
-            "shapes": (10, 10), "measurements": (10, 440),
+            "shapes": (10, 10), "measurements": (10, 505),
             "table": (108, 10), "media": (108, 530),
             "shape_style": (454, 10), "technical": (602, 10),
             "text_zone_style": (454, 10),
@@ -1927,6 +1927,24 @@ class DocumentEditorWindow(tk.Toplevel):
             padx=12,
             pady=4,
         ).pack(side="right", padx=(0, 8))
+
+        quick_edits = tk.Frame(header, bg=NAVY)
+        quick_edits.pack(side="right", padx=(0, 8))
+        for symbol, command, help_text in (
+            ("↶", self._undo, "Annuler — Ctrl+Z"),
+            ("↷", self._redo, "Rétablir — Ctrl+Y ou Ctrl+Maj+Z"),
+            ("✂", self._cut_objects, "Couper la sélection — Ctrl+X"),
+            ("⧉", self._copy_objects, "Copier la sélection — Ctrl+C"),
+            ("▣", self._paste_objects, "Coller les objets — Ctrl+V"),
+            ("⧉+", self._duplicate_objects, "Dupliquer — Ctrl+D"),
+        ):
+            button = tk.Button(
+                quick_edits, text=symbol, command=command,
+                bg="#285886", fg="white", activebackground="#3474AD",
+                activeforeground="white", relief="flat", padx=7, pady=4,
+            )
+            button.pack(side="left", padx=1)
+            self._add_tooltip(button, help_text)
 
         self.ribbon = ttk.Notebook(self)
         self.ribbon.pack(fill="x", padx=8, pady=(4, 2))
@@ -2169,7 +2187,7 @@ class DocumentEditorWindow(tk.Toplevel):
             ("⌔", lambda: self._add_shape("trapezoid"), "Insérer un trapèze"),
             ("➜", lambda: self._add_shape("arrow"), "Insérer une flèche"),
             ("／", self._add_line, "Tracer un trait"),
-            ("⌁", self._start_polyline, "Tracer un profil point par point"),
+            ("▪╲▪╱▪", self._start_polyline, "Tracer une polyligne point par point"),
             ("┄", self._add_axis, "Insérer un trait d’axe"),
             ("↺", lambda: self._rotate_selected(-1), "Pivoter selon le pas vers la gauche"),
             ("↻", lambda: self._rotate_selected(1), "Pivoter selon le pas vers la droite"),
@@ -2319,7 +2337,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 ("⌔", lambda: self._add_shape("trapezoid"), "Trapèze"),
                 ("➜", lambda: self._add_shape("arrow"), "Flèche"),
                 ("／", self._add_line, "Trait libre"),
-                ("⌁", self._start_polyline, "Polyligne / profil"),
+                ("▪╲▪╱▪", self._start_polyline, "Polyligne / profil"),
             )),
             "technical": ("TECHNIQUE", (
                 ("╱", self._chamfer_selected, "Chanfrein entre deux traits"),
@@ -2780,10 +2798,14 @@ class DocumentEditorWindow(tk.Toplevel):
         self.bind("<Control-s>", lambda _event: self._save())
         self.bind("<Control-Shift-s>", lambda _event: self._save_as())
         self.bind("<Control-Shift-S>", lambda _event: self._save_as())
-        self.bind("<Control-z>", lambda _event: self._undo())
-        self.bind("<Control-y>", lambda _event: self._redo())
+        self.bind("<Control-z>", self._undo_shortcut)
+        self.bind("<Control-y>", self._redo_shortcut)
+        self.bind("<Control-Shift-z>", self._redo_shortcut)
+        self.bind("<Control-Shift-Z>", self._redo_shortcut)
+        self.bind("<Control-x>", self._cut_shortcut)
         self.bind("<Control-c>", self._copy_shortcut)
         self.bind("<Control-v>", self._paste_shortcut)
+        self.bind("<Control-d>", self._duplicate_shortcut)
         self.bind(
             "<Control-Shift-v>",
             lambda _event: self._paste_from_system_clipboard(rich=False),
@@ -3020,7 +3042,7 @@ class DocumentEditorWindow(tk.Toplevel):
         tools.pack(fill="x")
         for index, (symbol, command, help_text) in enumerate(actions):
             button = ttk.Button(
-                tools, text=symbol, command=command, width=4,
+                tools, text=symbol, command=command, width=max(4, len(symbol)),
                 style="PaletteTool.TButton",
             )
             button.grid(row=index // columns, column=index % columns, padx=1, pady=1, sticky="ew")
@@ -3271,6 +3293,9 @@ class DocumentEditorWindow(tk.Toplevel):
         objects = [self.document.objects[index] for index in indices]
 
         if not objects:
+            menu.add_command(label="Annuler    Ctrl+Z", command=self._undo)
+            menu.add_command(label="Rétablir    Ctrl+Y", command=self._redo)
+            menu.add_separator()
             menu.add_command(
                 label="Coller avec mise en forme    Ctrl+V",
                 command=self._paste_from_system_clipboard,
@@ -3291,8 +3316,13 @@ class DocumentEditorWindow(tk.Toplevel):
         one = objects[0] if len(objects) == 1 else None
         if one is not None and one.kind in {"text", "table"}:
             menu.add_command(label="Modifier le contenu", command=self._edit_selected)
-        menu.add_command(label="Copier", command=self._copy_objects)
-        menu.add_command(label="Dupliquer", command=self._duplicate_objects)
+        menu.add_command(label="Annuler    Ctrl+Z", command=self._undo)
+        menu.add_command(label="Rétablir    Ctrl+Y", command=self._redo)
+        menu.add_separator()
+        menu.add_command(label="Couper    Ctrl+X", command=self._cut_objects)
+        menu.add_command(label="Copier    Ctrl+C", command=self._copy_objects)
+        menu.add_command(label="Coller    Ctrl+V", command=self._paste_objects)
+        menu.add_command(label="Dupliquer    Ctrl+D", command=self._duplicate_objects)
 
         if one is not None and one.kind == "text":
             menu.add_separator()
@@ -3372,6 +3402,14 @@ class DocumentEditorWindow(tk.Toplevel):
                 else "Verrouiller les dimensions (déplacement seul)"
             ),
             command=self._toggle_geometry_lock,
+        )
+        menu.add_command(
+            label=(
+                "Déverrouiller la position"
+                if objects and all(item.position_locked for item in objects)
+                else "Ancrer à cette position"
+            ),
+            command=self._toggle_position_lock,
         )
 
         transformable = kinds - {"table"}
@@ -4500,6 +4538,11 @@ class DocumentEditorWindow(tk.Toplevel):
         elif selected and len(self.selected_indices) == 1 and item.geometry_locked:
             self.canvas.create_text(
                 x + w, y - 7, text="🔒 dimensions", anchor="se",
+                fill="#A34D00", font=("Sans", 9, "bold"), tags=tags,
+            )
+        if selected and len(self.selected_indices) == 1 and item.position_locked:
+            self.canvas.create_text(
+                x, y - 7, text="📌 position", anchor="sw",
                 fill="#A34D00", font=("Sans", 9, "bold"), tags=tags,
             )
 
@@ -7174,6 +7217,13 @@ class DocumentEditorWindow(tk.Toplevel):
                 )
                 self._render()
                 return
+            if any(self.document.objects[index].position_locked for index in self.selected_indices):
+                self._drag_origin = None
+                self.status.configure(
+                    text="Position ancrée : déverrouillez la position pour déplacer la sélection."
+                )
+                self._render()
+                return
             self._drag_origin = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y), item.x, item.y)
             self._drag_positions = {
                 index: (self.document.objects[index].x, self.document.objects[index].y)
@@ -7189,7 +7239,7 @@ class DocumentEditorWindow(tk.Toplevel):
             return False
         indices = expanded_group_indices(self.document.objects, self.selected_indices)
         objects = [self.document.objects[index] for index in indices]
-        if any(item.locked for item in objects):
+        if any(item.locked or item.position_locked for item in objects):
             return False
         left, top, width, height = objects_bounds(objects)
         pointer = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
@@ -10718,16 +10768,69 @@ class DocumentEditorWindow(tk.Toplevel):
         return False
 
     def _copy_shortcut(self, _event: object = None) -> str | None:
-        if isinstance(self.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
+        if self._focus_is_text_input():
             return None
         self._copy_objects()
         return "break"
 
     def _paste_shortcut(self, _event: object = None) -> str | None:
-        if isinstance(self.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
+        if self._focus_is_text_input():
             return None
-        self._paste_from_system_clipboard()
+        try:
+            clipboard_marker = self.clipboard_get()
+        except tk.TclError:
+            clipboard_marker = ""
+        if self._object_clipboard and clipboard_marker == "LOUCODI_OBJECTS":
+            self._paste_objects()
+        else:
+            self._paste_from_system_clipboard()
         return "break"
+
+    def _focus_is_text_input(self) -> bool:
+        focus = self.focus_get()
+        return getattr(self, "_editing_widget", None) is not None or isinstance(
+            focus, (tk.Text, tk.Entry, ttk.Entry, ttk.Combobox)
+        )
+
+    def _undo_shortcut(self, _event: object = None) -> str | None:
+        if self._focus_is_text_input():
+            return None
+        self._undo()
+        return "break"
+
+    def _redo_shortcut(self, _event: object = None) -> str | None:
+        if self._focus_is_text_input():
+            return None
+        self._redo()
+        return "break"
+
+    def _cut_shortcut(self, _event: object = None) -> str | None:
+        if self._focus_is_text_input():
+            return None
+        self._cut_objects()
+        return "break"
+
+    def _duplicate_shortcut(self, _event: object = None) -> str | None:
+        if self._focus_is_text_input():
+            return None
+        self._duplicate_objects()
+        return "break"
+
+    def _cut_objects(self) -> None:
+        indices = sorted(self.selected_indices)
+        if not indices and self.selected is not None:
+            indices = [self.selected]
+        if not indices:
+            self.status.configure(text="Sélectionnez un ou plusieurs objets à couper.")
+            return
+        self._copy_objects()
+        self._checkpoint()
+        for index in reversed(indices):
+            del self.document.objects[index]
+        self.selected = None
+        self.selected_indices.clear()
+        self.status.configure(text=f"{len(indices)} objet(s) coupé(s).")
+        self._render()
 
     def _clipboard_image(self) -> Image.Image | None:
         try:
@@ -11191,6 +11294,9 @@ class DocumentEditorWindow(tk.Toplevel):
     def _align_objects(self, mode: str) -> None:
         indices = sorted(self.selected_indices)
         if len(indices) < 2:
+            return
+        if any(self.document.objects[index].position_locked for index in indices):
+            self.status.configure(text="Position ancrée : déverrouillez la sélection avant de l’aligner.")
             return
         self._checkpoint()
         objects = [self.document.objects[index] for index in indices]
@@ -13175,6 +13281,9 @@ class DocumentEditorWindow(tk.Toplevel):
             self._commit_inline_editor(render=False)
         indices = expanded_group_indices(self.document.objects, self.selected_indices)
         objects = [self.document.objects[index] for index in indices]
+        if any(item.position_locked for item in objects):
+            self.status.configure(text="Position ancrée : déverrouillez la sélection avant de la tourner.")
+            return
         left, top, width, height = objects_bounds(objects)
         assembly_pivot = self._selection_rotation_pivot() or (left + width / 2, top + height / 2)
         use_shared_pivot = self._selection_rotation_pivot() is not None
@@ -13593,6 +13702,24 @@ class DocumentEditorWindow(tk.Toplevel):
             text=(
                 "Dimensions verrouillées : la sélection reste déplaçable sans pouvoir être étirée."
                 if lock else "Dimensions déverrouillées : les poignées de redimensionnement sont réactivées."
+            )
+        )
+        self._render()
+
+    def _toggle_position_lock(self) -> None:
+        indices = expanded_group_indices(self.document.objects, self.selected_indices)
+        if not indices:
+            return
+        lock = not all(self.document.objects[index].position_locked for index in indices)
+        self._checkpoint()
+        for index in indices:
+            self.document.objects[index].position_locked = lock
+        self.selected_indices = indices
+        self.selected = min(indices)
+        self.status.configure(
+            text=(
+                "Position ancrée : la sélection ne peut plus être déplacée, alignée ni tournée."
+                if lock else "Position déverrouillée : la sélection peut de nouveau être déplacée."
             )
         )
         self._render()
@@ -14120,6 +14247,9 @@ class DocumentEditorWindow(tk.Toplevel):
             target_height = max(0.1, values["height"] * 72 / 25.4)
             self._checkpoint()
             objects = [self.document.objects[index] for index in self.selected_indices]
+            position_locked = any(item.position_locked for item in objects)
+            if position_locked:
+                target_x, target_y = objects_bounds(objects)[:2]
             if any(item.geometry_locked for item in objects):
                 current_x, current_y, _width, _height = objects_bounds(objects)
                 for item in objects:
@@ -14150,6 +14280,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 values["height"] *= 25.4 / 72
             for key, value in values.items():
                 if item.geometry_locked and key in {"width", "height"}:
+                    continue
+                if item.position_locked and key in {"x", "y"}:
                     continue
                 if key in {"x", "y", "width", "height"}:
                     value = value * 72 / 25.4
@@ -14195,6 +14327,9 @@ class DocumentEditorWindow(tk.Toplevel):
             return None
         if not self.selected_indices:
             return None
+        if any(self.document.objects[index].position_locked for index in self.selected_indices):
+            self.status.configure(text="Position ancrée : déverrouillez-la avant le déplacement précis.")
+            return "break"
         try:
             millimetres = float(self.nudge_var.get().replace(",", "."))
         except ValueError:
