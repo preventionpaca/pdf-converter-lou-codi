@@ -18,6 +18,8 @@ mkdir -p \
   "$package_root/usr/share/applications" \
   "$package_root/usr/share/icons/hicolor/256x256/apps" \
   "$package_root/usr/share/icons/hicolor/scalable/mimetypes" \
+  "$package_root/usr/share/pixmaps" \
+  "$package_root/usr/share/thumbnailers" \
   "$package_root/usr/share/mime/packages" \
   "$installer_dir"
 
@@ -31,6 +33,28 @@ for size in 16 24 32 48 64 128 256; do
 done
 cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.svg" \
   "$package_root/usr/share/icons/hicolor/scalable/mimetypes/application-x-loucodi-document.svg"
+cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.svg" \
+  "$package_root/usr/share/icons/hicolor/scalable/mimetypes/application-x-loucodi-document-symbolic.svg"
+# Some GNOME/Nautilus combinations do not resolve MIME icons inherited from
+# hicolor in compact list views. /usr/share/pixmaps is the freedesktop legacy
+# fallback searched independently of the active icon theme.
+cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.png" \
+  "$package_root/usr/share/pixmaps/application-x-loucodi-document.png"
+cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document.png" \
+  "$package_root/usr/share/pixmaps/application-x-loucodi-document-symbolic.png"
+
+cat > "$package_root/usr/share/thumbnailers/lou-codi-document.thumbnailer" <<'EOF'
+[Thumbnailer Entry]
+TryExec=/opt/lou-codi-workshop/lou-codi-document-thumbnailer
+Exec=/opt/lou-codi-workshop/lou-codi-document-thumbnailer %i %o %s
+MimeType=application/x-loucodi-document;
+EOF
+cat > "$package_root/opt/lou-codi-workshop/lou-codi-document-thumbnailer" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+cp /opt/lou-codi-workshop/_internal/lou_codi_pdf_converter/assets/lou-codi-document.png "$2"
+EOF
+chmod 0755 "$package_root/opt/lou-codi-workshop/lou-codi-document-thumbnailer"
 
 cat > "$package_root/usr/bin/lou-codi-workshop" <<'EOF'
 #!/usr/bin/env sh
@@ -109,14 +133,14 @@ EOF
 cat > "$package_root/DEBIAN/postinst" <<'EOF'
 #!/usr/bin/env sh
 set -e
-if command -v update-desktop-database >/dev/null 2>&1; then
-  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
-fi
-if command -v gtk-update-icon-cache >/dev/null 2>&1; then
-  gtk-update-icon-cache -q /usr/share/icons/hicolor >/dev/null 2>&1 || true
-fi
 if command -v update-mime-database >/dev/null 2>&1; then
   update-mime-database /usr/share/mime >/dev/null 2>&1 || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
 exit 0
 EOF
@@ -129,6 +153,22 @@ pkill -f /opt/lou-codi-workshop/lou-codi-pdf-converter >/dev/null 2>&1 || true
 exit 0
 EOF
 chmod 0755 "$package_root/DEBIAN/prerm"
+
+cat > "$package_root/DEBIAN/postrm" <<'EOF'
+#!/usr/bin/env sh
+set -e
+if command -v update-mime-database >/dev/null 2>&1; then
+  update-mime-database /usr/share/mime >/dev/null 2>&1 || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/postrm"
 
 dpkg-deb --root-owner-group --build "$package_root" "$package"
 echo "$package"
