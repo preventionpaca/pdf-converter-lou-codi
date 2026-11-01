@@ -1,6 +1,7 @@
 import copy
 import math
 import re
+import sys
 import zipfile
 from itertools import pairwise
 from pathlib import Path
@@ -1749,6 +1750,7 @@ def test_rotation_pivot_is_persisted_in_document_archive(tmp_path: Path) -> None
     assert loaded.objects[0].rotation_pivot_y == 30.25
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Miniatures Freedesktop propres à Linux")
 def test_saving_cod_creates_a_valid_linux_thumbnail(tmp_path: Path, monkeypatch) -> None:
     cache = tmp_path / "cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
@@ -1763,6 +1765,7 @@ def test_saving_cod_creates_a_valid_linux_thumbnail(tmp_path: Path, monkeypatch)
         assert thumbnail.info["Thumb::MTime"] == str(int(path.stat().st_mtime))
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Métadonnées gio propres à Linux")
 def test_linux_cod_icon_is_attached_with_gio(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "dessin.cod"
     path.write_bytes(b"document")
