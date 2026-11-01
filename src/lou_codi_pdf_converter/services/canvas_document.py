@@ -5,6 +5,8 @@ import hashlib
 import math
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -34,6 +36,31 @@ TABLE_STYLE_PALETTES: dict[str, tuple[str, str, str, str]] = {
 }
 
 
+def apply_loucodi_document_icon(path: Path) -> None:
+    """Attach the branded icon directly for GNOME file-list compatibility."""
+    if sys.platform != "linux" or not path.is_file() or shutil.which("gio") is None:
+        return
+    system_icon = Path("/usr/share/pixmaps/application-x-loucodi-document.png")
+    bundled_icon = Path(__file__).resolve().parents[1] / "assets" / "lou-codi-document.png"
+    icon = system_icon if system_icon.is_file() else bundled_icon
+    if not icon.is_file():
+        return
+    try:
+        subprocess.run(
+            [
+                "gio", "set", str(path.resolve()), "metadata::custom-icon",
+                icon.resolve().as_uri(),
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # File-manager integration is cosmetic and must never block a save/open.
+        return
+
+
 def write_loucodi_document_thumbnail(path: Path) -> None:
     """Publish the branded COD tile in the freedesktop thumbnail cache.
 
@@ -44,6 +71,7 @@ def write_loucodi_document_thumbnail(path: Path) -> None:
     """
     if sys.platform != "linux" or not path.is_file():
         return
+    apply_loucodi_document_icon(path)
     icon = Path(__file__).resolve().parents[1] / "assets" / "lou-codi-document.png"
     if not icon.is_file():
         return
@@ -258,7 +286,7 @@ class CanvasDocument:
                         if isinstance(cell, dict):
                             cell["image_path"] = materialize(cell.get("image_path", ""))
             source_pdf = materialize(data.get("source_pdf", ""))
-        return cls(
+        document = cls(
             # Assets must be materialized while the ZIP archive is still open.
             # In particular, a PDF used as the document background previously
             # triggered "Attempt to use ZIP archive that was already closed".
@@ -270,6 +298,8 @@ class CanvasDocument:
             is_template=bool(data.get("is_template", False)),
             objects=[PageObject(**item) for item in object_values],
         )
+        apply_loucodi_document_icon(path)
+        return document
 
 
 def append_canvas_document(target: CanvasDocument, source: CanvasDocument) -> None:

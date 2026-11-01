@@ -39,6 +39,10 @@ def test_cod_document_icons_are_packaged() -> None:
     assert "application-x-loucodi-document-symbolic.svg" in linux
     assert "/usr/share/pixmaps/application-x-loucodi-document.png" in linux
     assert "lou-codi-document.thumbnailer" in linux
+    assert "lou-codi-workshop-uninstall.desktop" in linux
+    assert "apt-get remove -y lou-codi-workshop" in linux
+    assert "metadata::custom-icon" in linux
+    assert "lou-codi-workshop-refresh-icons" in linux
     assert "lou-codi-document.ico" in windows
     assert '"code", "cod", "loucodi-document"' in macos
     assert '"lou-codi-document.icns"' in macos

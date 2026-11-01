@@ -14,6 +14,7 @@ from lou_codi_pdf_converter.services.canvas_document import (
     FLOW_BREAK_TOKEN,
     CanvasDocument,
     PageObject,
+    apply_loucodi_document_icon,
     append_canvas_document,
     export_canvas_pdf,
     flowed_text_context,
@@ -1760,6 +1761,29 @@ def test_saving_cod_creates_a_valid_linux_thumbnail(tmp_path: Path, monkeypatch)
     with Image.open(thumbnails[0]) as thumbnail:
         assert thumbnail.info["Thumb::URI"] == path.resolve().as_uri()
         assert thumbnail.info["Thumb::MTime"] == str(int(path.stat().st_mtime))
+
+
+def test_linux_cod_icon_is_attached_with_gio(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "dessin.cod"
+    path.write_bytes(b"document")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.canvas_document.shutil.which",
+        lambda command: "/usr/bin/gio" if command == "gio" else None,
+    )
+    monkeypatch.setattr(
+        "lou_codi_pdf_converter.services.canvas_document.subprocess.run",
+        lambda command, **_options: calls.append(command),
+    )
+
+    apply_loucodi_document_icon(path)
+
+    assert calls
+    assert calls[0][:4] == [
+        "gio", "set", str(path.resolve()), "metadata::custom-icon",
+    ]
+    assert calls[0][4].startswith("file://")
+    assert calls[0][4].endswith("lou-codi-document.png")
 
 
 def test_rotated_text_frame_keeps_all_corners_around_the_same_centre() -> None:
