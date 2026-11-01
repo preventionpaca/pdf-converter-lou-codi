@@ -16,16 +16,19 @@ mkdir -p \
   "$package_root/opt/lou-codi-workshop" \
   "$package_root/usr/bin" \
   "$package_root/usr/share/applications" \
-  "$package_root/usr/share/icons/hicolor/256x256/apps" \
   "$package_root/usr/share/icons/hicolor/scalable/mimetypes" \
+  "$package_root/usr/lib/lou-codi-workshop" \
   "$package_root/usr/share/pixmaps" \
   "$package_root/usr/share/thumbnailers" \
   "$package_root/usr/share/mime/packages" \
   "$installer_dir"
 
 cp -a "$project_dir/dist/lou-codi-pdf-converter/." "$package_root/opt/lou-codi-workshop/"
-cp "$project_dir/src/lou_codi_pdf_converter/assets/croix-lou-codi.png" \
-  "$package_root/usr/share/icons/hicolor/256x256/apps/lou-codi-workshop.png"
+for size in 16 24 32 48 64 128 256 512; do
+  mkdir -p "$package_root/usr/share/icons/hicolor/${size}x${size}/apps"
+  cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-workshop-$size.png" \
+    "$package_root/usr/share/icons/hicolor/${size}x${size}/apps/lou-codi-workshop.png"
+done
 for size in 16 24 32 48 64 128 256; do
   mkdir -p "$package_root/usr/share/icons/hicolor/${size}x${size}/mimetypes"
   cp "$project_dir/src/lou_codi_pdf_converter/assets/lou-codi-document-$size.png" \
@@ -60,7 +63,18 @@ cat > "$package_root/usr/bin/lou-codi-workshop" <<'EOF'
 #!/usr/bin/env sh
 config_root=${XDG_CONFIG_HOME:-"$HOME/.config"}/lou-codi-workshop
 desktop_marker="$config_root/desktop-shortcut-checked"
-icon_marker="$config_root/document-icons-a17-checked"
+icon_marker="$config_root/document-icons-a18-checked"
+cleanup_marker="$config_root/legacy-installations-a18-cleaned"
+if [ ! -e "$cleanup_marker" ]; then
+  legacy_brand="lou""camin"
+  rm -rf -- "${XDG_DATA_HOME:-$HOME/.local/share}/lou-codi-workshop" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/lou-codi-pdf-converter" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/$legacy_brand-pdf-converter"
+  rm -f -- "${XDG_DATA_HOME:-$HOME/.local/share}/applications/lou-codi-pdf-converter.desktop" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/applications/$legacy_brand-pdf-converter.desktop"
+  mkdir -p "$config_root" 2>/dev/null || true
+  touch "$cleanup_marker" 2>/dev/null || true
+fi
 if [ ! -e "$desktop_marker" ]; then
   desktop_dir=""
   if command -v xdg-user-dir >/dev/null 2>&1; then
@@ -123,26 +137,49 @@ cat > "$package_root/usr/share/applications/lou-codi-workshop.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Lou Còdi Workshop
+GenericName=Atelier de documents PDF et de dessin
 Comment=Des outils pratiques, en local, pour créer et fabriquer
 Exec=lou-codi-workshop %f
 Icon=lou-codi-workshop
 Terminal=false
-Categories=Office;Graphics;Utility;
+Categories=Office;
+Keywords=Lou Còdi;Lou Codi;Loucodi;Lou Kodi;BlueKodi;PDF;Document Studio;dessin;atelier;
 MimeType=application/x-loucodi-document;application/x-loucodi-space;
 StartupNotify=true
 StartupWMClass=Loucodiworkshop
 EOF
+
+cat > "$package_root/usr/lib/lou-codi-workshop/uninstall-all" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+# Remove only obsolete program locations and launchers. User documents under
+# Downloads/LouCodi are deliberately never touched.
+legacy_brand="lou""camin"
+rm -rf -- /opt/lou-codi-pdf-converter "/opt/$legacy_brand-pdf-converter"
+rm -f -- /usr/share/applications/lou-codi-pdf-converter.desktop \
+  "/usr/share/applications/$legacy_brand-pdf-converter.desktop"
+exec apt-get remove -y lou-codi-workshop
+EOF
+chmod 0755 "$package_root/usr/lib/lou-codi-workshop/uninstall-all"
 
 cat > "$package_root/usr/bin/lou-codi-workshop-uninstall" <<'EOF'
 #!/usr/bin/env sh
 set -eu
 
 message='Désinstaller Lou Còdi Workshop ?\n\nVos documents et projets personnels seront conservés.'
+data_root=${XDG_DATA_HOME:-"$HOME/.local/share"}
+cleanup_user_install() {
+  rm -rf -- "$data_root/lou-codi-workshop" "$data_root/lou-codi-pdf-converter"
+  rm -f -- "$data_root/applications/lou-codi-workshop.desktop" \
+    "$data_root/applications/lou-codi-workshop-uninstall.desktop" \
+    "$data_root/applications/lou-codi-pdf-converter.desktop"
+}
 if command -v zenity >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
   zenity --question --title='Désinstaller Lou Còdi Workshop' \
     --text="$message" --width=560 2>/dev/null || exit 0
+  cleanup_user_install
   if command -v pkexec >/dev/null 2>&1; then
-    pkexec apt-get remove -y lou-codi-workshop
+    pkexec /usr/lib/lou-codi-workshop/uninstall-all
   else
     zenity --error --title='Désinstallation impossible' \
       --text='Le composant système pkexec est absent. Ouvrez un terminal et exécutez :\n\nsudo apt remove lou-codi-workshop' \
@@ -155,7 +192,8 @@ else
   printf 'Continuer ? [o/N] '
   read -r answer
   case "$answer" in o|O|oui|OUI|y|Y|yes|YES) ;; *) exit 0 ;; esac
-  exec sudo apt-get remove lou-codi-workshop
+  cleanup_user_install
+  exec sudo /usr/lib/lou-codi-workshop/uninstall-all
 fi
 EOF
 chmod 0755 "$package_root/usr/bin/lou-codi-workshop-uninstall"
@@ -168,8 +206,8 @@ Comment=Retirer l’application en conservant les documents personnels
 Exec=lou-codi-workshop-uninstall
 Icon=edit-delete
 Terminal=false
-Categories=Settings;Utility;
-Keywords=Lou Còdi;désinstaller;supprimer;uninstall;
+Categories=Settings;
+Keywords=Lou Còdi;Lou Codi;Loucodi;Lou Kodi;BlueKodi;désinstaller;supprimer;uninstall;
 NoDisplay=false
 EOF
 
@@ -220,9 +258,23 @@ fi
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
 fi
+if command -v xdg-desktop-menu >/dev/null 2>&1; then
+  xdg-desktop-menu forceupdate --mode system >/dev/null 2>&1 || true
+fi
 exit 0
 EOF
 chmod 0755 "$package_root/DEBIAN/postinst"
+
+cat > "$package_root/DEBIAN/preinst" <<'EOF'
+#!/usr/bin/env sh
+set -e
+legacy_brand="lou""camin"
+rm -rf -- /opt/lou-codi-pdf-converter "/opt/$legacy_brand-pdf-converter"
+rm -f -- /usr/share/applications/lou-codi-pdf-converter.desktop \
+  "/usr/share/applications/$legacy_brand-pdf-converter.desktop"
+exit 0
+EOF
+chmod 0755 "$package_root/DEBIAN/preinst"
 
 cat > "$package_root/DEBIAN/prerm" <<'EOF'
 #!/usr/bin/env sh

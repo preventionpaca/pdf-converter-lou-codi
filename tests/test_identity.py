@@ -31,6 +31,8 @@ def test_cod_document_icons_are_packaged() -> None:
     assert (assets / "lou-codi-document.svg").stat().st_size > 200
     for size in (16, 24, 32, 48, 64, 128, 256):
         assert (assets / f"lou-codi-document-{size}.png").is_file()
+    for size in (16, 24, 32, 48, 64, 128, 256, 512):
+        assert (assets / f"lou-codi-workshop-{size}.png").is_file()
 
     linux = (root / "packaging/linux/make-deb.sh").read_text(encoding="utf-8")
     windows = (root / "packaging/windows/lou-codi-workshop.iss").read_text(encoding="utf-8")
@@ -43,6 +45,10 @@ def test_cod_document_icons_are_packaged() -> None:
     assert "apt-get remove -y lou-codi-workshop" in linux
     assert "metadata::custom-icon" in linux
     assert "lou-codi-workshop-refresh-icons" in linux
+    assert "BlueKodi" in linux
+    assert "lou-codi-workshop-$size.png" in linux
+    assert "/usr/lib/lou-codi-workshop/uninstall-all" in linux
+    assert "legacy-installations-a18-cleaned" in linux
     assert "lou-codi-document.ico" in windows
     assert '"code", "cod", "loucodi-document"' in macos
     assert '"lou-codi-document.icns"' in macos

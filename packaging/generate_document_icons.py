@@ -21,6 +21,14 @@ def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 def build() -> None:
     ASSETS.mkdir(parents=True, exist_ok=True)
+    workshop_source = ASSETS / "croix-lou-codi.png"
+    if workshop_source.is_file():
+        with Image.open(workshop_source) as source:
+            workshop = source.convert("RGBA")
+            for size in (16, 24, 32, 48, 64, 128, 256, 512):
+                workshop.resize((size, size), Image.Resampling.LANCZOS).save(
+                    ASSETS / f"lou-codi-workshop-{size}.png", "PNG", optimize=True
+                )
     image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     red = "#D71920"

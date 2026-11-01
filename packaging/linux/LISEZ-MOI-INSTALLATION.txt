@@ -1,0 +1,24 @@
+LOU CÒDI WORKSHOP — INSTALLATION LINUX
+======================================
+
+1. Double-cliquez sur le fichier .deb.
+2. Choisissez « Installer » dans l’application d’installation de logiciels.
+3. Saisissez votre mot de passe lorsque Linux le demande.
+4. À la fin, recherchez « Lou Còdi Workshop », « Loucodi », « Lou Kodi »
+   ou « BlueKodi » dans le menu des applications.
+
+Le paquet installe automatiquement :
+- Lou Còdi Workshop et ses modules ;
+- le lanceur et ses icônes dans le menu des applications ;
+- les associations et icônes des documents .cod ;
+- l’entrée « Désinstaller Lou Còdi Workshop ».
+
+DÉSINSTALLATION
+---------------
+
+Ouvrez le menu des applications et lancez :
+« Désinstaller Lou Còdi Workshop ».
+
+Le désinstallateur retire la version actuelle et les anciens emplacements
+techniques connus. Les documents et projets personnels, notamment le dossier
+Téléchargements/LouCodi, sont conservés.
