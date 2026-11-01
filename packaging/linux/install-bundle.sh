@@ -5,6 +5,7 @@ bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 application_source="$bundle_dir/app"
 data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
 application_target="$data_root/lou-codi-workshop/app"
+legacy_user_target="$data_root/lou-codi-pdf-converter"
 applications_dir="$data_root/applications"
 icons_dir="$data_root/icons/hicolor/256x256/apps"
 mime_icons_dir="$data_root/icons/hicolor/256x256/mimetypes"
@@ -12,9 +13,13 @@ mime_packages_dir="$data_root/mime/packages"
 thumbnailers_dir="$data_root/thumbnailers"
 install_launcher=1
 create_workspace=1
+remove_legacy_user_install=1
 selected_modules="pdf_studio document_studio cutting_optimization code_lab codi_space"
 bundle_version=$(head -n 1 "$bundle_dir/VERSION" 2>/dev/null || printf 'version inconnue')
 installed_version=$(head -n 1 "$application_target/VERSION" 2>/dev/null || true)
+legacy_brand="lou""camin"
+legacy_system_install=""
+[ -d "/opt/$legacy_brand-pdf-converter" ] && legacy_system_install="/opt/$legacy_brand-pdf-converter"
 
 if [ ! -x "$application_source/lou-codi-pdf-converter" ]; then
   echo "Paquet incomplet : l’exécutable Lou Còdi Workshop est absent." >&2
@@ -37,6 +42,13 @@ if [ -n "$installed_version" ]; then
   echo "Version déjà installée : $installed_version (elle sera mise à niveau en conservant les données)."
 else
   echo "Aucune installation autonome précédente détectée."
+fi
+if [ -d "$legacy_user_target" ]; then
+  echo "Ancienne installation utilisateur détectée : $legacy_user_target"
+fi
+if [ -n "$legacy_system_install" ]; then
+  echo "Ancienne installation système détectée : $legacy_system_install"
+  echo "Elle sera signalée à la fin, car sa suppression nécessite les droits administrateur."
 fi
 echo
 "$bundle_dir/check-requirements.sh"
@@ -65,9 +77,10 @@ if command -v zenity >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" 
       TRUE codi_space "Lou Còdi Espace" --hide-column=2 --width=720 --height=430 2>/dev/null || true)
     options=$(zenity --list --checklist --title="Options d’installation" --separator=" " \
       --column="Activer" --column="Option" \
-      TRUE shortcut TRUE workspace --hide-column=2 --width=620 --height=300 2>/dev/null || true)
+      TRUE shortcut TRUE workspace TRUE cleanup --hide-column=2 --width=620 --height=340 2>/dev/null || true)
     case " $options " in *" shortcut "*) ;; *) install_launcher=0 ;; esac
     case " $options " in *" workspace "*) ;; *) create_workspace=0 ;; esac
+    case " $options " in *" cleanup "*) ;; *) remove_legacy_user_install=0 ;; esac
   fi
 elif [ -t 0 ]; then
   echo "1 - Installation complète (recommandée)"
@@ -96,17 +109,29 @@ elif [ -t 0 ]; then
       printf "Créer les dossiers LouCodi dans Téléchargements ? [O/n] "
       read -r answer
       case "$answer" in n|N|non|NON) create_workspace=0 ;; esac
+      if [ -d "$legacy_user_target" ]; then
+        printf "Retirer l’ancienne installation utilisateur détectée ? [O/n] "
+        read -r answer
+        case "$answer" in n|N|non|NON) remove_legacy_user_install=0 ;; esac
+      fi
       ;;
     3) echo "Installation annulée."; exit 0 ;;
     *) echo "Choix incorrect : installation annulée."; exit 1 ;;
   esac
 fi
 
-install -d "$application_target" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir" "$thumbnailers_dir"
+install -d "$(dirname "$application_target")" "$applications_dir" "$icons_dir" "$mime_icons_dir" "$mime_packages_dir" "$thumbnailers_dir"
+# Replace the program files instead of merging them. User settings and documents
+# live outside this directory and are therefore preserved.
+rm -rf -- "$application_target"
+install -d "$application_target"
 cp -a "$application_source/." "$application_target/"
 install -m 0644 "$bundle_dir/VERSION" "$application_target/VERSION"
 install -m 0755 "$bundle_dir/uninstaller.sh" "$application_target/uninstall.sh"
 install -m 0755 "$bundle_dir/check-requirements.sh" "$application_target/check-requirements.sh"
+if [ "$remove_legacy_user_install" -eq 1 ] && [ -d "$legacy_user_target" ]; then
+  rm -rf -- "$legacy_user_target"
+fi
 install -d "$application_target/selected-modules"
 for module in pdf_studio document_studio cutting_optimization code_lab codi_space; do
   marker="$application_target/selected-modules/$module.enabled"
@@ -242,6 +267,21 @@ desktop_file="$applications_dir/lou-codi-workshop.desktop"
 } > "$desktop_file"
 chmod 0644 "$desktop_file"
 
+uninstall_desktop_file="$applications_dir/lou-codi-workshop-uninstall.desktop"
+{
+  echo '[Desktop Entry]'
+  echo 'Name=Désinstaller Lou Còdi Workshop'
+  echo 'Comment=Retirer Lou Còdi Workshop en conservant les documents personnels'
+  printf 'Exec=%s/uninstall.sh\n' "$application_target"
+  echo 'Icon=edit-delete'
+  echo 'Terminal=false'
+  echo 'Type=Application'
+  echo 'Categories=Settings;Utility;'
+  echo 'Keywords=Lou Còdi;désinstaller;supprimer;uninstall;'
+  echo 'NoDisplay=false'
+} > "$uninstall_desktop_file"
+chmod 0644 "$uninstall_desktop_file"
+
 cat > "$mime_packages_dir/lou-codi-document.xml" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
@@ -276,10 +316,19 @@ fi
 echo
 echo "Installation terminée."
 echo "- Désinstallation : $application_target/uninstall.sh"
+echo "- Menu des applications : Désinstaller Lou Còdi Workshop"
 if [ "$install_launcher" -eq 1 ]; then
   echo "- Raccourci : disponible dans le menu des applications."
 else
   echo "- Raccourci : non créé. Exécutable : $application_target/lou-codi-pdf-converter"
+fi
+if [ -n "$legacy_system_install" ]; then
+  echo
+  echo "Une ancienne installation système reste présente : $legacy_system_install"
+  echo "Pour la retirer après avoir fermé Lou Còdi :"
+  echo "  sudo rm -rf -- /opt/$legacy_brand-pdf-converter"
+  echo "  sudo rm -f -- /usr/share/applications/$legacy_brand-pdf-converter.desktop"
+  echo "  sudo update-desktop-database /usr/share/applications"
 fi
 if [ "$gui" -eq 1 ]; then
   zenity --info --title="Lou Còdi Workshop" \
