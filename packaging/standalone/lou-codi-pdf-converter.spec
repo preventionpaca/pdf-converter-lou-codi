@@ -37,7 +37,10 @@ exe = EXE(
     exclude_binaries=True,
     name="lou-codi-pdf-converter",
     console=False,
-    icon=str(source / "lou_codi_pdf_converter" / "assets" / "croix-lou-codi.png"),
+    icon=str(
+        source / "lou_codi_pdf_converter" / "assets" /
+        ("lou-codi-workshop.ico" if sys.platform == "win32" else "croix-lou-codi.png")
+    ),
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="lou-codi-pdf-converter")
 

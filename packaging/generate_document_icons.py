@@ -29,6 +29,11 @@ def build() -> None:
                 workshop.resize((size, size), Image.Resampling.LANCZOS).save(
                     ASSETS / f"lou-codi-workshop-{size}.png", "PNG", optimize=True
                 )
+            workshop.resize((256, 256), Image.Resampling.LANCZOS).save(
+                ASSETS / "lou-codi-workshop.ico",
+                "ICO",
+                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+            )
     image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     red = "#D71920"

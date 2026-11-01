@@ -27,6 +27,7 @@ def test_cod_document_icons_are_packaged() -> None:
     assets = root / "src/lou_codi_pdf_converter/assets"
     assert (assets / "lou-codi-document.png").stat().st_size > 1_000
     assert (assets / "lou-codi-document.ico").stat().st_size > 1_000
+    assert (assets / "lou-codi-workshop.ico").stat().st_size > 1_000
     assert (assets / "lou-codi-document.icns").stat().st_size > 1_000
     assert (assets / "lou-codi-document.svg").stat().st_size > 200
     for size in (16, 24, 32, 48, 64, 128, 256):
@@ -50,6 +51,7 @@ def test_cod_document_icons_are_packaged() -> None:
     assert "/usr/lib/lou-codi-workshop/uninstall-all" in linux
     assert "legacy-installations-a18-cleaned" in linux
     assert "lou-codi-document.ico" in windows
+    assert "lou-codi-workshop.ico" in windows
     assert '"code", "cod", "loucodi-document"' in macos
     assert '"lou-codi-document.icns"' in macos
 
