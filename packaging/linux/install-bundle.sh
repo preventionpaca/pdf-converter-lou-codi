@@ -156,58 +156,11 @@ if [ "$create_workspace" -eq 1 ]; then
 fi
 
 if [ "$install_launcher" -eq 1 ]; then
-  # A per-user hicolor directory is not considered a complete icon theme
-  # without index.theme. GTK then refuses to build its cache and Nautilus
-  # silently falls back to the generic ZIP/document icon.
-  if [ ! -f "$data_root/icons/hicolor/index.theme" ]; then
-    if [ -f /usr/share/icons/hicolor/index.theme ]; then
-      install -m 0644 /usr/share/icons/hicolor/index.theme \
-        "$data_root/icons/hicolor/index.theme"
-    else
-      cat > "$data_root/icons/hicolor/index.theme" <<'EOF'
-[Icon Theme]
-Name=Hicolor
-Comment=Fallback icon theme
-Hidden=true
-Directories=16x16/mimetypes,24x24/mimetypes,32x32/mimetypes,48x48/mimetypes,64x64/mimetypes,128x128/mimetypes,256x256/mimetypes,scalable/mimetypes
-
-[16x16/mimetypes]
-Size=16
-Type=Fixed
-Context=MimeTypes
-[24x24/mimetypes]
-Size=24
-Type=Fixed
-Context=MimeTypes
-[32x32/mimetypes]
-Size=32
-Type=Fixed
-Context=MimeTypes
-[48x48/mimetypes]
-Size=48
-Type=Fixed
-Context=MimeTypes
-[64x64/mimetypes]
-Size=64
-Type=Fixed
-Context=MimeTypes
-[128x128/mimetypes]
-Size=128
-Type=Fixed
-Context=MimeTypes
-[256x256/mimetypes]
-Size=256
-Type=Fixed
-Context=MimeTypes
-[scalable/mimetypes]
-Size=48
-MinSize=16
-MaxSize=512
-Type=Scalable
-Context=MimeTypes
-EOF
-    fi
-  fi
+  # Ne jamais créer ni remplacer ~/.local/share/icons/hicolor/index.theme.
+  # Un thème hicolor utilisateur incomplet masque le thème système actif et
+  # transforme alors les icônes des autres applications en engrenages.
+  # Les icônes Lou Còdi sont déposées dans les répertoires normalisés et les
+  # variantes MIME disposent également de fallbacks non thémés.
   install -m 0644 "$bundle_dir/lou-codi-workshop.png" "$icons_dir/lou-codi-workshop.png"
   for size in 16 24 32 48 64 128 256; do
     destination="$data_root/icons/hicolor/${size}x${size}/mimetypes"

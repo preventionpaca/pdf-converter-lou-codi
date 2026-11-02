@@ -69,3 +69,11 @@ def test_all_installers_associate_every_lou_codi_document_extension() -> None:
         content = path.read_text(encoding="utf-8")
         for extension in ("code", "cod", "loucodi-document"):
             assert extension in content, f"{extension} absent de {path.name}"
+
+
+def test_linux_user_installer_never_shadows_the_system_icon_theme() -> None:
+    root = Path(__file__).parents[1]
+    installer = (root / "packaging/linux/install-bundle.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'icons/hicolor/index.theme"' not in installer
