@@ -3411,6 +3411,56 @@ class DocumentEditorWindow(tk.Toplevel):
                 structure.add_command(label=label, command=lambda value=action: self._change_table_structure(value))
             menu.add_cascade(label="Lignes et colonnes", menu=structure)
 
+            cell_appearance = tk.Menu(menu, tearoff=False)
+            cell_appearance.add_command(
+                label="Couleur de fond des cellules sélectionnées…",
+                command=self._choose_selected_table_cell_fill,
+            )
+            alignment = tk.Menu(cell_appearance, tearoff=False)
+            for label, value in (("À gauche", "left"), ("Au centre", "center"), ("À droite", "right")):
+                alignment.add_command(
+                    label=label,
+                    command=lambda selected=value: self._align_selected_table_cells(horizontal=selected),
+                )
+            alignment.add_separator()
+            for label, value in (("En haut", "top"), ("Au milieu verticalement", "middle"), ("En bas", "bottom")):
+                alignment.add_command(
+                    label=label,
+                    command=lambda selected=value: self._align_selected_table_cells(vertical=selected),
+                )
+            cell_appearance.add_cascade(label="Alignement du contenu", menu=alignment)
+            cell_appearance.add_separator()
+            cell_appearance.add_command(
+                label="Contour fin de la sélection",
+                command=lambda: self._outline_active_table_cell(0.6),
+            )
+            cell_appearance.add_command(
+                label="Contour épais de la sélection",
+                command=lambda: self._outline_active_table_cell(3.0),
+            )
+            menu.add_cascade(label="Cellules — apparence", menu=cell_appearance)
+
+            grid = tk.Menu(menu, tearoff=False)
+            grid.add_command(label="Quadrillage standard", command=lambda: self._set_table_border_preset("standard"))
+            grid.add_command(label="Bordure extérieure épaisse", command=lambda: self._set_table_border_preset("outer"))
+            grid.add_command(label="Masquer le quadrillage intérieur", command=lambda: self._set_table_inner_border(0.0))
+            grid.add_command(label="Aucune bordure", command=lambda: self._set_table_border_preset("none"))
+            menu.add_cascade(label="Tableau — quadrillage", menu=grid)
+
+            menu.add_separator()
+            menu.add_command(
+                label=("Déverrouiller les dimensions du tableau" if one.geometry_locked else "Verrouiller les dimensions du tableau"),
+                command=self._toggle_geometry_lock,
+            )
+            menu.add_command(
+                label=("Déverrouiller la position du tableau" if one.position_locked else "Ancrer le tableau à cette position"),
+                command=self._toggle_position_lock,
+            )
+            menu.add_separator()
+            menu.add_command(label="Propriétés du tableau", command=self._toggle_properties_panel)
+            menu.add_command(label="Supprimer le tableau", command=self._delete_selected)
+            return
+
         if one is not None and one.kind == "image":
             menu.add_command(label="Rogner l’image…", command=self._crop_selected_image)
             image_menu = tk.Menu(menu, tearoff=False)
@@ -4308,8 +4358,20 @@ class DocumentEditorWindow(tk.Toplevel):
             for row_text, row_width in item.table_row_border_widths.items():
                 row = int(row_text)
                 if 0 <= row < len(rows):
-                    for grid_y in (y + row_offsets[row], y + row_offsets[row + 1]):
-                        self.canvas.create_line(x, grid_y, x + w, grid_y, fill=border_color, width=max(1, round(row_width * self.zoom)), tags=tags)
+                    for boundary in (row, row + 1):
+                        grid_y = y + row_offsets[boundary]
+                        for column in range(columns):
+                            if 0 < boundary < len(rows) and self._table_grid_hidden(
+                                item, boundary - 1, column, boundary, column
+                            ):
+                                continue
+                            self.canvas.create_line(
+                                x + column_offsets[column], grid_y,
+                                x + column_offsets[column + 1], grid_y,
+                                fill=border_color,
+                                width=max(1, round(row_width * self.zoom)),
+                                tags=tags,
+                            )
             for border_range in item.table_border_ranges:
                 left = int(border_range.get("left", 0))
                 top = int(border_range.get("top", 0))
@@ -8932,8 +8994,10 @@ class DocumentEditorWindow(tk.Toplevel):
         columns = max(len(candidate) for candidate in cells)
         column_offsets = table_grid_offsets(item.table_column_widths, columns, item.width * self.zoom)
         row_offsets = table_grid_offsets(item.table_row_heights, rows, item.height * self.zoom)
-        cell_width = column_offsets[column + 1] - column_offsets[column]
-        cell_height = row_offsets[row + 1] - row_offsets[row]
+        merge = self._table_merge_for_cell(item, row, column)
+        row_span, column_span = (merge[2], merge[3]) if merge else (1, 1)
+        cell_width = column_offsets[column + column_span] - column_offsets[column]
+        cell_height = row_offsets[row + row_span] - row_offsets[row]
         cell_x = self.page_x + item.x * self.zoom + column_offsets[column]
         cell_y = self.page_y + item.y * self.zoom + row_offsets[row]
         page_width, page_height = self._page_size()
@@ -9038,7 +9102,12 @@ class DocumentEditorWindow(tk.Toplevel):
         toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
         tk.Label(
             toolbar,
-            text=f"Cellule {row + 1},{column + 1}",
+            text=(
+                f"Cellules {row + 1},{column + 1} → "
+                f"{row + row_span},{column + column_span} (fusionnées)"
+                if merge
+                else f"Cellule {row + 1},{column + 1}"
+            ),
             bg="#D8E4F0",
             fg="#193B66",
             padx=6,
@@ -9312,6 +9381,64 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text="Alignement de la cellule mis à jour.")
         self._render()
 
+    def _selected_table_cell_coordinates(self, item: PageObject) -> set[tuple[int, int]]:
+        coordinates = {
+            (row, column)
+            for object_id, row, column in self._selected_table_cells
+            if object_id == item.object_id
+        }
+        if not coordinates and self._active_table_cell and self._active_table_cell[0] == item.object_id:
+            coordinates = {(self._active_table_cell[1], self._active_table_cell[2])}
+        result: set[tuple[int, int]] = set()
+        for row, column in coordinates:
+            merge = self._table_merge_for_cell(item, row, column)
+            result.add((merge[0], merge[1]) if merge else (row, column))
+        return result
+
+    def _align_selected_table_cells(
+        self, *, horizontal: str | None = None, vertical: str | None = None
+    ) -> None:
+        item = self._selected_table()
+        if item is None:
+            return
+        coordinates = self._selected_table_cell_coordinates(item)
+        if not coordinates:
+            self.status.configure(text="Sélectionnez d’abord une ou plusieurs cellules.")
+            return
+        self._commit_inline_editor(render=False)
+        self._checkpoint()
+        cells = self._ensure_table_cells(item)
+        for row, column in coordinates:
+            if horizontal is not None:
+                cells[row][column]["horizontal_align"] = horizontal
+            if vertical is not None:
+                cells[row][column]["vertical_align"] = vertical
+        self._sync_table_text(item)
+        self.status.configure(text=f"Alignement appliqué à {len(coordinates)} cellule(s).")
+        self._render()
+
+    def _choose_selected_table_cell_fill(self) -> None:
+        item = self._selected_table()
+        if item is None:
+            return
+        coordinates = self._selected_table_cell_coordinates(item)
+        if not coordinates:
+            self.status.configure(text="Sélectionnez d’abord une ou plusieurs cellules.")
+            return
+        cells = self._ensure_table_cells(item)
+        row, column = next(iter(coordinates))
+        initial = str(cells[row][column].get("fill") or "#FFFFFF")
+        chosen = choose_color(self, "Couleur de fond des cellules", initial)
+        if not chosen:
+            return
+        self._commit_inline_editor(render=False)
+        self._checkpoint()
+        for row, column in coordinates:
+            cells[row][column]["fill"] = chosen
+        self._sync_table_text(item)
+        self.status.configure(text=f"Fond appliqué à {len(coordinates)} cellule(s).")
+        self._render()
+
     def _merge_table_cell(
         self, item: PageObject, row: int, column: int, row_span: int, column_span: int
     ) -> None:
@@ -9338,6 +9465,20 @@ class DocumentEditorWindow(tk.Toplevel):
                 cells[current_row][current_column]["text"] = ""
         if extra:
             master["text"] = "\n".join(filter(None, [master.get("text", ""), *extra]))
+        merge_bottom = row + row_span - 1
+        merge_right = column + column_span - 1
+        # Des contours posés cellule par cellule avant la fusion redessinaient
+        # les anciennes séparations par-dessus la cellule fusionnée.
+        item.table_border_ranges = [
+            border
+            for border in item.table_border_ranges
+            if not (
+                row <= int(border.get("top", 0))
+                and int(border.get("bottom", border.get("top", 0))) <= merge_bottom
+                and column <= int(border.get("left", 0))
+                and int(border.get("right", border.get("left", 0))) <= merge_right
+            )
+        ]
         item.table_merges.append([row, column, row_span, column_span])
         self._sync_table_text(item)
         self.status.configure(text="Cellules fusionnées.")
