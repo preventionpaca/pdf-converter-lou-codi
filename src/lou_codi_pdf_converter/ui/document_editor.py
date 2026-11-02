@@ -2059,6 +2059,18 @@ class DocumentEditorWindow(tk.Toplevel):
         table_border_menu.add_command(label="Effacer les contours personnalisés", command=self._clear_table_border_ranges)
         table_borders.configure(menu=table_border_menu)
         table_borders.pack(side="left", padx=2, pady=3)
+        table_cells = ttk.Menubutton(table_tools, text="Cellules ▾")
+        table_cells_menu = tk.Menu(table_cells, tearoff=False)
+        table_cells_menu.add_command(
+            label="Fusionner les cellules sélectionnées",
+            command=self._merge_selected_table_cells,
+        )
+        table_cells_menu.add_command(
+            label="Séparer la fusion sélectionnée",
+            command=self._unmerge_selected_table_cells,
+        )
+        table_cells.configure(menu=table_cells_menu)
+        table_cells.pack(side="left", padx=2, pady=3)
         self._buttons(insertion, (
             ("T  Texte", self._add_text, "Insérer une zone de texte"),
             ("🖼  Image", self._add_image, "Insérer une image"),
@@ -3360,6 +3372,15 @@ class DocumentEditorWindow(tk.Toplevel):
                 menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
 
         if one is not None and one.kind == "table":
+            menu.add_separator()
+            menu.add_command(
+                label="Fusionner les cellules sélectionnées",
+                command=self._merge_selected_table_cells,
+            )
+            menu.add_command(
+                label="Séparer la fusion sélectionnée",
+                command=self._unmerge_selected_table_cells,
+            )
             selection = tk.Menu(menu, tearoff=False)
             selection.add_command(
                 label="Sélectionner la ligne active",
@@ -9053,9 +9074,14 @@ class DocumentEditorWindow(tk.Toplevel):
         align_button.pack(side="left", padx=2, pady=2)
         merge_button = tk.Menubutton(toolbar, text="Cellules ▾", relief="flat")
         merge_menu = tk.Menu(merge_button, tearoff=False)
-        merge_menu.add_command(label="Fusionner avec la cellule de droite", command=lambda: self._merge_table_cell(item, row, column, 1, 2))
-        merge_menu.add_command(label="Fusionner avec la cellule du dessous", command=lambda: self._merge_table_cell(item, row, column, 2, 1))
-        merge_menu.add_command(label="Séparer les cellules", command=lambda: self._unmerge_table_cell(item, row, column))
+        merge_menu.add_command(
+            label="Fusionner les cellules sélectionnées",
+            command=self._merge_selected_table_cells,
+        )
+        merge_menu.add_command(
+            label="Séparer la fusion sélectionnée",
+            command=self._unmerge_selected_table_cells,
+        )
         merge_menu.add_separator()
         merge_menu.add_command(label="Insérer une ligne au-dessus", command=lambda: self._change_table_structure("insert_row_before"))
         merge_menu.add_command(label="Insérer une ligne en dessous", command=lambda: self._change_table_structure("insert_row_after"))
@@ -9315,6 +9341,83 @@ class DocumentEditorWindow(tk.Toplevel):
         item.table_merges.append([row, column, row_span, column_span])
         self._sync_table_text(item)
         self.status.configure(text="Cellules fusionnées.")
+        self._render()
+
+    def _selected_table_rectangle(
+        self, item: PageObject
+    ) -> tuple[int, int, int, int] | None:
+        selected = {
+            (row, column)
+            for object_id, row, column in self._selected_table_cells
+            if object_id == item.object_id
+        }
+        if len(selected) < 2:
+            self.status.configure(
+                text="Sélectionnez au moins deux cellules avec Maj+clic, puis fusionnez la sélection."
+            )
+            return None
+        top = min(row for row, _column in selected)
+        bottom = max(row for row, _column in selected)
+        left = min(column for _row, column in selected)
+        right = max(column for _row, column in selected)
+        expected = {
+            (row, column)
+            for row in range(top, bottom + 1)
+            for column in range(left, right + 1)
+        }
+        if selected != expected:
+            self.status.configure(
+                text=(
+                    "La fusion nécessite un bloc rectangulaire continu. "
+                    "Utilisez Maj+clic entre le premier et le dernier coin."
+                )
+            )
+            return None
+        return top, left, bottom - top + 1, right - left + 1
+
+    def _merge_selected_table_cells(self) -> None:
+        item = self._selected_table()
+        if item is None:
+            return
+        rectangle = self._selected_table_rectangle(item)
+        if rectangle is None:
+            return
+        top, left, row_span, column_span = rectangle
+        self._merge_table_cell(item, top, left, row_span, column_span)
+        if self._table_merge_for_cell(item, top, left) is not None:
+            master = (item.object_id, top, left)
+            self._active_table_cell = master
+            self._selected_table_cells = {master}
+            self._table_selection_anchor = master
+            self.status.configure(
+                text=f"Bloc de {row_span} ligne(s) × {column_span} colonne(s) fusionné."
+            )
+            self._render()
+
+    def _unmerge_selected_table_cells(self) -> None:
+        item = self._selected_table()
+        if item is None:
+            return
+        coordinates = {
+            (row, column)
+            for object_id, row, column in self._selected_table_cells
+            if object_id == item.object_id
+        }
+        if not coordinates and self._active_table_cell and self._active_table_cell[0] == item.object_id:
+            coordinates = {(self._active_table_cell[1], self._active_table_cell[2])}
+        merges = []
+        for row, column in coordinates:
+            merge = self._table_merge_for_cell(item, row, column)
+            if merge is not None and merge not in merges:
+                merges.append(merge)
+        if not merges:
+            self.status.configure(text="La sélection ne contient aucune cellule fusionnée.")
+            return
+        self._commit_inline_editor(render=False)
+        self._checkpoint()
+        for merge in merges:
+            item.table_merges.remove(merge)
+        self.status.configure(text=f"{len(merges)} fusion(s) séparée(s).")
         self._render()
 
     def _unmerge_table_cell(self, item: PageObject, row: int, column: int) -> None:

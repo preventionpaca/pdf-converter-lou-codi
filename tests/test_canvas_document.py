@@ -2464,3 +2464,59 @@ def test_shift_table_selection_builds_a_rectangular_range() -> None:
         for row in (1, 2)
         for column in (1, 2, 3)
     }
+
+
+def test_merging_selected_table_rectangle_supports_multiple_rows_and_columns() -> None:
+    table = PageObject(
+        "table", 0, 0, 0, 200, 100,
+        table_cells=[
+            [{"text": "A"}, {"text": "B"}],
+            [{"text": "C"}, {"text": "D"}],
+        ],
+    )
+    editor = object.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[table])
+    editor.selected = 0
+    editor._selected_table_cells = {
+        (table.object_id, row, column)
+        for row in (0, 1)
+        for column in (0, 1)
+    }
+    editor._active_table_cell = (table.object_id, 0, 0)
+    editor._table_selection_anchor = (table.object_id, 0, 0)
+    editor._commit_inline_editor = lambda **_kwargs: None
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+    editor.status = type("Status", (), {"configure": lambda self, **_kwargs: None})()
+
+    editor._merge_selected_table_cells()
+
+    assert table.table_merges == [[0, 0, 2, 2]]
+    assert table.table_cells[0][0]["text"] == "A\nB\nC\nD"
+    assert editor._selected_table_cells == {(table.object_id, 0, 0)}
+
+
+def test_merging_disjoint_table_cells_is_rejected() -> None:
+    table = PageObject(
+        "table", 0, 0, 0, 200, 100,
+        table_cells=[
+            [{"text": "A"}, {"text": "B"}],
+            [{"text": "C"}, {"text": "D"}],
+        ],
+    )
+    editor = object.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[table])
+    editor.selected = 0
+    editor._selected_table_cells = {
+        (table.object_id, 0, 0), (table.object_id, 1, 1)
+    }
+    editor._active_table_cell = (table.object_id, 0, 0)
+    messages: list[str] = []
+    editor.status = type(
+        "Status", (), {"configure": lambda self, **kwargs: messages.append(kwargs["text"])}
+    )()
+
+    editor._merge_selected_table_cells()
+
+    assert table.table_merges == []
+    assert "rectangulaire continu" in messages[-1]

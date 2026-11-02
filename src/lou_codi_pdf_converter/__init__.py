@@ -1,3 +1,3 @@
 """Lou Còdi Workshop."""
 
-__version__ = "2.0.0a20"
+__version__ = "2.0.0a21"
