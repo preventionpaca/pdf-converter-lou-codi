@@ -2417,3 +2417,50 @@ def test_editor_text_measurements_are_cached() -> None:
 
     assert first == second == 70
     assert calls == ["Même texte"]
+
+
+def test_table_cell_copy_and_paste_does_not_duplicate_the_table() -> None:
+    source = PageObject(
+        "table", 0, 0, 0, 200, 100,
+        table_cells=[
+            [{"text": "A"}, {"text": "B"}],
+            [{"text": "C"}, {"text": "D"}],
+        ],
+    )
+    editor = object.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[source])
+    editor.selected = 0
+    editor._selected_table_cells = {
+        (source.object_id, 0, 0), (source.object_id, 0, 1)
+    }
+    editor._active_table_cell = (source.object_id, 0, 0)
+    editor._table_cell_clipboard = []
+    editor.clipboard_clear = lambda: None
+    editor.clipboard_append = lambda _value: None
+    editor.status = type("Status", (), {"configure": lambda self, **_kwargs: None})()
+    editor._checkpoint = lambda: None
+    editor._render = lambda: None
+
+    assert editor._copy_table_cells(source)
+    editor._active_table_cell = (source.object_id, 1, 0)
+    assert editor._paste_table_cells(source)
+
+    assert len(editor.document.objects) == 1
+    assert [cell["text"] for cell in source.table_cells[1]] == ["A", "B"]
+
+
+def test_shift_table_selection_builds_a_rectangular_range() -> None:
+    table = PageObject("table", 0, 0, 0, 200, 100)
+    editor = object.__new__(DocumentEditorWindow)
+    editor._selected_table_cells = set()
+    editor._table_selection_anchor = None
+    editor._active_table_cell = None
+
+    editor._select_table_cell(table, 1, 1, extend=False, toggle=False)
+    editor._select_table_cell(table, 2, 3, extend=True, toggle=False)
+
+    assert editor._selected_table_cells == {
+        (table.object_id, row, column)
+        for row in (1, 2)
+        for column in (1, 2, 3)
+    }

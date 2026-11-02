@@ -1781,6 +1781,9 @@ class DocumentEditorWindow(tk.Toplevel):
         self._editing_table_cell: tuple[int, int] | None = None
         self._editing_table_original: dict[str, str] | None = None
         self._active_table_cell: tuple[str, int, int] | None = None
+        self._selected_table_cells: set[tuple[str, int, int]] = set()
+        self._table_selection_anchor: tuple[str, int, int] | None = None
+        self._table_cell_clipboard: list[list[dict[str, object] | None]] = []
         self._table_border_range_start: tuple[str, int, int] | None = None
         self._format_clipboard: dict[str, object] | None = None
         self._object_clipboard: list[PageObject] = []
@@ -3275,6 +3278,18 @@ class DocumentEditorWindow(tk.Toplevel):
             self.selected = None
             self.selected_indices.clear()
             self._render()
+        if clicked is not None and self.document.objects[clicked].kind == "table":
+            item = self.document.objects[clicked]
+            row, column = self._table_cell_at_event(item, event)
+            key = (item.object_id, row, column)
+            self._active_table_cell = key
+            if key not in self._selected_table_cells:
+                if event.state & 0x0004:
+                    self._selected_table_cells.add(key)
+                else:
+                    self._selected_table_cells = {key}
+                self._table_selection_anchor = key
+            self._render()
         self._populate_context_menu()
         try:
             self._context_menu_visible = True
@@ -3319,9 +3334,9 @@ class DocumentEditorWindow(tk.Toplevel):
         menu.add_command(label="Annuler    Ctrl+Z", command=self._undo)
         menu.add_command(label="Rétablir    Ctrl+Y", command=self._redo)
         menu.add_separator()
-        menu.add_command(label="Couper    Ctrl+X", command=self._cut_objects)
-        menu.add_command(label="Copier    Ctrl+C", command=self._copy_objects)
-        menu.add_command(label="Coller    Ctrl+V", command=self._paste_objects)
+        menu.add_command(label="Couper    Ctrl+X", command=self._cut_shortcut)
+        menu.add_command(label="Copier    Ctrl+C", command=self._copy_shortcut)
+        menu.add_command(label="Coller    Ctrl+V", command=self._paste_shortcut)
         menu.add_command(label="Dupliquer    Ctrl+D", command=self._duplicate_objects)
 
         if one is not None and one.kind == "text":
@@ -3345,6 +3360,24 @@ class DocumentEditorWindow(tk.Toplevel):
                 menu.add_command(label="Délier la zone de texte", command=self._unlink_text_frame)
 
         if one is not None and one.kind == "table":
+            selection = tk.Menu(menu, tearoff=False)
+            selection.add_command(
+                label="Sélectionner la ligne active",
+                command=lambda: self._select_active_table_axis("row"),
+            )
+            selection.add_command(
+                label="Ajouter la ligne active à la sélection",
+                command=lambda: self._select_active_table_axis("row", add=True),
+            )
+            selection.add_command(
+                label="Sélectionner la colonne active",
+                command=lambda: self._select_active_table_axis("column"),
+            )
+            selection.add_command(
+                label="Ajouter la colonne active à la sélection",
+                command=lambda: self._select_active_table_axis("column", add=True),
+            )
+            menu.add_cascade(label="Sélection de cellules", menu=selection)
             structure = tk.Menu(menu, tearoff=False)
             for label, action in (
                 ("Insérer une ligne au-dessus", "insert_row_before"),
@@ -3981,7 +4014,22 @@ class DocumentEditorWindow(tk.Toplevel):
                 font=("Sans", 10, "bold"),
                 tags=("link-help",),
             )
-        self.canvas.configure(scrollregion=(0, 0, max(viewport, self.page_x + dw + 40), self.page_y + dh + 35))
+        page_objects = [
+            item
+            for item in self.document.objects
+            if item.page == self.current_page or self.current_page in pages_for_object(item)
+        ]
+        content_right = max(
+            [self.page_x + dw + 40]
+            + [self.page_x + (item.x + item.width) * self.zoom + 40 for item in page_objects]
+        )
+        content_bottom = max(
+            [self.page_y + dh + 35]
+            + [self.page_y + (item.y + item.height) * self.zoom + 40 for item in page_objects]
+        )
+        self.canvas.configure(
+            scrollregion=(0, 0, max(viewport, content_right), content_bottom)
+        )
         self.page_label.configure(text=f"Page {self.current_page + 1} / {self.document.page_count}")
         self.zoom_label.configure(text=f"{round(self.zoom * 100)} %")
         self._show_properties()
@@ -4202,10 +4250,13 @@ class DocumentEditorWindow(tk.Toplevel):
                         tags=tags,
                     )
                     active_cell = self._active_table_cell
+                    selected_cells = self._selected_table_cells
                     if (
                         selected
-                        and active_cell is not None
-                        and active_cell == (item.object_id, row_index, column_index)
+                        and (
+                            active_cell == (item.object_id, row_index, column_index)
+                            or (item.object_id, row_index, column_index) in selected_cells
+                        )
                     ):
                         self.canvas.create_rectangle(
                             cx + 1,
@@ -4213,7 +4264,9 @@ class DocumentEditorWindow(tk.Toplevel):
                             cx + cell_w - 1,
                             cy + cell_h - 1,
                             fill="",
-                            outline="#E47D16",
+                            outline=(
+                                "#2B78C5" if len(selected_cells) > 1 else "#E47D16"
+                            ),
                             width=max(2, round(2 * self.zoom)),
                             tags=tags + ("active-table-cell",),
                         )
@@ -7181,6 +7234,22 @@ class DocumentEditorWindow(tk.Toplevel):
         control = bool(event.state & 0x0004) or bool(
             sys.platform == "darwin" and event.state & 0x0008
         )
+        shift = bool(event.state & 0x0001)
+        if clicked is not None and self.document.objects[clicked].kind == "table":
+            table = self.document.objects[clicked]
+            row, column = self._table_cell_at_event(table, event)
+            self.selected = clicked
+            self.selected_indices = {clicked}
+            self._select_table_cell(
+                table, row, column, extend=shift, toggle=control and not shift
+            )
+            if control or shift:
+                self._drag_origin = None
+                self.status.configure(
+                    text=f"{len(self._selected_table_cells)} cellule(s) sélectionnée(s)."
+                )
+                self._render()
+                return
         if clicked is None:
             self._marquee_origin = (
                 self.canvas.canvasx(event.x),
@@ -7209,7 +7278,7 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             if item.kind == "table" and len(self.selected_indices) == 1:
                 row, column = self._table_cell_at_event(item, event)
-                self._active_table_cell = (item.object_id, row, column)
+                self._select_table_cell(item, row, column, extend=False, toggle=False)
             if any(self.document.objects[index].locked for index in self.selected_indices):
                 self._drag_origin = None
                 self.status.configure(
@@ -9385,6 +9454,119 @@ class DocumentEditorWindow(tk.Toplevel):
         self.status.configure(text="Double-cliquez d’abord dans une cellule du tableau.")
         return None
 
+    def _select_table_cell(
+        self, item: PageObject, row: int, column: int, *, extend: bool, toggle: bool
+    ) -> None:
+        """Select spreadsheet cells without turning Ctrl+C into an object copy."""
+        key = (item.object_id, row, column)
+        anchor = self._table_selection_anchor
+        if extend and anchor is not None and anchor[0] == item.object_id:
+            top, bottom = sorted((anchor[1], row))
+            left, right = sorted((anchor[2], column))
+            self._selected_table_cells = {
+                (item.object_id, candidate_row, candidate_column)
+                for candidate_row in range(top, bottom + 1)
+                for candidate_column in range(left, right + 1)
+            }
+        elif toggle:
+            if key in self._selected_table_cells:
+                self._selected_table_cells.remove(key)
+            else:
+                self._selected_table_cells.add(key)
+            self._table_selection_anchor = key
+        else:
+            self._selected_table_cells = {key}
+            self._table_selection_anchor = key
+        if not self._selected_table_cells:
+            self._selected_table_cells = {key}
+        self._active_table_cell = key
+
+    def _select_active_table_axis(self, direction: str, *, add: bool = False) -> None:
+        item = self._selected_table()
+        coordinates = self._active_table_coordinates(item) if item is not None else None
+        if item is None or coordinates is None:
+            return
+        cells = self._ensure_table_cells(item)
+        row, column = coordinates
+        selection = (
+            {(item.object_id, row, index) for index in range(len(cells[row]))}
+            if direction == "row"
+            else {(item.object_id, index, column) for index in range(len(cells))}
+        )
+        self._selected_table_cells = (
+            self._selected_table_cells | selection if add else selection
+        )
+        self._table_selection_anchor = (item.object_id, row, column)
+        self.status.configure(
+            text=("Ligne" if direction == "row" else "Colonne")
+            + " sélectionnée. Ctrl+C copie uniquement ces cellules."
+        )
+        self._render()
+
+    def _copy_table_cells(self, item: PageObject) -> bool:
+        selected = {
+            (row, column)
+            for object_id, row, column in self._selected_table_cells
+            if object_id == item.object_id
+        }
+        if not selected and self._active_table_cell and self._active_table_cell[0] == item.object_id:
+            selected = {(self._active_table_cell[1], self._active_table_cell[2])}
+        if not selected:
+            return False
+        cells = self._ensure_table_cells(item)
+        top, bottom = min(row for row, _ in selected), max(row for row, _ in selected)
+        left, right = min(column for _, column in selected), max(column for _, column in selected)
+        self._table_cell_clipboard = [
+            [
+                copy.deepcopy(cells[row][column]) if (row, column) in selected else None
+                for column in range(left, right + 1)
+            ]
+            for row in range(top, bottom + 1)
+        ]
+        self.clipboard_clear()
+        self.clipboard_append("LOUCODI_TABLE_CELLS")
+        self.status.configure(text=f"{len(selected)} cellule(s) copiée(s).")
+        return True
+
+    def _paste_table_cells(self, item: PageObject) -> bool:
+        if not self._table_cell_clipboard:
+            return False
+        coordinates = self._active_table_coordinates(item)
+        if coordinates is None:
+            return False
+        cells = self._ensure_table_cells(item)
+        start_row, start_column = coordinates
+        self._checkpoint()
+        pasted: set[tuple[str, int, int]] = set()
+        for row_offset, source_row in enumerate(self._table_cell_clipboard):
+            target_row = start_row + row_offset
+            if target_row >= len(cells):
+                break
+            for column_offset, source in enumerate(source_row):
+                target_column = start_column + column_offset
+                if source is None or target_column >= len(cells[target_row]):
+                    continue
+                cells[target_row][target_column] = copy.deepcopy(source)
+                pasted.add((item.object_id, target_row, target_column))
+        self._sync_table_text(item)
+        self._selected_table_cells = pasted
+        self.status.configure(text=f"{len(pasted)} cellule(s) collée(s) dans le tableau.")
+        self._render()
+        return bool(pasted)
+
+    def _cut_table_cells(self, item: PageObject) -> bool:
+        if not self._copy_table_cells(item):
+            return False
+        cells = self._ensure_table_cells(item)
+        self._checkpoint()
+        for object_id, row, column in self._selected_table_cells:
+            if object_id == item.object_id and row < len(cells) and column < len(cells[row]):
+                cells[row][column] = self._empty_table_cell()
+        self._sync_table_text(item)
+        self.status.configure(text="Cellules coupées ; choisissez une destination puis Ctrl+V.")
+        self._render()
+        return True
+
     def _append_table_border_range(
         self, item: PageObject, top: int, left: int, bottom: int, right: int, width: float
     ) -> None:
@@ -9402,6 +9584,21 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         coordinates = self._active_table_coordinates(item)
         if coordinates is None:
+            return
+        selected = sorted(
+            (row, column)
+            for object_id, row, column in self._selected_table_cells
+            if object_id == item.object_id
+        )
+        if len(selected) > 1:
+            self._checkpoint()
+            for row, column in selected:
+                item.table_border_ranges.append({
+                    "top": float(row), "left": float(column),
+                    "bottom": float(row), "right": float(column), "width": float(width),
+                })
+            self.status.configure(text=f"Contour appliqué à {len(selected)} cellules.")
+            self._render()
             return
         row, column = coordinates
         merge = self._table_merge_for_cell(item, row, column)
@@ -10770,6 +10967,9 @@ class DocumentEditorWindow(tk.Toplevel):
     def _copy_shortcut(self, _event: object = None) -> str | None:
         if self._focus_is_text_input():
             return None
+        table = self._selected_table()
+        if table is not None and self._copy_table_cells(table):
+            return "break"
         self._copy_objects()
         return "break"
 
@@ -10780,7 +10980,10 @@ class DocumentEditorWindow(tk.Toplevel):
             clipboard_marker = self.clipboard_get()
         except tk.TclError:
             clipboard_marker = ""
-        if self._object_clipboard and clipboard_marker == "LOUCODI_OBJECTS":
+        table = self._selected_table()
+        if table is not None and clipboard_marker == "LOUCODI_TABLE_CELLS":
+            self._paste_table_cells(table)
+        elif self._object_clipboard and clipboard_marker == "LOUCODI_OBJECTS":
             self._paste_objects()
         else:
             self._paste_from_system_clipboard()
@@ -10807,6 +11010,9 @@ class DocumentEditorWindow(tk.Toplevel):
     def _cut_shortcut(self, _event: object = None) -> str | None:
         if self._focus_is_text_input():
             return None
+        table = self._selected_table()
+        if table is not None and self._cut_table_cells(table):
+            return "break"
         self._cut_objects()
         return "break"
 

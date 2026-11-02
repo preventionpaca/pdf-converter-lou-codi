@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "2.0.0a19"
+  #define AppVersion "2.0.0a20"
 #endif
 #ifndef ProjectDir
   #define ProjectDir "."
@@ -29,7 +29,7 @@ RestartApplications=no
 ChangesAssociations=yes
 UninstallDisplayName=Lou Còdi Workshop
 UninstallDisplayIcon={app}\lou-codi-pdf-converter.exe
-VersionInfoVersion=2.0.0.19
+VersionInfoVersion=2.0.0.20
 VersionInfoDescription=Installation de Lou Còdi Workshop
 
 [Languages]
