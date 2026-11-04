@@ -4,6 +4,7 @@ import tkinter as tk
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from tkinter import messagebox, ttk
 
 import pymupdf
@@ -87,7 +88,8 @@ class OrganizePdfWindow(tk.Toplevel):
         toolbar = ttk.Frame(body, style="Card.TFrame", padding=12)
         toolbar.pack(fill="x", pady=(0, 10))
         ttk.Button(toolbar, text="Ajouter des PDF…", command=self._add_pdfs).pack(side="left")
-        ttk.Button(toolbar, text="Compresser un PDF…", command=self._compress_pdfs).pack(side="left", padx=6)
+        self.compress_button = ttk.Button(toolbar, text="Compresser un PDF…", command=self._compress_pdfs)
+        self.compress_button.pack(side="left", padx=6)
         ttk.Button(toolbar, text="Page blanche", command=self._insert_blank).pack(side="left", padx=6)
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="↑ Monter", command=lambda: self._move(-1)).pack(side="left")
@@ -247,8 +249,9 @@ class OrganizePdfWindow(tk.Toplevel):
         return result["value"]
 
     def _compress_pdfs(self) -> None:
-        sources = choose_pdfs(self)
-        if not sources:
+        loaded_document = bool(self.pages)
+        sources = [] if loaded_document else choose_pdfs(self)
+        if not loaded_document and not sources:
             return
         profile = self._choose_compression_profile()
         if profile is None:
@@ -263,13 +266,33 @@ class OrganizePdfWindow(tk.Toplevel):
         created: list[tuple[Path, float, int, int]] = []
         errors: list[str] = []
         try:
-            for source in sources:
-                target = collision_free_target(destination, f"{source.stem}_compressé", ".pdf")
+            if loaded_document:
+                plans = [item.plan() for item in self.pages]
+                source_paths = list(dict.fromkeys(
+                    item.source for item in self.pages if item.source is not None
+                ))
+                output_stem = (
+                    source_paths[0].stem
+                    if len(source_paths) == 1
+                    else "document_organisé"
+                )
+                target = collision_free_target(destination, f"{output_stem}_compressé", ".pdf")
                 try:
-                    result = compress_pdf(source, target, profile)
+                    with TemporaryDirectory(prefix="lou-codi-compression-") as temporary_directory:
+                        temporary_source = Path(temporary_directory) / "document-organisé.pdf"
+                        assemble_pdf(plans, temporary_source)
+                        result = compress_pdf(temporary_source, target, profile)
                     created.append((target, result.saved_percent, result.source_size, result.output_size))
-                except Exception as exc:  # noqa: BLE001 - continuer le traitement par lots
-                    errors.append(f"{source.name} : {exc}")
+                except Exception as exc:  # noqa: BLE001 - présenter l’erreur dans l’interface
+                    errors.append(f"Document chargé : {exc}")
+            else:
+                for source in sources:
+                    target = collision_free_target(destination, f"{source.stem}_compressé", ".pdf")
+                    try:
+                        result = compress_pdf(source, target, profile)
+                        created.append((target, result.saved_percent, result.source_size, result.output_size))
+                    except Exception as exc:  # noqa: BLE001 - continuer le traitement par lots
+                        errors.append(f"{source.name} : {exc}")
         finally:
             self.configure(cursor="")
         if not created:
@@ -326,6 +349,13 @@ class OrganizePdfWindow(tk.Toplevel):
             self.tree.selection_set(existing)
             self.tree.see(existing[0])
         self.status.configure(text=tr(f"{len(self.pages)} page(s) dans le document."))
+        self.compress_button.configure(
+            text=tr(
+                "Compresser le document chargé…"
+                if self.pages
+                else "Compresser un PDF…"
+            )
+        )
         self.undo_button.configure(state="normal" if self.undo_stack else "disabled")
         self.redo_button.configure(state="normal" if self.redo_stack else "disabled")
 
