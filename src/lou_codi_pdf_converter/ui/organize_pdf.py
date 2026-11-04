@@ -11,12 +11,17 @@ from pypdf import PdfReader
 
 from ..i18n import tr, translate_widget_tree
 from ..paths import collision_free_target, module_output_directory
-from ..services.pdf_organizer import PagePlan, assemble_pdf, suggested_organized_stem
+from ..services.pdf_organizer import (
+    PagePlan,
+    assemble_pdf,
+    compress_pdf,
+    suggested_organized_stem,
+)
 from ..system import open_path
 from .dialogs import show_success
 from .directory_picker import choose_directory
 from .pdf_picker import choose_pdfs
-from .windowing import make_modal, maximize_window
+from .windowing import fit_dialog, make_modal, maximize_window
 
 BACKGROUND = "#F0F4F9"
 NAVY = "#193B66"
@@ -82,6 +87,7 @@ class OrganizePdfWindow(tk.Toplevel):
         toolbar = ttk.Frame(body, style="Card.TFrame", padding=12)
         toolbar.pack(fill="x", pady=(0, 10))
         ttk.Button(toolbar, text="Ajouter des PDF…", command=self._add_pdfs).pack(side="left")
+        ttk.Button(toolbar, text="Compresser un PDF…", command=self._compress_pdfs).pack(side="left", padx=6)
         ttk.Button(toolbar, text="Page blanche", command=self._insert_blank).pack(side="left", padx=6)
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="↑ Monter", command=lambda: self._move(-1)).pack(side="left")
@@ -182,6 +188,113 @@ class OrganizePdfWindow(tk.Toplevel):
         scale = min(110 / page.rect.width, 135 / page.rect.height)
         pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
         return tk.PhotoImage(data=pixmap.tobytes("png"))
+
+    def _choose_compression_profile(self) -> str | None:
+        dialog = tk.Toplevel(self, class_="Loucodiworkshop")
+        dialog.title("Compresser un PDF")
+        dialog.configure(bg=BACKGROUND)
+        dialog.resizable(False, False)
+        app_icon = getattr(self._root(), "app_icon", None)
+        if app_icon is not None:
+            dialog.iconphoto(False, app_icon)
+        result: dict[str, str | None] = {"value": None}
+        profile = tk.StringVar(value="balanced")
+
+        header = tk.Frame(dialog, bg=NAVY, padx=20, pady=12)
+        header.pack(fill="x")
+        tk.Label(
+            header, text="Niveau de compression", bg=NAVY, fg="white",
+            font=("Sans", 16, "bold"),
+        ).pack(anchor="w")
+        card = ttk.Frame(dialog, style="Card.TFrame", padding=20)
+        card.pack(fill="both", expand=True, padx=18, pady=18)
+        options = (
+            ("lossless", "Sans perte", "Optimise la structure sans dégrader les images. Réduction modérée."),
+            ("balanced", "Équilibrée — recommandée", "Réduit les images trop détaillées en conservant une bonne qualité à l’écran et à l’impression."),
+            ("strong", "Forte", "Fichier plus léger, adapté à l’envoi par courriel ou au dépôt sur un site."),
+        )
+        for value, label, description in options:
+            line = ttk.Frame(card, style="Card.TFrame")
+            line.pack(fill="x", pady=6)
+            ttk.Radiobutton(line, text=label, variable=profile, value=value).pack(anchor="w")
+            ttk.Label(
+                line, text=description, style="Body.TLabel", wraplength=610,
+            ).pack(anchor="w", padx=(26, 0), pady=(2, 0))
+        ttk.Label(
+            card,
+            text="Le traitement reste entièrement local. Le fichier original n’est jamais modifié.",
+            style="Body.TLabel",
+            wraplength=610,
+        ).pack(anchor="w", pady=(14, 0))
+        buttons = ttk.Frame(dialog, style="App.TFrame", padding=(18, 0, 18, 18))
+        buttons.pack(fill="x")
+
+        def close(value: str | None) -> None:
+            result["value"] = value
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Annuler", command=lambda: close(None)).pack(side="right")
+        ttk.Button(
+            buttons, text="Compresser", style="Primary.TButton",
+            command=lambda: close(profile.get()),
+        ).pack(side="right", padx=(0, 8))
+        dialog.protocol("WM_DELETE_WINDOW", lambda: close(None))
+        fit_dialog(dialog, minimum_width=720, minimum_height=430)
+        make_modal(dialog, self)
+        dialog.wait_window()
+        if self.winfo_exists():
+            self.grab_set()
+        return result["value"]
+
+    def _compress_pdfs(self) -> None:
+        sources = choose_pdfs(self)
+        if not sources:
+            return
+        profile = self._choose_compression_profile()
+        if profile is None:
+            return
+        destination = Path(self.destination.get()).expanduser()
+        if not destination.is_dir():
+            messagebox.showerror("Dossier introuvable", "Choisissez un dossier de destination existant.", parent=self)
+            return
+        self.configure(cursor="watch")
+        self.status.configure(text=tr("Compression en cours…"))
+        self.update_idletasks()
+        created: list[tuple[Path, float, int, int]] = []
+        errors: list[str] = []
+        try:
+            for source in sources:
+                target = collision_free_target(destination, f"{source.stem}_compressé", ".pdf")
+                try:
+                    result = compress_pdf(source, target, profile)
+                    created.append((target, result.saved_percent, result.source_size, result.output_size))
+                except Exception as exc:  # noqa: BLE001 - continuer le traitement par lots
+                    errors.append(f"{source.name} : {exc}")
+        finally:
+            self.configure(cursor="")
+        if not created:
+            self.status.configure(text=tr("Aucun PDF n’a pu être compressé."))
+            messagebox.showerror("Compression impossible", "\n".join(errors), parent=self)
+            return
+        self.last_output = created[-1][0]
+        self.open_button.configure(state="normal")
+        saved = sum(source_size - output_size for _path, _percent, source_size, output_size in created)
+        source_total = sum(source_size for _path, _percent, source_size, _output_size in created)
+        overall = max(0.0, saved / source_total * 100) if source_total else 0.0
+        detail = "\n".join(
+            f"• {path.name} : {percent:.1f} % de réduction"
+            for path, percent, _source_size, _output_size in created
+        )
+        if errors:
+            detail += "\n\nNon traités :\n" + "\n".join(f"• {error}" for error in errors)
+        self.status.configure(text=tr(f"{len(created)} PDF compressé(s), réduction globale : {overall:.1f} %."))
+        show_success(
+            self,
+            "Compression terminée",
+            f"Les fichiers ont été enregistrés dans :\n\n{destination}\n\n{detail}",
+            action_label="Ouvrir le dossier",
+            action=lambda: open_path(destination),
+        )
 
     def _blank_thumbnail(self, uid: str) -> tk.PhotoImage:
         image = tk.PhotoImage(width=96, height=132)

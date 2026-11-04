@@ -1,10 +1,13 @@
 from pathlib import Path
 
+import pymupdf
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 from lou_codi_pdf_converter.services.pdf_organizer import (
     PagePlan,
     assemble_pdf,
+    compress_pdf,
     extract_pages,
     merge_pdfs,
     rotate_pages,
@@ -65,3 +68,36 @@ def test_suggested_name_keeps_original_name() -> None:
     plans = [PagePlan(Path("Dossier de candidature.pdf"), 0), PagePlan(None, None)]
     assert suggested_organized_stem(plans) == "Dossier de candidature_modifié"
     assert suggested_organized_stem([PagePlan(None, None)]) == "document_modifié"
+
+
+def test_compress_pdf_preserves_pages_and_reduces_image_pdf(tmp_path: Path) -> None:
+    image_path = tmp_path / "noise.png"
+    image = Image.effect_noise((1200, 1200), 100).convert("RGB")
+    image.save(image_path, format="PNG")
+    source = tmp_path / "scan.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=600, height=600)
+    page.insert_image(page.rect, filename=str(image_path))
+    document.save(source)
+    document.close()
+
+    target = tmp_path / "scan_compressé.pdf"
+    result = compress_pdf(source, target, "strong")
+
+    assert target.is_file()
+    assert len(PdfReader(target).pages) == 1
+    assert result.source_size == source.stat().st_size
+    assert result.output_size == target.stat().st_size
+    assert result.output_size < result.source_size
+    assert result.saved_percent > 10
+
+
+def test_compress_pdf_rejects_unknown_profile(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"
+    make_pdf(source, [100])
+    try:
+        compress_pdf(source, tmp_path / "target.pdf", "impossible")
+    except ValueError as exc:
+        assert "inconnu" in str(exc)
+    else:
+        raise AssertionError("Un profil inconnu doit être refusé.")

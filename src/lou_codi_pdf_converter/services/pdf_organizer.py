@@ -4,6 +4,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import pymupdf
 from pypdf import PdfReader, PdfWriter
 
 
@@ -14,6 +15,25 @@ class PagePlan:
     rotation: int = 0
     width: float = 595
     height: float = 842
+
+
+@dataclass(frozen=True)
+class CompressionResult:
+    source_size: int
+    output_size: int
+
+    @property
+    def saved_percent(self) -> float:
+        if self.source_size <= 0:
+            return 0.0
+        return max(0.0, (1 - self.output_size / self.source_size) * 100)
+
+
+COMPRESSION_PROFILES = {
+    "lossless": None,
+    "balanced": {"dpi_threshold": 180, "dpi_target": 150, "quality": 72},
+    "strong": {"dpi_threshold": 140, "dpi_target": 110, "quality": 52},
+}
 
 
 def suggested_organized_stem(pages: Sequence[PagePlan]) -> str:
@@ -70,6 +90,54 @@ def rotate_pages(source: Path, target: Path, page_indices: Iterable[int], degree
             page.rotate(degrees)
         writer.add_page(page)
     _write(writer, target)
+
+
+def compress_pdf(source: Path, target: Path, profile: str = "balanced") -> CompressionResult:
+    """Compress a PDF locally while preserving its page structure and text layer."""
+    if profile not in COMPRESSION_PROFILES:
+        raise ValueError("Niveau de compression inconnu.")
+    source = Path(source)
+    target = Path(target)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    if source.resolve() == target.resolve():
+        raise ValueError("Le fichier de sortie doit être différent du PDF d’origine.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.compression.tmp")
+    temporary.unlink(missing_ok=True)
+    try:
+        document = pymupdf.open(source)
+        try:
+            if document.needs_pass:
+                raise ValueError("Ce PDF est protégé par un mot de passe.")
+            settings = COMPRESSION_PROFILES[profile]
+            if settings is not None:
+                document.rewrite_images(
+                    **settings,
+                    lossy=True,
+                    lossless=True,
+                    bitonal=True,
+                    color=True,
+                    gray=True,
+                )
+            document.save(
+                temporary,
+                garbage=4,
+                clean=True,
+                deflate=True,
+                deflate_images=True,
+                deflate_fonts=True,
+                use_objstms=1,
+                compression_effort=100,
+                encryption=pymupdf.PDF_ENCRYPT_KEEP,
+            )
+        finally:
+            document.close()
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    temporary.replace(target)
+    return CompressionResult(source.stat().st_size, target.stat().st_size)
 
 
 def _write(writer: PdfWriter, target: Path) -> None:

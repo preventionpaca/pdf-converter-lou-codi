@@ -160,6 +160,24 @@ for _code, _labels in _help_menu_translations.items():
         _labels,
     )))
 
+_compression_sources = (
+    "Compresser un PDF…", "Compresser un PDF", "Niveau de compression",
+    "Sans perte", "Équilibrée — recommandée", "Forte", "Compresser",
+    "Compression en cours…", "Ouvrir le dossier",
+    "Le traitement reste entièrement local. Le fichier original n’est jamais modifié.",
+)
+_compression_translations = {
+    "en": ("Compress a PDF…", "Compress a PDF", "Compression level", "Lossless", "Balanced — recommended", "Strong", "Compress", "Compressing…", "Open folder", "Processing remains entirely local. The original file is never modified."),
+    "de": ("PDF komprimieren…", "PDF komprimieren", "Komprimierungsstufe", "Verlustfrei", "Ausgewogen — empfohlen", "Stark", "Komprimieren", "Komprimierung läuft…", "Ordner öffnen", "Die Verarbeitung erfolgt vollständig lokal. Die Originaldatei wird nie verändert."),
+    "es": ("Comprimir un PDF…", "Comprimir un PDF", "Nivel de compresión", "Sin pérdida", "Equilibrada — recomendada", "Fuerte", "Comprimir", "Comprimiendo…", "Abrir carpeta", "El procesamiento es totalmente local. El archivo original nunca se modifica."),
+    "it": ("Comprimi un PDF…", "Comprimi un PDF", "Livello di compressione", "Senza perdita", "Bilanciata — consigliata", "Forte", "Comprimi", "Compressione in corso…", "Apri cartella", "L’elaborazione resta interamente locale. Il file originale non viene mai modificato."),
+    "zh": ("压缩 PDF…", "压缩 PDF", "压缩级别", "无损", "均衡 — 推荐", "强力", "压缩", "正在压缩…", "打开文件夹", "处理完全在本地进行，原始文件绝不会被修改。"),
+    "tr": ("PDF sıkıştır…", "PDF sıkıştır", "Sıkıştırma düzeyi", "Kayıpsız", "Dengeli — önerilen", "Güçlü", "Sıkıştır", "Sıkıştırılıyor…", "Klasörü aç", "İşlem tamamen yerel olarak yapılır. Orijinal dosya hiçbir zaman değiştirilmez."),
+    "ar": ("ضغط ملف PDF…", "ضغط ملف PDF", "مستوى الضغط", "بلا فقدان", "متوازن — موصى به", "قوي", "ضغط", "جارٍ الضغط…", "فتح المجلد", "تتم المعالجة محليًا بالكامل ولا يتم تعديل الملف الأصلي أبدًا."),
+}
+for _code, _labels in _compression_translations.items():
+    TRANSLATIONS[_code].update(dict(zip(_compression_sources, _labels, strict=True)))
+
 # Shared navigation and list vocabulary used across the modules. Keeping this
 # set complete prevents one window from mixing French with the chosen locale.
 _shared_ui_sources = (
