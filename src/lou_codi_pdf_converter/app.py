@@ -132,7 +132,7 @@ class Application(TkinterDnD.Tk):
     PDF_MODULES = (
         WorkshopModule("pdf_to_office", "PDF vers Office", "Conversion vers Word et extraction de tableaux Excel."),
         WorkshopModule("documents_to_pdf", "Documents vers PDF", "Documents bureautiques et images, seuls ou par lots."),
-        WorkshopModule("organize_pdf", "Organiser les PDF", "Fusion, extraction, réorganisation et rotation des pages."),
+        WorkshopModule("organize_pdf", "Organiser les PDF", "Fusion, extraction, réorganisation, rotation et compression des PDF."),
         WorkshopModule("decorate_pdf", "Habillage PDF", "Filigranes, en-têtes et pieds de page avec aperçu."),
     )
 
