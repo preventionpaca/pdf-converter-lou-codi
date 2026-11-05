@@ -61,7 +61,13 @@ jobs:
         run: |
           $Version = python -c "import sys; sys.path.insert(0, r'${{ github.workspace }}\src'); from lou_codi_pdf_converter import __version__; print(__version__)"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$Version" "/DProjectDir=${{ github.workspace }}" packaging/windows/lou-codi-workshop.iss
-      - uses: actions/upload-artifact@v4
+      - if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
         with:
-          name: lou-codi-workshop-${{ matrix.artifact }}
-          path: dist/installers/*
+          name: lou-codi-workshop-linux
+          path: dist/installers/*-linux-amd64.deb
+      - if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lou-codi-workshop-windows-installer
+          path: dist/installers/*-Setup-x64.exe
