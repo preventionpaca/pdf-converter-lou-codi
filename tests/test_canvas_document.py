@@ -1454,6 +1454,16 @@ def test_text_flow_can_be_forced_to_next_frame() -> None:
     assert flowed_text_for_object(second, [first, second]) == "Second"
 
 
+def test_standalone_text_frame_never_discards_apparent_overflow() -> None:
+    text = "\n".join(f"Ligne complète {index}" for index in range(1, 18))
+    frame = PageObject(
+        "text", 0, 10, 10, 260, 55, text=text, font_size=12
+    )
+
+    assert len(wrapped_text_lines(text, frame)) > text_frame_line_capacity(frame)
+    assert flowed_text_for_object(frame, [frame]) == text
+
+
 def test_linked_text_never_assigns_hidden_lines_to_a_frame() -> None:
     sentence = (
         "je sais pas si tu m'entends bien j'attends Barbara mon épouse qui va rentrer "

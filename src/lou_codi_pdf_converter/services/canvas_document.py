@@ -40,9 +40,12 @@ def apply_loucodi_document_icon(path: Path) -> None:
     """Attach the branded icon directly for GNOME file-list compatibility."""
     if sys.platform != "linux" or not path.is_file() or shutil.which("gio") is None:
         return
-    system_icon = Path("/usr/share/pixmaps/application-x-loucodi-document.png")
     bundled_icon = Path(__file__).resolve().parents[1] / "assets" / "lou-codi-document.png"
-    icon = system_icon if system_icon.is_file() else bundled_icon
+    system_icon = Path("/usr/share/pixmaps/application-x-loucodi-document.png")
+    # Prefer the asset shipped with the running version.  A stale system-wide
+    # icon left by an older package must not override the current document
+    # artwork; the system path remains a fallback for unusual installations.
+    icon = bundled_icon if bundled_icon.is_file() else system_icon
     if not icon.is_file():
         return
     try:
@@ -777,6 +780,14 @@ def flowed_text_context(
         if not current.flow_next_id or current.flow_next_id not in by_id:
             break
         current = by_id[current.flow_next_id]
+    # A standalone text frame has nowhere to forward an alleged overflow.
+    # Applying the linked-frame capacity calculation here used to silently
+    # remove the last lines from the normal preview while the inline editor
+    # still exposed the complete text.  Return the complete source and let the
+    # frame renderer clip it only when the user really makes the frame smaller
+    # than its contents.
+    if len(chain) == 1 and root is item and not item.flow_next_id:
+        return item.text, item, 0
     segments = _flow_segments(root.text, chain)
     try:
         target_index = chain.index(item)
