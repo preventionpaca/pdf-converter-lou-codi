@@ -6087,10 +6087,31 @@ class DocumentEditorWindow(tk.Toplevel):
                 ))
         if not candidates:
             return (x, y), "", {}
-        distance, _priority, point, label, reference = min(
-            candidates, key=lambda candidate: (candidate[0], candidate[1])
-        )
-        if distance <= threshold:
+        close_candidates = [candidate for candidate in candidates if candidate[0] <= threshold]
+        if close_candidates:
+            selected_ids = {
+                self.document.objects[index].object_id
+                for index in getattr(self, "selected_indices", set())
+                if 0 <= index < len(self.document.objects)
+            }
+
+            def selected_reference(reference: dict[str, object]) -> bool:
+                if str(reference.get("object_id", "")) in selected_ids:
+                    return True
+                return any(
+                    isinstance(reference.get(key), dict)
+                    and selected_reference(reference[key])  # type: ignore[arg-type]
+                    for key in ("first", "second")
+                )
+
+            distance, _priority, point, label, reference = min(
+                close_candidates,
+                key=lambda candidate: (
+                    candidate[1],
+                    0 if selected_reference(candidate[4]) else 1,
+                    candidate[0],
+                ),
+            )
             return point, label, reference
         return (x, y), "", {}
 

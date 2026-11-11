@@ -638,6 +638,22 @@ def test_dimension_snap_detects_circle_center_midpoint_and_intersection() -> Non
     assert reference["kind"] == "intersection"
 
 
+def test_dimension_snap_prefers_nearby_small_rectangle_vertex_over_large_edge() -> None:
+    large = PageObject("shape", 0, 100, 100, 200, 200, shape="rectangle")
+    small = PageObject("shape", 0, 100, 150, 90, 20, shape="rectangle")
+    editor = DocumentEditorWindow.__new__(DocumentEditorWindow)
+    editor.document = CanvasDocument(objects=[large, small])
+    editor.current_page = 0
+    editor.zoom = 1.0
+    editor.selected_indices = {1}
+
+    point, label, reference = editor._dimension_reference_at(100, 167)
+
+    assert point == (100.0, 170.0)
+    assert label == "sommet"
+    assert reference["object_id"] == small.object_id
+
+
 @pytest.mark.parametrize(
     ("item", "pointer", "expected"),
     [
