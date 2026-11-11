@@ -14982,6 +14982,9 @@ class DocumentEditorWindow(tk.Toplevel):
             old_width, old_height = item.width, item.height
             item.width = target_width
             item.height = target_height
+            if item.kind == "dimension":
+                measured_length = math.hypot(item.width, item.height) * factor * 25.4 / 72
+                item.text = f"{measured_length:.2f}"
             if item.kind == "polyline" and old_width and old_height:
                 item.points = [
                     [point[0] * item.width / old_width, point[1] * item.height / old_height]
