@@ -10,6 +10,7 @@ from lou_codi_pdf_converter.services.pdf_decoration import (
     apply_pdf_decorations,
     parse_page_selection,
 )
+from lou_codi_pdf_converter.ui.decorate_pdf import DecoratePdfWindow
 
 
 def make_pdf(path: Path, count: int = 2) -> None:
@@ -124,3 +125,39 @@ def test_replacement_text_zone_masks_and_writes_text(tmp_path: Path) -> None:
 
     page = PdfReader(target).pages[0]
     assert "DEVIS" in page.extract_text()
+
+
+def test_replacement_zone_hit_test_prefers_topmost_zone() -> None:
+    editor = object.__new__(DecoratePdfWindow)
+    editor.replacement_text_zones = [
+        ReplacementTextZone("Premier", 10, 20, 30, 10),
+        ReplacementTextZone("Dessus", 15, 22, 20, 8),
+    ]
+
+    assert editor._replacement_at_point(18, 25) == 1
+    assert editor._replacement_at_point(11, 21) == 0
+    assert editor._replacement_at_point(80, 80) is None
+
+
+def test_moving_replacement_zone_preserves_appearance() -> None:
+    original = ReplacementTextZone(
+        "DEVIS",
+        10,
+        20,
+        30,
+        10,
+        font_family="Times",
+        font_size=11,
+        text_color="#112233",
+        background_color="#EFEFEF",
+        bold=True,
+        alignment="center",
+    )
+
+    moved = DecoratePdfWindow._replacement_with_position(original, 14.5, 25.0)
+
+    assert (moved.x_mm, moved.y_mm) == (14.5, 25.0)
+    assert moved.text == original.text
+    assert moved.font_family == original.font_family
+    assert moved.background_color == original.background_color
+    assert moved.bold is True

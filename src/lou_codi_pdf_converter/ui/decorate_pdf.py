@@ -90,6 +90,8 @@ class DecoratePdfWindow(tk.Toplevel):
         self.replacement_alignment = tk.StringVar(value="left")
         self.placement_target = tk.StringVar(value="watermark")
         self.mask_drag_start: tuple[float, float] | None = None
+        self.replacement_drag_index: int | None = None
+        self.replacement_drag_offset_mm: tuple[float, float] | None = None
         self.preview_scale = 1.0
         self.preview_page_width = 0.0
         self.preview_page_height = 0.0
@@ -105,6 +107,10 @@ class DecoratePdfWindow(tk.Toplevel):
         translate_widget_tree(self)
         self.bind_all("<Control-z>", lambda _event: self._undo())
         self.bind_all("<Control-y>", lambda _event: self._redo())
+        for key in ("Left", "Right", "Up", "Down"):
+            self.bind(
+                f"<KeyPress-{key}>", self._nudge_selected_replacement, add="+"
+            )
         self.protocol("WM_DELETE_WINDOW", self._close)
         make_modal(self, parent)
 
@@ -413,6 +419,14 @@ class DecoratePdfWindow(tk.Toplevel):
             text="Détecter la police sous la zone",
             command=self._detect_selected_replacement_font,
         ).pack(side="right")
+        ttk.Label(
+            tab,
+            text=(
+                "Déplacement précis : flèche = 0,5 mm ; Maj + flèche = 1 mm ; "
+                "Ctrl + Maj + flèche = 2 mm."
+            ),
+            foreground=MUTED,
+        ).pack(anchor="w", pady=(8, 0))
 
     def _build_mask_tab(self, tab: ttk.Frame) -> None:
         presets = ttk.Frame(tab)
@@ -878,6 +892,8 @@ class DecoratePdfWindow(tk.Toplevel):
         self.replacement_alignment.set(zone.alignment)
         self._update_color_button("replacement_text", zone.text_color)
         self._update_color_button("replacement_background", zone.background_color)
+        if self.preview_image:
+            self._draw_selected_replacement_outline()
 
     def _update_selected_replacement(self) -> None:
         selection = self.replacement_tree.selection()
@@ -904,6 +920,79 @@ class DecoratePdfWindow(tk.Toplevel):
         self._refresh_replacement_tree()
         if self.source:
             self._preview()
+
+    def _selected_replacement_index(self) -> int | None:
+        selection = self.replacement_tree.selection()
+        if not selection:
+            return None
+        index = int(selection[0])
+        return index if 0 <= index < len(self.replacement_text_zones) else None
+
+    def _replacement_at_point(self, x_mm: float, y_mm: float) -> int | None:
+        for index in range(len(self.replacement_text_zones) - 1, -1, -1):
+            zone = self.replacement_text_zones[index]
+            if (
+                zone.x_mm <= x_mm <= zone.x_mm + zone.width_mm
+                and zone.y_mm <= y_mm <= zone.y_mm + zone.height_mm
+            ):
+                return index
+        return None
+
+    @staticmethod
+    def _replacement_with_position(
+        zone: ReplacementTextZone, x_mm: float, y_mm: float
+    ) -> ReplacementTextZone:
+        return ReplacementTextZone(
+            text=zone.text,
+            x_mm=x_mm,
+            y_mm=y_mm,
+            width_mm=zone.width_mm,
+            height_mm=zone.height_mm,
+            font_family=zone.font_family,
+            font_size=zone.font_size,
+            text_color=zone.text_color,
+            background_color=zone.background_color,
+            bold=zone.bold,
+            alignment=zone.alignment,
+        )
+
+    def _move_replacement_to(
+        self, index: int, x_mm: float, y_mm: float, *, remember: bool
+    ) -> None:
+        zone = self.replacement_text_zones[index]
+        page_width, page_height = self._page_dimensions_mm()
+        x_mm = min(max(0.0, x_mm), max(0.0, page_width - zone.width_mm))
+        y_mm = min(max(0.0, y_mm), max(0.0, page_height - zone.height_mm))
+        if remember:
+            self._remember_state()
+        self.replacement_text_zones[index] = self._replacement_with_position(
+            zone, round(x_mm, 3), round(y_mm, 3)
+        )
+        self._refresh_replacement_tree(index)
+        self._load_selected_replacement(None)
+
+    def _nudge_selected_replacement(self, event: tk.Event[tk.Misc]) -> str | None:
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text)):
+            return None
+        index = self._selected_replacement_index()
+        if index is None:
+            return None
+        shift = bool(event.state & 0x0001)
+        control = bool(event.state & 0x0004)
+        step = 2.0 if shift and control else 1.0 if shift else 0.5
+        dx = -step if event.keysym == "Left" else step if event.keysym == "Right" else 0.0
+        dy = step if event.keysym == "Up" else -step if event.keysym == "Down" else 0.0
+        if dx == dy == 0:
+            return None
+        zone = self.replacement_text_zones[index]
+        self._move_replacement_to(
+            index, zone.x_mm + dx, zone.y_mm + dy, remember=True
+        )
+        if self.source:
+            self._preview()
+        self.status.configure(text=f"Texte déplacé de {step:g} mm.")
+        return "break"
 
     def _detect_selected_replacement_font(self) -> None:
         selection = self.replacement_tree.selection()
@@ -1028,6 +1117,7 @@ class DecoratePdfWindow(tk.Toplevel):
             self.preview_origin = (origin_x, origin_y)
             self.preview_canvas.delete("all")
             self.preview_canvas.create_image(origin_x, origin_y, image=self.preview_image, anchor="nw")
+            self._draw_selected_replacement_outline()
             self.preview_canvas.configure(
                 scrollregion=(
                     0,
@@ -1040,6 +1130,34 @@ class DecoratePdfWindow(tk.Toplevel):
             self.status.configure(text=tr("Aperçu actualisé."))
         except Exception as exc:  # noqa: BLE001 - présenter toute erreur de configuration
             messagebox.showerror("Aperçu impossible", str(exc), parent=self)
+
+    def _replacement_canvas_rectangle(
+        self, zone: ReplacementTextZone
+    ) -> tuple[float, float, float, float]:
+        origin_x, origin_y = self.preview_origin
+        x1 = origin_x + zone.x_mm * 72 / 25.4 * self.preview_scale
+        y1 = origin_y + (
+            self.preview_page_height - (zone.y_mm + zone.height_mm) * 72 / 25.4
+        ) * self.preview_scale
+        x2 = x1 + zone.width_mm * 72 / 25.4 * self.preview_scale
+        y2 = y1 + zone.height_mm * 72 / 25.4 * self.preview_scale
+        return x1, y1, x2, y2
+
+    def _draw_selected_replacement_outline(self) -> None:
+        self.preview_canvas.delete("replacement-selection")
+        index = self._selected_replacement_index()
+        if index is None or not self.preview_image:
+            return
+        rectangle = self._replacement_canvas_rectangle(
+            self.replacement_text_zones[index]
+        )
+        self.preview_canvas.create_rectangle(
+            *rectangle,
+            outline="#2368AF",
+            width=2,
+            dash=(5, 3),
+            tags="replacement-selection",
+        )
 
     def _change_zoom(self, delta: float) -> str:
         self.zoom_factor = min(3.0, max(0.4, round(self.zoom_factor + delta, 2)))
@@ -1093,6 +1211,24 @@ class DecoratePdfWindow(tk.Toplevel):
 
     def _placement_press(self, event: tk.Event[tk.Misc]) -> None:
         self._edit_snapshot = self._capture_state()
+        self.replacement_drag_index = None
+        self.replacement_drag_offset_mm = None
+        if self.placement_target.get() == "replacement" and self.preview_image:
+            canvas_point = self._canvas_coordinates(event)
+            x_mm, y_mm = self._event_to_pdf_mm(*canvas_point)
+            index = self._replacement_at_point(x_mm, y_mm)
+            if index is not None:
+                zone = self.replacement_text_zones[index]
+                self.replacement_drag_index = index
+                self.replacement_drag_offset_mm = (
+                    x_mm - zone.x_mm,
+                    y_mm - zone.y_mm,
+                )
+                self.replacement_tree.selection_set(str(index))
+                self.replacement_tree.see(str(index))
+                self._load_selected_replacement(None)
+                self._draw_selected_replacement_outline()
+                return
         if self.placement_target.get() in {"mask", "replacement"}:
             self.mask_drag_start = self._canvas_coordinates(event)
             self.preview_canvas.delete("placement")
@@ -1100,6 +1236,22 @@ class DecoratePdfWindow(tk.Toplevel):
         self._place_element(event)
 
     def _placement_motion(self, event: tk.Event[tk.Misc]) -> None:
+        if (
+            self.placement_target.get() == "replacement"
+            and self.replacement_drag_index is not None
+            and self.replacement_drag_offset_mm is not None
+        ):
+            canvas_point = self._canvas_coordinates(event)
+            x_mm, y_mm = self._event_to_pdf_mm(*canvas_point)
+            offset_x, offset_y = self.replacement_drag_offset_mm
+            self._move_replacement_to(
+                self.replacement_drag_index,
+                x_mm - offset_x,
+                y_mm - offset_y,
+                remember=False,
+            )
+            self._draw_selected_replacement_outline()
+            return
         if self.placement_target.get() not in {"mask", "replacement"}:
             self._place_element(event)
             return
@@ -1120,6 +1272,21 @@ class DecoratePdfWindow(tk.Toplevel):
         )
 
     def _placement_release(self, event: tk.Event[tk.Misc]) -> None:
+        if (
+            self.placement_target.get() == "replacement"
+            and self.replacement_drag_index is not None
+        ):
+            index = self.replacement_drag_index
+            self.replacement_drag_index = None
+            self.replacement_drag_offset_mm = None
+            if self._edit_snapshot and self._edit_snapshot != self._capture_state():
+                self._remember_state(self._edit_snapshot)
+            self._edit_snapshot = None
+            self._refresh_replacement_tree(index)
+            self._load_selected_replacement(None)
+            self._preview()
+            self.status.configure(text="Texte déplacé à la souris.")
+            return
         if self.placement_target.get() == "mask":
             self._finish_mask_placement(event)
         elif self.placement_target.get() == "replacement":
