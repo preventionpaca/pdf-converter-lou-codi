@@ -7988,6 +7988,51 @@ class DocumentEditorWindow(tk.Toplevel):
                 new_width, new_height = proportional_resize(
                     old_width, old_height, new_width, new_height
                 )
+            resize_snap = (
+                bool(event.state & 0x0001) or "shift" in self._modifier_keys
+            ) and item.kind not in {"line", "dimension", "angle_dimension"}
+            if resize_snap:
+                target_x, target_y = self._alignment_targets({self.selected})
+                correction_x, correction_y, guide_x, guide_y = alignment_snap_translation(
+                    (old_x + new_width, old_y + new_height, 0.0, 0.0),
+                    target_x,
+                    target_y,
+                    0.0,
+                    0.0,
+                    threshold=max(4.0, 11.0 / self.zoom),
+                )
+                if item.kind == "shape" and item.shape == "circle" and not control:
+                    choices = [
+                        (abs(correction), correction, axis)
+                        for correction, axis, guide_value in (
+                            (correction_x, "x", guide_x),
+                            (correction_y, "y", guide_y),
+                        )
+                        if guide_value is not None
+                    ]
+                    if choices:
+                        _distance, correction, axis = min(choices)
+                        diameter = (new_width if axis == "x" else new_height) + correction
+                        new_width = new_height = diameter
+                        if axis == "x":
+                            guide_y = None
+                        else:
+                            guide_x = None
+                else:
+                    new_width += correction_x
+                    new_height += correction_y
+                self._alignment_snap_guides = (guide_x, guide_y)
+                if guide_x is not None or guide_y is not None:
+                    aligned = " et ".join(
+                        label
+                        for label, guide in (("bord vertical", guide_x), ("bord horizontal", guide_y))
+                        if guide is not None
+                    )
+                    self.status.configure(
+                        text=f"Accrochage précis du {aligned}. Relâchez pour valider."
+                    )
+            else:
+                self._alignment_snap_guides = None
             if item.kind == "polyline" and item.width and item.height:
                 item.points = [
                     [point[0] * new_width / item.width, point[1] * new_height / item.height]
@@ -8050,7 +8095,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 tags=("dimension-guide-bg",),
             )
             self.canvas.tag_raise("dimension-guide")
-            self.status.configure(text=f"Dimensions : {guide}")
+            if not resize_snap or self._alignment_snap_guides == (None, None):
+                self.status.configure(text=f"Dimensions : {guide}")
+            self._draw_alignment_snap_guides()
             return
         if self.selected is None or self._drag_origin is None:
             return
