@@ -2023,7 +2023,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self._font_sample_image: ImageTk.PhotoImage | None = None
         self._update_font_sample()
         ttk.Label(formatting, text="Taille", style="Body.TLabel").pack(side="left", padx=(10, 3))
-        self.font_size_var = tk.StringVar(value="12")
+        self.font_size_var = tk.StringVar(value="10")
         font_size = ttk.Combobox(
             formatting,
             textvariable=self.font_size_var,
@@ -5317,7 +5317,10 @@ class DocumentEditorWindow(tk.Toplevel):
         lines = wrapped_text_ranges(
             text,
             render_item,
-            measure=self._measure_preview_text,
+            # Wrapping must use the exact same Tk font metrics as the inline
+            # editor. Pillow remains responsible for painting the preview,
+            # but no longer decides different line endings after a double-click.
+            measure=self._measure_editor_text,
             measurement_scale=self.zoom,
         )
         style_lookup = resolved_text_styles(render_item, len(text))
@@ -7232,7 +7235,10 @@ class DocumentEditorWindow(tk.Toplevel):
             "left_margin": ("Notes", 18, 90, 90, height - 160),
         }
         text, x, y, object_width, object_height = labels[kind]
-        item = PageObject("text", self.current_page, x, y, object_width, object_height, text=text)
+        item = PageObject(
+            "text", self.current_page, x, y, object_width, object_height,
+            text=text, font_size=10,
+        )
         item.pages = "all"
         self._add_object(item)
 
@@ -7252,6 +7258,7 @@ class DocumentEditorWindow(tk.Toplevel):
             width - 90,
             35,
             text=token,
+            font_size=10,
             align="center",
             pages="all",
         )
@@ -8095,7 +8102,7 @@ class DocumentEditorWindow(tk.Toplevel):
             self.canvas.configure(cursor="")
             self._add_object(PageObject(
                 "text", self.current_page, left, top, max(40, width), max(30, height),
-                border_width=1.5,
+                border_width=1.5, font_size=10,
             ))
             self.status.configure(text="Zone de texte créée. Saisissez son contenu.")
             self.after_idle(
@@ -11653,6 +11660,7 @@ class DocumentEditorWindow(tk.Toplevel):
                             text_height,
                             text=surrounding_text,
                             text_styles=surrounding_styles,
+                            font_size=10,
                         )
                     )
                     pasted.append(len(self.document.objects) - 1)
@@ -11792,7 +11800,7 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         self._add_object(PageObject(
             "text", self.current_page, 70, 80, 320, 100,
-            text=value, text_styles=rich_styles,
+            text=value, text_styles=rich_styles, font_size=10,
         ))
         self.status.configure(
             text="Texte enrichi collé dans une nouvelle zone."

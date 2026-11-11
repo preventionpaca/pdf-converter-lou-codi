@@ -6,6 +6,7 @@ from pypdf import PdfReader, PdfWriter
 from lou_codi_pdf_converter.services.pdf_decoration import (
     DecorationSettings,
     MaskZone,
+    ReplacementTextZone,
     apply_pdf_decorations,
     parse_page_selection,
 )
@@ -92,3 +93,34 @@ def test_multiple_visual_masks_are_written(tmp_path: Path) -> None:
     )
 
     assert len(PdfReader(target).pages) == 1
+
+
+def test_replacement_text_zone_masks_and_writes_text(tmp_path: Path) -> None:
+    source = tmp_path / "invoice.pdf"
+    target = tmp_path / "quotation.pdf"
+    make_pdf(source, count=1)
+
+    apply_pdf_decorations(
+        source,
+        target,
+        DecorationSettings(
+            replacement_text_zones=(
+                ReplacementTextZone(
+                    text="DEVIS",
+                    x_mm=30,
+                    y_mm=260,
+                    width_mm=45,
+                    height_mm=12,
+                    font_family="Helvetica",
+                    font_size=14,
+                    text_color="#102030",
+                    background_color="#F4F1E8",
+                    bold=True,
+                    alignment="center",
+                ),
+            )
+        ),
+    )
+
+    page = PdfReader(target).pages[0]
+    assert "DEVIS" in page.extract_text()

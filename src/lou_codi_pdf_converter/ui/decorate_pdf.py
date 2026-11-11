@@ -12,6 +12,7 @@ from ..paths import collision_free_target, module_output_directory
 from ..services.pdf_decoration import (
     DecorationSettings,
     MaskZone,
+    ReplacementTextZone,
     apply_pdf_decorations,
     parse_page_selection,
 )
@@ -75,6 +76,18 @@ class DecoratePdfWindow(tk.Toplevel):
         self.mask_width = tk.DoubleVar(value=100)
         self.mask_zone_height = tk.DoubleVar(value=35)
         self.mask_color = tk.StringVar(value="#FFFFFF")
+        self.replacement_text_zones: list[ReplacementTextZone] = []
+        self.replacement_text = tk.StringVar(value="DEVIS")
+        self.replacement_x = tk.DoubleVar(value=40)
+        self.replacement_y = tk.DoubleVar(value=240)
+        self.replacement_width = tk.DoubleVar(value=45)
+        self.replacement_height = tk.DoubleVar(value=10)
+        self.replacement_font = tk.StringVar(value="Helvetica")
+        self.replacement_font_size = tk.DoubleVar(value=12)
+        self.replacement_text_color = tk.StringVar(value="#000000")
+        self.replacement_background_color = tk.StringVar(value="#FFFFFF")
+        self.replacement_bold = tk.BooleanVar(value=False)
+        self.replacement_alignment = tk.StringVar(value="left")
         self.placement_target = tk.StringVar(value="watermark")
         self.mask_drag_start: tuple[float, float] | None = None
         self.preview_scale = 1.0
@@ -150,14 +163,17 @@ class DecoratePdfWindow(tk.Toplevel):
         watermark = ttk.Frame(notebook, padding=16)
         logo = ttk.Frame(notebook, padding=16)
         texts = ttk.Frame(notebook, padding=16)
+        replacements = ttk.Frame(notebook, padding=16)
         masking = ttk.Frame(notebook, padding=16)
         notebook.add(watermark, text="Filigrane")
         notebook.add(logo, text="Logo")
         notebook.add(texts, text="En-tête et pied de page")
+        notebook.add(replacements, text="Texte de remplacement")
         notebook.add(masking, text="Masquage visuel")
         self._build_watermark_tab(watermark)
         self._build_logo_tab(logo)
         self._build_text_tab(texts)
+        self._build_replacement_tab(replacements)
         self._build_mask_tab(masking)
 
         destination = ttk.Frame(left, style="Card.TFrame", padding=12)
@@ -189,6 +205,7 @@ class DecoratePdfWindow(tk.Toplevel):
             ("Logo", "logo"),
             ("En-tête", "header"),
             ("Pied", "footer"),
+            ("Texte", "replacement"),
             ("Masque", "mask"),
         ):
             ttk.Radiobutton(
@@ -298,6 +315,104 @@ class DecoratePdfWindow(tk.Toplevel):
         ttk.Checkbutton(tab, text="Ajouter un liseré horizontal", variable=self.footer_line).grid(row=10, column=1, sticky="w", pady=8)
         ttk.Label(tab, text="Variables : {page}  {pages}  {document}  {date}", style="Body.TLabel").grid(row=11, column=0, columnspan=3, sticky="w", pady=10)
         tab.columnconfigure(1, weight=1)
+
+    def _build_replacement_tab(self, tab: ttk.Frame) -> None:
+        ttk.Label(
+            tab,
+            text=(
+                "Masquez un mot du PDF avec un fond opaque, puis écrivez son remplacement. "
+                "Choisissez « Texte » à droite et tracez directement la zone sur l’aperçu."
+            ),
+            wraplength=720,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 10))
+        self.replacement_tree = ttk.Treeview(
+            tab,
+            columns=("text", "x", "y", "width", "height", "font"),
+            show="headings",
+            selectmode="browse",
+            height=4,
+        )
+        for column, label, width in (
+            ("text", "Texte", 180),
+            ("x", "X mm", 65),
+            ("y", "Y mm", 65),
+            ("width", "Largeur", 70),
+            ("height", "Hauteur", 70),
+            ("font", "Police", 100),
+        ):
+            self.replacement_tree.heading(column, text=label)
+            self.replacement_tree.column(column, width=width, stretch=column == "text")
+        self.replacement_tree.pack(fill="both", expand=True)
+        self.replacement_tree.bind(
+            "<<TreeviewSelect>>", self._load_selected_replacement
+        )
+
+        editor = ttk.Frame(tab)
+        editor.pack(fill="x", pady=(10, 0))
+        fields = (
+            ("Texte", self.replacement_text),
+            ("X (mm)", self.replacement_x),
+            ("Y depuis le bas (mm)", self.replacement_y),
+            ("Largeur (mm)", self.replacement_width),
+            ("Hauteur (mm)", self.replacement_height),
+            ("Taille", self.replacement_font_size),
+        )
+        for index, (label, variable) in enumerate(fields):
+            row, column = divmod(index, 3)
+            ttk.Label(editor, text=label).grid(row=row * 2, column=column, sticky="w")
+            entry = ttk.Entry(editor, textvariable=variable)
+            entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=(0, 10), pady=(2, 7))
+            entry.bind("<FocusIn>", self._begin_edit)
+            entry.bind("<FocusOut>", self._finish_edit)
+        editor.columnconfigure((0, 1, 2), weight=1)
+
+        style = ttk.Frame(tab)
+        style.pack(fill="x", pady=(5, 0))
+        ttk.Label(style, text="Police").pack(side="left")
+        ttk.Combobox(
+            style,
+            textvariable=self.replacement_font,
+            values=("Helvetica", "Times", "Courier"),
+            state="readonly",
+            width=13,
+        ).pack(side="left", padx=(5, 12))
+        ttk.Checkbutton(style, text="Gras", variable=self.replacement_bold).pack(side="left")
+        ttk.Label(style, text="Alignement").pack(side="left", padx=(16, 5))
+        ttk.Combobox(
+            style,
+            textvariable=self.replacement_alignment,
+            values=("left", "center", "right"),
+            state="readonly",
+            width=9,
+        ).pack(side="left")
+        ttk.Label(style, text="Texte").pack(side="left", padx=(16, 5))
+        self._make_color_button(
+            style, self.replacement_text_color, "replacement_text"
+        ).pack(side="left")
+        ttk.Label(style, text="Fond").pack(side="left", padx=(12, 5))
+        self._make_color_button(
+            style, self.replacement_background_color, "replacement_background"
+        ).pack(side="left")
+
+        buttons = ttk.Frame(tab)
+        buttons.pack(fill="x", pady=(10, 0))
+        ttk.Button(
+            buttons,
+            text="Ajouter avec ces coordonnées",
+            command=self._add_replacement_from_fields,
+        ).pack(side="left")
+        ttk.Button(
+            buttons, text="Mettre à jour", command=self._update_selected_replacement
+        ).pack(side="left", padx=6)
+        ttk.Button(
+            buttons, text="Supprimer", command=self._delete_selected_replacement
+        ).pack(side="left")
+        ttk.Button(
+            buttons,
+            text="Détecter la police sous la zone",
+            command=self._detect_selected_replacement_font,
+        ).pack(side="right")
 
     def _build_mask_tab(self, tab: ttk.Frame) -> None:
         presets = ttk.Frame(tab)
@@ -485,12 +600,24 @@ class DecoratePdfWindow(tk.Toplevel):
             self.footer_line,
             self.mask_footer,
             self.mask_height,
+            self.replacement_text,
+            self.replacement_x,
+            self.replacement_y,
+            self.replacement_width,
+            self.replacement_height,
+            self.replacement_font,
+            self.replacement_font_size,
+            self.replacement_text_color,
+            self.replacement_background_color,
+            self.replacement_bold,
+            self.replacement_alignment,
         )
 
     def _capture_state(self) -> dict[str, object]:
         return {
             "variables": tuple(variable.get() for variable in self._history_variables()),
             "masks": tuple(self.mask_zones),
+            "replacements": tuple(self.replacement_text_zones),
         }
 
     def _restore_state(self, state: dict[str, object]) -> None:
@@ -500,12 +627,18 @@ class DecoratePdfWindow(tk.Toplevel):
             for variable, value in zip(self._history_variables(), values, strict=True):
                 variable.set(value)
             self.mask_zones = list(state["masks"])
+            self.replacement_text_zones = list(state.get("replacements", ()))
             self._refresh_mask_tree()
+            self._refresh_replacement_tree()
         finally:
             self._restoring_history = False
         self._update_color_button("watermark", self.watermark_color.get())
         self._update_color_button("text", self.text_color.get())
         self._update_color_button("mask", self.mask_color.get())
+        self._update_color_button("replacement_text", self.replacement_text_color.get())
+        self._update_color_button(
+            "replacement_background", self.replacement_background_color.get()
+        )
         self._update_history_buttons()
         if self.source:
             self._preview()
@@ -675,6 +808,160 @@ class DecoratePdfWindow(tk.Toplevel):
         self.mask_zones.pop(int(selection[0]))
         self._refresh_mask_tree()
 
+    def _replacement_from_fields(self) -> ReplacementTextZone:
+        text = self.replacement_text.get()
+        if not text.strip():
+            raise ValueError("Saisissez le texte de remplacement.")
+        return ReplacementTextZone(
+            text=text,
+            x_mm=self.replacement_x.get(),
+            y_mm=self.replacement_y.get(),
+            width_mm=max(1, self.replacement_width.get()),
+            height_mm=max(1, self.replacement_height.get()),
+            font_family=self.replacement_font.get() or "Helvetica",
+            font_size=max(4, self.replacement_font_size.get()),
+            text_color=self.replacement_text_color.get() or "#000000",
+            background_color=self.replacement_background_color.get() or "#FFFFFF",
+            bold=self.replacement_bold.get(),
+            alignment=self.replacement_alignment.get() or "left",
+        )
+
+    def _add_replacement_from_fields(self) -> None:
+        try:
+            zone = self._replacement_from_fields()
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showerror("Texte invalide", str(exc), parent=self)
+            return
+        self._remember_state()
+        self.replacement_text_zones.append(zone)
+        self._refresh_replacement_tree(len(self.replacement_text_zones) - 1)
+        if self.source:
+            self._preview()
+
+    def _refresh_replacement_tree(self, selected_index: int | None = None) -> None:
+        self.replacement_tree.delete(*self.replacement_tree.get_children())
+        for index, zone in enumerate(self.replacement_text_zones):
+            self.replacement_tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    zone.text.replace("\n", " "),
+                    f"{zone.x_mm:.1f}",
+                    f"{zone.y_mm:.1f}",
+                    f"{zone.width_mm:.1f}",
+                    f"{zone.height_mm:.1f}",
+                    zone.font_family,
+                ),
+            )
+        if selected_index is not None and self.replacement_tree.exists(str(selected_index)):
+            self.replacement_tree.selection_set(str(selected_index))
+            self.replacement_tree.see(str(selected_index))
+
+    def _load_selected_replacement(
+        self, _event: tk.Event[tk.Misc] | None
+    ) -> None:
+        selection = self.replacement_tree.selection()
+        if not selection:
+            return
+        zone = self.replacement_text_zones[int(selection[0])]
+        self.replacement_text.set(zone.text)
+        self.replacement_x.set(zone.x_mm)
+        self.replacement_y.set(zone.y_mm)
+        self.replacement_width.set(zone.width_mm)
+        self.replacement_height.set(zone.height_mm)
+        self.replacement_font.set(zone.font_family)
+        self.replacement_font_size.set(zone.font_size)
+        self.replacement_text_color.set(zone.text_color)
+        self.replacement_background_color.set(zone.background_color)
+        self.replacement_bold.set(zone.bold)
+        self.replacement_alignment.set(zone.alignment)
+        self._update_color_button("replacement_text", zone.text_color)
+        self._update_color_button("replacement_background", zone.background_color)
+
+    def _update_selected_replacement(self) -> None:
+        selection = self.replacement_tree.selection()
+        if not selection:
+            return
+        try:
+            zone = self._replacement_from_fields()
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showerror("Texte invalide", str(exc), parent=self)
+            return
+        self._remember_state()
+        index = int(selection[0])
+        self.replacement_text_zones[index] = zone
+        self._refresh_replacement_tree(index)
+        if self.source:
+            self._preview()
+
+    def _delete_selected_replacement(self) -> None:
+        selection = self.replacement_tree.selection()
+        if not selection:
+            return
+        self._remember_state()
+        self.replacement_text_zones.pop(int(selection[0]))
+        self._refresh_replacement_tree()
+        if self.source:
+            self._preview()
+
+    def _detect_selected_replacement_font(self) -> None:
+        selection = self.replacement_tree.selection()
+        if not selection or not self.source:
+            messagebox.showinfo(
+                "Détection de police",
+                "Choisissez un PDF et sélectionnez une zone de remplacement.",
+                parent=self,
+            )
+            return
+        index = int(selection[0])
+        zone = self.replacement_text_zones[index]
+        try:
+            with pymupdf.open(self.source) as document:
+                page = document[0]
+                page_height = page.rect.height
+                rectangle = pymupdf.Rect(
+                    zone.x_mm * 72 / 25.4,
+                    page_height - (zone.y_mm + zone.height_mm) * 72 / 25.4,
+                    (zone.x_mm + zone.width_mm) * 72 / 25.4,
+                    page_height - zone.y_mm * 72 / 25.4,
+                )
+                candidates: list[tuple[float, dict[str, object]]] = []
+                for block in page.get_text("dict").get("blocks", []):
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            span_rect = pymupdf.Rect(span.get("bbox", (0, 0, 0, 0)))
+                            overlap = rectangle & span_rect
+                            if not overlap.is_empty:
+                                candidates.append((overlap.get_area(), span))
+            if not candidates:
+                raise ValueError("Aucun texte du PDF n’a été trouvé sous cette zone.")
+            span = max(candidates, key=lambda item: item[0])[1]
+            source_font = str(span.get("font", "Helvetica"))
+            family = (
+                "Times"
+                if any(value in source_font.casefold() for value in ("times", "serif"))
+                else "Courier"
+                if any(value in source_font.casefold() for value in ("courier", "mono"))
+                else "Helvetica"
+            )
+            self._remember_state()
+            updated = ReplacementTextZone(
+                **{
+                    **zone.__dict__,
+                    "font_family": family,
+                    "font_size": float(span.get("size", zone.font_size)),
+                    "bold": "bold" in source_font.casefold(),
+                }
+            )
+            self.replacement_text_zones[index] = updated
+            self._refresh_replacement_tree(index)
+            self._load_selected_replacement(None)
+            self._preview()
+            self.status.configure(text="Police et taille détectées sous la zone.")
+        except (OSError, ValueError, RuntimeError) as exc:
+            messagebox.showinfo("Détection de police", str(exc), parent=self)
+
     def _settings(self) -> DecorationSettings:
         if not self.source:
             raise ValueError("Choisissez d’abord un document PDF.")
@@ -710,6 +997,7 @@ class DecoratePdfWindow(tk.Toplevel):
             mask_original_footer=self.mask_footer.get(),
             footer_mask_height_mm=self.mask_height.get(),
             mask_zones=tuple(self.mask_zones),
+            replacement_text_zones=tuple(self.replacement_text_zones),
         )
 
     def _preview(self) -> None:
@@ -805,14 +1093,14 @@ class DecoratePdfWindow(tk.Toplevel):
 
     def _placement_press(self, event: tk.Event[tk.Misc]) -> None:
         self._edit_snapshot = self._capture_state()
-        if self.placement_target.get() == "mask":
+        if self.placement_target.get() in {"mask", "replacement"}:
             self.mask_drag_start = self._canvas_coordinates(event)
             self.preview_canvas.delete("placement")
             return
         self._place_element(event)
 
     def _placement_motion(self, event: tk.Event[tk.Misc]) -> None:
-        if self.placement_target.get() != "mask":
+        if self.placement_target.get() not in {"mask", "replacement"}:
             self._place_element(event)
             return
         if not self.mask_drag_start:
@@ -834,6 +1122,8 @@ class DecoratePdfWindow(tk.Toplevel):
     def _placement_release(self, event: tk.Event[tk.Misc]) -> None:
         if self.placement_target.get() == "mask":
             self._finish_mask_placement(event)
+        elif self.placement_target.get() == "replacement":
+            self._finish_replacement_placement(event)
         else:
             self._finish_placement(event)
 
@@ -873,6 +1163,42 @@ class DecoratePdfWindow(tk.Toplevel):
             self._remember_state(self._edit_snapshot)
         self._edit_snapshot = None
         self._refresh_mask_tree(len(self.mask_zones) - 1)
+        self._preview()
+
+    def _finish_replacement_placement(self, event: tk.Event[tk.Misc]) -> None:
+        if not self.preview_image or not self.mask_drag_start:
+            self.mask_drag_start = None
+            self._edit_snapshot = None
+            return
+        start_x_mm, start_y_mm = self._event_to_pdf_mm(*self.mask_drag_start)
+        end_x, end_y = self._canvas_coordinates(event)
+        end_x_mm, end_y_mm = self._event_to_pdf_mm(end_x, end_y)
+        self.mask_drag_start = None
+        width = abs(end_x_mm - start_x_mm)
+        height = abs(end_y_mm - start_y_mm)
+        if width < 1 or height < 1:
+            self.preview_canvas.delete("placement")
+            self._edit_snapshot = None
+            return
+        zone = ReplacementTextZone(
+            text=self.replacement_text.get() or "DEVIS",
+            x_mm=min(start_x_mm, end_x_mm),
+            y_mm=min(start_y_mm, end_y_mm),
+            width_mm=width,
+            height_mm=height,
+            font_family=self.replacement_font.get() or "Helvetica",
+            font_size=max(4, self.replacement_font_size.get()),
+            text_color=self.replacement_text_color.get() or "#000000",
+            background_color=self.replacement_background_color.get() or "#FFFFFF",
+            bold=self.replacement_bold.get(),
+            alignment=self.replacement_alignment.get() or "left",
+        )
+        self.replacement_text_zones.append(zone)
+        if self._edit_snapshot:
+            self._remember_state(self._edit_snapshot)
+        self._edit_snapshot = None
+        index = len(self.replacement_text_zones) - 1
+        self._refresh_replacement_tree(index)
         self._preview()
 
     def _place_element(self, event: tk.Event[tk.Misc]) -> None:

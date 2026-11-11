@@ -23,6 +23,21 @@ class MaskZone:
 
 
 @dataclass(frozen=True)
+class ReplacementTextZone:
+    text: str
+    x_mm: float
+    y_mm: float
+    width_mm: float
+    height_mm: float
+    font_family: str = "Helvetica"
+    font_size: float = 12
+    text_color: str = "#000000"
+    background_color: str = "#FFFFFF"
+    bold: bool = False
+    alignment: str = "left"
+
+
+@dataclass(frozen=True)
 class DecorationSettings:
     selected_pages: frozenset[int] | None = None
     watermark_text: str = ""
@@ -53,6 +68,7 @@ class DecorationSettings:
     mask_original_footer: bool = False
     footer_mask_height_mm: float = 18
     mask_zones: tuple[MaskZone, ...] = ()
+    replacement_text_zones: tuple[ReplacementTextZone, ...] = ()
 
 
 def parse_page_selection(expression: str, page_count: int) -> frozenset[int] | None:
@@ -178,6 +194,9 @@ def _make_overlay(
                 stroke=0,
             )
 
+        for zone in settings.replacement_text_zones:
+            _draw_replacement_text_zone(drawing, zone)
+
     if draw_watermark and settings.watermark_text:
         drawing.saveState()
         _set_alpha(drawing, settings.watermark_opacity)
@@ -282,6 +301,44 @@ def _draw_aligned(drawing: canvas.Canvas, text: str, position: str, width: float
         drawing.drawRightString(width - margin, y, text)
     else:
         drawing.drawCentredString(width / 2, y, text)
+
+
+def _draw_replacement_text_zone(
+    drawing: canvas.Canvas, zone: ReplacementTextZone
+) -> None:
+    x = zone.x_mm * MM
+    y = zone.y_mm * MM
+    width = max(1, zone.width_mm) * MM
+    height = max(1, zone.height_mm) * MM
+    drawing.saveState()
+    drawing.setFillColor(_color(zone.background_color))
+    drawing.rect(x, y, width, height, fill=1, stroke=0)
+    font_name = _standard_font_name(zone.font_family, zone.bold)
+    font_size = max(4, zone.font_size)
+    drawing.setFont(font_name, font_size)
+    drawing.setFillColor(_color(zone.text_color))
+    leading = font_size * 1.18
+    lines = zone.text.splitlines() or [""]
+    total_height = len(lines) * leading
+    baseline = y + max(2, (height + total_height) / 2 - leading * 0.82)
+    for line in lines:
+        if zone.alignment == "right":
+            drawing.drawRightString(x + width - 2, baseline, line)
+        elif zone.alignment == "center":
+            drawing.drawCentredString(x + width / 2, baseline, line)
+        else:
+            drawing.drawString(x + 2, baseline, line)
+        baseline -= leading
+    drawing.restoreState()
+
+
+def _standard_font_name(family: str, bold: bool) -> str:
+    normalized = family.casefold()
+    if any(name in normalized for name in ("times", "serif", "roman")):
+        return "Times-Bold" if bold else "Times-Roman"
+    if any(name in normalized for name in ("courier", "mono")):
+        return "Courier-Bold" if bold else "Courier"
+    return "Helvetica-Bold" if bold else "Helvetica"
 
 
 def _expand(template: str, page: int, total: int, document: str) -> str:
