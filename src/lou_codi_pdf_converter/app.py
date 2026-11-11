@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import faulthandler
 import sys
 import tkinter as tk
 import webbrowser
@@ -30,6 +31,7 @@ from .module_selection import module_enabled
 from .paths import initialize_workshop_directories
 from .services.capture_bridge import CaptureBridge
 from .services.local_database import initialize_database
+from .services.document_recovery import recovery_log_path
 from .support import SUPPORT_URL, mark_support_reminder_shown, mark_welcome_seen, register_launch
 from .telemetry import analytics_consent, set_analytics_consent, track_event
 from .ui.about_dialog import show_about
@@ -54,6 +56,18 @@ SUPPORT_DARK = "#713B00"
 LOCKED = "#8A6D1D"
 HELP_URL = "https://loucodi.fr/mode-emploi.html"
 CONTACT_URL = "https://loucodi.fr/#contact"
+
+_FAULT_LOG_STREAM = None
+
+
+def _enable_local_crash_log() -> None:
+    """Preserve a native traceback when Tk/Pillow crashes outside Python."""
+    global _FAULT_LOG_STREAM
+    try:
+        _FAULT_LOG_STREAM = recovery_log_path().open("a", encoding="utf-8")
+        faulthandler.enable(_FAULT_LOG_STREAM, all_threads=True)
+    except (OSError, RuntimeError):
+        _FAULT_LOG_STREAM = None
 
 @dataclass(frozen=True)
 class WorkshopModule:
@@ -595,6 +609,7 @@ class Application(TkinterDnD.Tk):
 
 
 def main() -> None:
+    _enable_local_crash_log()
     project_path = None
     if len(sys.argv) > 1:
         candidate = Path(sys.argv[1]).expanduser()

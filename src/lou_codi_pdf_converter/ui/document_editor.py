@@ -10,10 +10,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import tkinter as tk
 import unicodedata
 import uuid
 import webbrowser
+from collections.abc import Callable
 from html.parser import HTMLParser
 from itertools import pairwise
 from pathlib import Path
@@ -111,6 +113,12 @@ from ..services.geometry import (
     split_segment_by_closed_polyline,
 )
 from ..services.table_formulas import evaluate_table, evaluate_table_cells
+from ..services.document_recovery import (
+    delete_recovery_snapshot,
+    list_recovery_snapshots,
+    record_document_studio_error,
+    write_recovery_snapshot,
+)
 from ..system import open_path
 from .input_dialogs import ask_number, ask_table_size, ask_text, choose_color, pick_symbol
 from .destination_settings import configure_document_destinations
@@ -1713,6 +1721,11 @@ class DocumentEditorWindow(tk.Toplevel):
         self._saved_document = copy.deepcopy(self.document)
         self._document_tabs: list[dict[str, object]] = []
         self._active_document_tab = 0
+        self._recovery_session_id = uuid.uuid4().hex
+        self._autosave_after_id: str | None = None
+        self._autosave_write_running = False
+        self._autosave_thread: threading.Thread | None = None
+        self._autosave_error: BaseException | None = None
         self.project_path: Path | None = None
         self.last_export: Path | None = None
         self.current_page = 0
@@ -1882,6 +1895,8 @@ class DocumentEditorWindow(tk.Toplevel):
         self.update_idletasks()
         make_modal(self, parent)
         self.after_idle(self._render)
+        self.after(900, self._offer_recovery_snapshots)
+        self._schedule_autosave()
 
     def _build(self) -> None:
         self._build_menu()
@@ -2718,6 +2733,10 @@ class DocumentEditorWindow(tk.Toplevel):
             ("Enregistrer comme modèle…", self._save_as_template, ""),
         ):
             file_menu.add_command(label=label, command=command, accelerator=accelerator)
+        file_menu.add_command(
+            label="Récupérer une sauvegarde automatique…",
+            command=self._recover_automatic_backup,
+        )
         file_menu.add_separator()
         destinations_menu = tk.Menu(file_menu, tearoff=False)
         self._destinations_menu = destinations_menu
@@ -3616,6 +3635,7 @@ class DocumentEditorWindow(tk.Toplevel):
     def _request_close(self) -> None:
         """Protect an edited project from an accidental window close."""
         if not self._has_unsaved_changes():
+            self._delete_active_recovery()
             self.destroy()
             return
         choice = messagebox.askyesnocancel(
@@ -3628,7 +3648,16 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         if choice and not self._save():
             return
+        self._delete_active_recovery()
         self.destroy()
+
+    def _delete_active_recovery(self) -> None:
+        if not getattr(self, "_document_tabs", None):
+            return
+        recovery_id = str(
+            self._document_tabs[self._active_document_tab].get("recovery_id", "")
+        )
+        delete_recovery_snapshot(recovery_id)
 
     def _request_close_from_menu(self) -> None:
         # Do not destroy a toplevel while Tk is still executing a native menu
@@ -3709,6 +3738,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if not getattr(self, "_document_tabs", None):
             return
         tab = self._document_tabs[self._active_document_tab]
+        tab.setdefault("recovery_id", uuid.uuid4().hex)
         tab.update(
             document=self.document,
             saved_document=self._saved_document,
@@ -3721,6 +3751,181 @@ class DocumentEditorWindow(tk.Toplevel):
         )
         if title is not None:
             tab["title"] = title
+
+    def _schedule_autosave(self, delay_ms: int = 30_000) -> None:
+        if self._autosave_after_id is not None:
+            try:
+                self.after_cancel(self._autosave_after_id)
+            except tk.TclError:
+                pass
+        self._autosave_after_id = self.after(delay_ms, self._autosave_documents)
+
+    def _document_snapshot_with_live_editor(self) -> CanvasDocument:
+        """Copy the active document including text not yet committed by the editor."""
+        snapshot = copy.deepcopy(self.document)
+        widget = self._editing_widget
+        if widget is None or not widget.winfo_exists():
+            return snapshot
+        value = normalize_external_text(widget.get("1.0", "end-1c"))
+        item = next(
+            (
+                candidate
+                for candidate in snapshot.objects
+                if candidate.object_id == self._editing_object_id
+            ),
+            None,
+        )
+        if item is None:
+            return snapshot
+        if self._editing_table_cell is not None and item.kind == "table":
+            row, column = self._editing_table_cell
+            cells = self._ensure_table_cells(item)
+            if 0 <= row < len(cells) and 0 <= column < len(cells[row]):
+                cells[row][column]["text"] = value
+                self._sync_table_text(item)
+            return snapshot
+        if self._editing_flow_root_id:
+            root = next(
+                (
+                    candidate
+                    for candidate in snapshot.objects
+                    if candidate.object_id == self._editing_flow_root_id
+                ),
+                None,
+            )
+            if root is not None:
+                offset = self._editing_flow_offset
+                old_length = len(self._editing_flow_original_segment)
+                root.text = (
+                    self._editing_original_text[:offset]
+                    + value
+                    + self._editing_original_text[offset + old_length:]
+                )
+                return snapshot
+        item.text = value
+        return snapshot
+
+    def _autosave_documents(self) -> None:
+        self._autosave_after_id = None
+        if self._autosave_write_running or not self.winfo_exists():
+            self._schedule_autosave()
+            return
+        try:
+            self._store_active_document_tab()
+            jobs: list[tuple[CanvasDocument, str, str, str]] = []
+            for index, tab in enumerate(self._document_tabs):
+                document = tab.get("document")
+                saved = tab.get("saved_document")
+                if not isinstance(document, CanvasDocument) or document == saved:
+                    if index != self._active_document_tab or not self._has_unsaved_changes():
+                        continue
+                snapshot = (
+                    self._document_snapshot_with_live_editor()
+                    if index == self._active_document_tab
+                    else copy.deepcopy(document)
+                )
+                recovery_id = str(tab.setdefault("recovery_id", uuid.uuid4().hex))
+                title = str(tab.get("title") or "Document sans titre")
+                original = tab.get("project_path")
+                jobs.append((snapshot, recovery_id, title, str(original or "")))
+        except (tk.TclError, RuntimeError, MemoryError) as exc:
+            record_document_studio_error("préparation de la sauvegarde automatique", exc)
+            self._schedule_autosave()
+            return
+        if not jobs:
+            self._schedule_autosave()
+            return
+        self._autosave_write_running = True
+        self._autosave_error = None
+
+        def save_in_background() -> None:
+            try:
+                for document, recovery_id, title, original in jobs:
+                    write_recovery_snapshot(
+                        document,
+                        recovery_id=recovery_id,
+                        title=title,
+                        original_path=original,
+                        session_id=self._recovery_session_id,
+                    )
+            except Exception as exc:
+                self._autosave_error = exc
+                record_document_studio_error("sauvegarde automatique", exc)
+
+        self._autosave_thread = threading.Thread(
+            target=save_in_background,
+            name="loucodi-autosave",
+            daemon=True,
+        )
+        self._autosave_thread.start()
+        self.after(100, self._poll_autosave)
+
+    def _poll_autosave(self) -> None:
+        thread = self._autosave_thread
+        if thread is not None and thread.is_alive():
+            self.after(100, self._poll_autosave)
+            return
+        self._autosave_finished(self._autosave_error)
+
+    def _autosave_finished(self, error: BaseException | None) -> None:
+        self._autosave_write_running = False
+        self._autosave_thread = None
+        if error is None:
+            self.status.configure(text="Sauvegarde automatique effectuée.")
+        self._schedule_autosave()
+
+    def _offer_recovery_snapshots(self) -> None:
+        snapshots = [
+            snapshot
+            for snapshot in list_recovery_snapshots()
+            if snapshot.session_id != self._recovery_session_id
+        ]
+        if not snapshots:
+            return
+        if messagebox.askyesno(
+            "Récupération disponible",
+            "Document Studio a trouvé une sauvegarde automatique provenant "
+            "d’une session précédente.\n\nVoulez-vous la récupérer maintenant ?",
+            parent=self,
+        ):
+            self._recover_snapshot(snapshots[0])
+
+    def _recover_automatic_backup(self) -> None:
+        snapshots = list_recovery_snapshots()
+        if not snapshots:
+            messagebox.showinfo(
+                "Sauvegarde automatique",
+                "Aucune sauvegarde automatique à récupérer.",
+                parent=self,
+            )
+            return
+        self._recover_snapshot(snapshots[0])
+
+    def _recover_snapshot(self, snapshot: object) -> None:
+        try:
+            document_path = snapshot.document_path  # type: ignore[attr-defined]
+            loaded = CanvasDocument.load(document_path)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            record_document_studio_error("ouverture d’une sauvegarde automatique", exc)
+            messagebox.showerror(
+                "Récupération impossible",
+                "La sauvegarde automatique n’a pas pu être ouverte.",
+                parent=self,
+            )
+            return
+        title = str(getattr(snapshot, "title", "Document récupéré"))
+        recovered_title = f"{Path(title).stem} — récupéré"
+        self._open_document_tab(
+            loaded,
+            recovered_title,
+            project_path=None,
+            saved_document=CanvasDocument(),
+        )
+        tab = self._document_tabs[self._active_document_tab]
+        tab["recovery_id"] = str(getattr(snapshot, "recovery_id", uuid.uuid4().hex))
+        self.status.configure(
+            text="Sauvegarde récupérée. Utilisez Enregistrer sous pour conserver ce document."
+        )
 
     def _restore_document_tab(self, index: int) -> None:
         tab = self._document_tabs[index]
@@ -3834,6 +4039,7 @@ class DocumentEditorWindow(tk.Toplevel):
             )
             if choice is None or choice and not self._save():
                 return
+        self._delete_active_recovery()
         if len(self._document_tabs) == 1:
             self.document = CanvasDocument()
             self._saved_document = copy.deepcopy(self.document)
@@ -11393,6 +11599,12 @@ class DocumentEditorWindow(tk.Toplevel):
         return None
 
     def _paste_from_system_clipboard(self, *, rich: bool = True) -> None:
+        self._run_clipboard_transaction(
+            "collage depuis le presse-papiers",
+            lambda: self._paste_from_system_clipboard_unchecked(rich=rich),
+        )
+
+    def _paste_from_system_clipboard_unchecked(self, *, rich: bool = True) -> None:
         try:
             text_value = self.clipboard_get()
         except tk.TclError:
@@ -11588,6 +11800,39 @@ class DocumentEditorWindow(tk.Toplevel):
         )
 
     def _paste_objects(self) -> None:
+        self._run_clipboard_transaction(
+            "collage ou duplication d’objets",
+            self._paste_objects_unchecked,
+        )
+
+    def _run_clipboard_transaction(
+        self, context: str, operation: Callable[[], None]
+    ) -> None:
+        before = copy.deepcopy(self.document)
+        before_selected = self.selected
+        before_indices = set(self.selected_indices)
+        before_undo = list(self.undo_stack)
+        before_redo = list(self.redo_stack)
+        try:
+            operation()
+        except Exception as exc:
+            self.document = before
+            self.selected = before_selected
+            self.selected_indices = before_indices
+            self.undo_stack = before_undo
+            self.redo_stack = before_redo
+            record_document_studio_error(context, exc)
+            self._render()
+            messagebox.showerror(
+                "Collage interrompu sans perte",
+                "Le contenu copié n’a pas pu être traité. Le document a été remis "
+                "dans son état précédent et une sauvegarde de diagnostic locale a été créée.",
+                parent=self,
+            )
+            return
+        self._schedule_autosave(1_500)
+
+    def _paste_objects_unchecked(self) -> None:
         if not self._object_clipboard:
             self.status.configure(text="Aucun objet n’a encore été copié.")
             return
@@ -15006,6 +15251,7 @@ class DocumentEditorWindow(tk.Toplevel):
         self.project_path = path
         self._saved_document = copy.deepcopy(self.document)
         self._store_active_document_tab(path.name)
+        self._delete_active_recovery()
         self._refresh_document_tabs()
         self.status.configure(text=f"Projet enregistré : {path.name}")
 
