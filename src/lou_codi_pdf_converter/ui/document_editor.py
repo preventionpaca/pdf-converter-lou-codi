@@ -2525,6 +2525,38 @@ class DocumentEditorWindow(tk.Toplevel):
             entry.pack(fill="x")
             entry.bind("<Return>", lambda _event: self._apply_properties())
             entry.bind("<Tab>", lambda _event: self._apply_properties(silent=True), add="+")
+        real_geometry = ttk.LabelFrame(
+            panel,
+            text="DIMENSIONS RÉELLES À L’ÉCHELLE",
+            padding=6,
+        )
+        real_geometry.pack(fill="x", pady=(3, 6))
+        self.real_geometry_vars: dict[str, tk.StringVar] = {}
+        for column, (key, label) in enumerate(
+            (("width", "Largeur réelle (mm)"), ("height", "Hauteur réelle (mm)"))
+        ):
+            field = ttk.Frame(real_geometry, style="Card.TFrame")
+            field.grid(row=0, column=column, sticky="ew", padx=2)
+            ttk.Label(field, text=label, style="Body.TLabel").pack(anchor="w")
+            variable = tk.StringVar()
+            self.real_geometry_vars[key] = variable
+            entry = ttk.Entry(field, textvariable=variable, width=10)
+            entry.pack(fill="x")
+            entry.bind("<Return>", lambda _event: self._apply_real_dimensions())
+        real_geometry.columnconfigure((0, 1), weight=1, uniform="real-properties")
+        self.real_geometry_scale_label = ttk.Label(
+            real_geometry,
+            text="",
+            style="Body.TLabel",
+        )
+        self.real_geometry_scale_label.grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=2, pady=(4, 0)
+        )
+        ttk.Button(
+            real_geometry,
+            text="Appliquer les dimensions réelles",
+            command=self._apply_real_dimensions,
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=2, pady=(5, 0))
         self.geometry_help = ttk.Label(panel, text="", style="Body.TLabel", wraplength=260)
         self.geometry_help.pack(fill="x", pady=(0, 4))
         self.shape_geometry_label = ttk.Label(
@@ -14535,6 +14567,12 @@ class DocumentEditorWindow(tk.Toplevel):
                 self.property_vars["height"].set(
                     f"{abs(point[1] - previous[1]) * 25.4 / 72:.2f}"
                 )
+                self._update_real_geometry_fields(
+                    abs(point[0] - previous[0]),
+                    abs(point[1] - previous[1]),
+                )
+            else:
+                self._update_real_geometry_fields(0.0, 0.0)
             help_text = "Modifiez X/Y puis Entrée ou Tab pour positionner exactement ce sommet. Largeur/hauteur indiquent ΔX/ΔY du segment précédent."
         elif grouped:
             help_text = "X/Y : coin supérieur gauche du cadre orange. Largeur et hauteur redimensionnent tout l’assemblage."
@@ -14880,16 +14918,81 @@ class DocumentEditorWindow(tk.Toplevel):
                 value = value * 25.4 / 72
             digits = 2 if key in {"x", "y", "width", "height"} else 0 if key == "level" else 1
             var.set(f"{value:.{digits}f}")
+        self._update_real_geometry_fields(abs(item.width), abs(item.height))
 
     def _update_assembly_geometry_fields(self) -> None:
         objects = [self.document.objects[index] for index in self.selected_indices]
         x, y, width, height = objects_bounds(objects)
         for key, value in (("x", x), ("y", y), ("width", width), ("height", height)):
             self.property_vars[key].set(f"{value * 25.4 / 72:.2f}")
+        self._update_real_geometry_fields(width, height)
         if objects:
             self.property_vars["font_size"].set(f"{objects[0].font_size:.1f}")
             levels = {item.level for item in objects}
             self.property_vars["level"].set(str(objects[0].level) if len(levels) == 1 else "0")
+
+    def _update_real_geometry_fields(self, width: float, height: float) -> None:
+        factor = max(0.000001, float(self.document.measurement_scale))
+        millimetres_per_point = 25.4 / 72 * factor
+        self.real_geometry_vars["width"].set(f"{abs(width) * millimetres_per_point:.2f}")
+        self.real_geometry_vars["height"].set(f"{abs(height) * millimetres_per_point:.2f}")
+        if math.isclose(factor, 1.0):
+            explanation = "Échelle 1:1 — étalonnez le plan pour utiliser les dimensions réelles."
+        else:
+            explanation = f"Facteur actif : 1 mm sur la feuille = {factor:.4g} mm réels."
+        self.real_geometry_scale_label.configure(text=explanation)
+
+    def _apply_real_dimensions(self) -> None:
+        if self.selected is None or not self.selected_indices:
+            return
+        objects = [self.document.objects[index] for index in self.selected_indices]
+        if any(item.geometry_locked for item in objects):
+            messagebox.showinfo(
+                "Dimensions verrouillées",
+                "Déverrouillez les dimensions avant de modifier la taille réelle.",
+                parent=self,
+            )
+            return
+        try:
+            real_width = float(self.real_geometry_vars["width"].get().replace(",", "."))
+            real_height = float(self.real_geometry_vars["height"].get().replace(",", "."))
+        except ValueError:
+            messagebox.showerror(
+                "Dimension incorrecte",
+                "Saisissez uniquement des nombres dans les dimensions réelles.",
+                parent=self,
+            )
+            return
+        if real_width <= 0 or real_height <= 0:
+            messagebox.showerror(
+                "Dimension incorrecte",
+                "La largeur et la hauteur réelles doivent être supérieures à zéro.",
+                parent=self,
+            )
+            return
+        factor = max(0.000001, float(self.document.measurement_scale))
+        target_width = real_width / factor * 72 / 25.4
+        target_height = real_height / factor * 72 / 25.4
+        self._checkpoint()
+        if len(self.selected_indices) > 1:
+            x, y, _width, _height = objects_bounds(objects)
+            transform_object_assembly(objects, x, y, target_width, target_height)
+        else:
+            item = objects[0]
+            old_width, old_height = item.width, item.height
+            item.width = target_width
+            item.height = target_height
+            if item.kind == "polyline" and old_width and old_height:
+                item.points = [
+                    [point[0] * item.width / old_width, point[1] * item.height / old_height]
+                    for point in item.points
+                ]
+            if item.kind == "shape" and item.shape == "circle":
+                item.height = item.width
+        self.status.configure(
+            text=f"Dimensions réelles appliquées : {real_width:.2f} × {real_height:.2f} mm."
+        )
+        self._render()
 
     def _apply_properties(self, *, silent: bool = False) -> None:
         if self.selected is None:
