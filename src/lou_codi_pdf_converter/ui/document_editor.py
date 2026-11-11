@@ -15180,11 +15180,10 @@ class DocumentEditorWindow(tk.Toplevel):
             return
         dimension = objects[0] if len(objects) == 1 and objects[0].kind == "dimension" else None
         if dimension is not None:
-            invalid_dimensions = (
-                real_width < 0
-                or real_height < 0
-                or math.hypot(real_width, real_height) <= 0
-            )
+            # Une cote orientée vers la gauche ou vers le haut possède
+            # naturellement une composante négative. Le signe décrit son sens,
+            # pas une longueur invalide.
+            invalid_dimensions = math.hypot(real_width, real_height) <= 0
         else:
             invalid_dimensions = real_width <= 0 or real_height <= 0
         if invalid_dimensions:
