@@ -1551,6 +1551,21 @@ def driving_dimension_translation(
     return delta_x, delta_y, dimension_start, final_middle
 
 
+def associative_dimension_translation(
+    fixed_point: tuple[float, float],
+    moving_point: tuple[float, float],
+    target_distance: float,
+) -> tuple[float, float]:
+    """Move the second reference along the dimension axis to reach a distance."""
+    dx = moving_point[0] - fixed_point[0]
+    dy = moving_point[1] - fixed_point[1]
+    current_distance = math.hypot(dx, dy)
+    if current_distance <= 1e-9:
+        raise ValueError("coincident dimension references")
+    correction = target_distance - current_distance
+    return correction * dx / current_distance, correction * dy / current_distance
+
+
 def union_axis_aligned_rectangles(
     rectangles: list[tuple[float, float, float, float]],
 ) -> list[tuple[float, float]]:
@@ -15074,6 +15089,74 @@ class DocumentEditorWindow(tk.Toplevel):
             explanation = f"Facteur actif : 1 mm sur la feuille = {factor:.4g} mm réels."
         self.real_geometry_scale_label.configure(text=explanation)
 
+    @staticmethod
+    def _direct_dimension_object_id(reference: dict[str, object]) -> str:
+        if str(reference.get("kind", "edge")) == "intersection":
+            return ""
+        return str(reference.get("object_id", ""))
+
+    def _drive_associative_dimension(
+        self, item: PageObject, target_distance: float
+    ) -> bool:
+        if len(item.dimension_refs) != 2:
+            return False
+        fixed_point = self._resolve_dimension_reference(item.dimension_refs[0])
+        moving_point = self._resolve_dimension_reference(item.dimension_refs[1])
+        moving_object_id = self._direct_dimension_object_id(item.dimension_refs[1])
+        fixed_object_id = self._direct_dimension_object_id(item.dimension_refs[0])
+        if fixed_point is None or moving_point is None or not moving_object_id:
+            messagebox.showinfo(
+                "Cote non pilotable",
+                "Cette cote utilise une intersection ambiguë. Recréez-la en cliquant d’abord le point fixe, puis un sommet ou un bord de l’objet à déplacer.",
+                parent=self,
+            )
+            return False
+        moving_index = next(
+            (
+                index
+                for index, candidate in enumerate(self.document.objects)
+                if candidate.object_id == moving_object_id
+            ),
+            None,
+        )
+        if moving_index is None:
+            return False
+        moving_indices = expanded_group_indices(self.document.objects, {moving_index})
+        if fixed_object_id and any(
+            self.document.objects[index].object_id == fixed_object_id
+            for index in moving_indices
+        ):
+            messagebox.showinfo(
+                "Cote non pilotable",
+                "Les deux références appartiennent au même assemblage. Elles ne peuvent pas être écartées en déplaçant l’assemblage entier.",
+                parent=self,
+            )
+            return False
+        if any(self.document.objects[index].position_locked for index in moving_indices):
+            messagebox.showinfo(
+                "Position verrouillée",
+                "Déverrouillez la position de l’objet mobile avant de piloter cette cote.",
+                parent=self,
+            )
+            return False
+        try:
+            move_x, move_y = associative_dimension_translation(
+                fixed_point, moving_point, target_distance
+            )
+        except ValueError:
+            messagebox.showerror(
+                "Cote non pilotable",
+                "Les deux références de la cote sont confondues.",
+                parent=self,
+            )
+            return False
+        self._checkpoint()
+        for index in moving_indices:
+            self.document.objects[index].x += move_x
+            self.document.objects[index].y += move_y
+        self._update_associative_dimensions()
+        return True
+
     def _apply_real_dimensions(self) -> None:
         if self.selected is None or not self.selected_indices:
             return
@@ -15095,14 +15178,36 @@ class DocumentEditorWindow(tk.Toplevel):
                 parent=self,
             )
             return
-        if real_width <= 0 or real_height <= 0:
+        dimension = objects[0] if len(objects) == 1 and objects[0].kind == "dimension" else None
+        if dimension is not None:
+            invalid_dimensions = (
+                real_width < 0
+                or real_height < 0
+                or math.hypot(real_width, real_height) <= 0
+            )
+        else:
+            invalid_dimensions = real_width <= 0 or real_height <= 0
+        if invalid_dimensions:
             messagebox.showerror(
                 "Dimension incorrecte",
-                "La largeur et la hauteur réelles doivent être supérieures à zéro.",
+                (
+                    "La longueur réelle de la cote doit être supérieure à zéro."
+                    if dimension is not None
+                    else "La largeur et la hauteur réelles doivent être supérieures à zéro."
+                ),
                 parent=self,
             )
             return
         factor = max(0.000001, float(self.document.measurement_scale))
+        if dimension is not None and len(dimension.dimension_refs) == 2:
+            target_distance = math.hypot(real_width, real_height) / factor * 72 / 25.4
+            if self._drive_associative_dimension(dimension, target_distance):
+                actual_distance = math.hypot(real_width, real_height)
+                self.status.configure(
+                    text=f"Cote pilotée à {actual_distance:.2f} mm : le deuxième objet a été déplacé suivant l’axe de la cote."
+                )
+                self._render()
+            return
         target_width = real_width / factor * 72 / 25.4
         target_height = real_height / factor * 72 / 25.4
         self._checkpoint()

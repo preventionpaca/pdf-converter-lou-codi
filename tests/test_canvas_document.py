@@ -35,6 +35,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     _slice_text_ranges,
     aligned_text_x,
     alignment_snap_translation,
+    associative_dimension_translation,
     dimension_label_layout,
     dimension_line_geometry,
     driving_dimension_translation,
@@ -1335,6 +1336,17 @@ def test_driving_dimension_keeps_the_moving_object_on_its_current_side() -> None
     assert (dx, dy) == (0, 10)
     assert start == (75, 50)
     assert end == (75, 30)
+
+
+def test_associative_dimension_moves_second_reference_along_its_axis() -> None:
+    dx, dy = associative_dimension_translation(
+        fixed_point=(100.0, 300.0),
+        moving_point=(100.0, 240.0),
+        target_distance=61.0,
+    )
+
+    assert dx == 0.0
+    assert dy == -1.0
 
 
 def test_two_touching_rectangles_become_one_shoulder_profile() -> None:
