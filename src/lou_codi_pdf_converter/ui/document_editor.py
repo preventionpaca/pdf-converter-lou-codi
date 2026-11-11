@@ -1104,6 +1104,35 @@ def alignment_snap_translation(
     return delta_x + correction_x, delta_y + correction_y, guide_x, guide_y
 
 
+def remarkable_point_snap_translation(
+    moving_points: list[tuple[str, float, float]],
+    target_points: list[tuple[str, float, float]],
+    delta_x: float,
+    delta_y: float,
+    threshold: float,
+) -> tuple[float, float, tuple[float, float] | None, str]:
+    """Snap a moving corner/midpoint exactly onto another remarkable point."""
+    candidates = [
+        (
+            math.dist(
+                (moving_x + delta_x, moving_y + delta_y),
+                (target_x, target_y),
+            ),
+            target_x - moving_x,
+            target_y - moving_y,
+            (target_x, target_y),
+            target_label,
+        )
+        for _moving_label, moving_x, moving_y in moving_points
+        for target_label, target_x, target_y in target_points
+    ]
+    close = [candidate for candidate in candidates if candidate[0] <= threshold]
+    if not close:
+        return delta_x, delta_y, None, ""
+    _distance, snapped_x, snapped_y, target, label = min(close, key=lambda value: value[0])
+    return snapped_x, snapped_y, target, label
+
+
 def rotated_rectangle_points(item: PageObject) -> list[tuple[float, float]]:
     """Return an object's four corners after rotation around its centre."""
     center_x = item.x + item.width / 2
@@ -8018,13 +8047,44 @@ class DocumentEditorWindow(tk.Toplevel):
             )
             source_document = self._drag_before or self.document
             moving_objects = [source_document.objects[index] for index in moving_indices]
-            target_x, target_y = self._alignment_targets(moving_indices)
-            dx, dy, guide_x, guide_y = alignment_snap_translation(
-                objects_bounds(moving_objects), target_x, target_y, dx, dy,
-                threshold=max(4.0, 11.0 / self.zoom),
+            target_objects = [
+                item
+                for index, item in enumerate(self.document.objects)
+                if index not in moving_indices
+                and self.current_page in pages_for_object(item, self.document.page_count)
+            ]
+            threshold = max(4.0, 11.0 / self.zoom)
+            dx, dy, snap_target, snap_label = remarkable_point_snap_translation(
+                [
+                    point
+                    for item in moving_objects
+                    for point in object_rotation_snap_points(item)
+                ],
+                [
+                    point
+                    for item in target_objects
+                    for point in object_rotation_snap_points(item)
+                ],
+                dx,
+                dy,
+                threshold,
             )
-            self._alignment_snap_guides = (guide_x, guide_y)
+            if snap_target is not None:
+                self._drag_snap_preview = (snap_target, snap_label)
+                self._alignment_snap_guides = None
+                self.status.configure(
+                    text=f"Accrochage précis sur {snap_label}. Relâchez pour valider."
+                )
+            else:
+                self._drag_snap_preview = None
+                target_x, target_y = self._alignment_targets(moving_indices)
+                dx, dy, guide_x, guide_y = alignment_snap_translation(
+                    objects_bounds(moving_objects), target_x, target_y, dx, dy,
+                    threshold=threshold,
+                )
+                self._alignment_snap_guides = (guide_x, guide_y)
         else:
+            self._drag_snap_preview = None
             self._alignment_snap_guides = None
             self.canvas.delete("alignment-snap-guide")
         if moving_assembly:
@@ -8082,6 +8142,10 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._update_assembly_geometry_fields()
             else:
                 self._update_geometry_fields(self.document.objects[self.selected])
+        if self._drag_snap_preview is not None:
+            self._draw_snap_marker(*self._drag_snap_preview)
+        else:
+            self.canvas.delete("snap-preview")
         self._draw_alignment_snap_guides()
 
     def _release(self, event: tk.Event[tk.Misc]) -> None:

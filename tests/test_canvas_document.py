@@ -63,6 +63,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     parse_rich_clipboard_html_outside_tables,
     parse_rich_clipboard_rtf,
     proportional_resize,
+    remarkable_point_snap_translation,
     remap_text_ranges_after_edit,
     rectangle_edge_toward,
     point_hits_rotation_handle,
@@ -710,6 +711,20 @@ def test_shift_alignment_can_snap_horizontal_and_vertical_edges_at_once() -> Non
 
     assert (dx, dy) == (-4.0, 4.0)
     assert (guide_x, guide_y) == (96.0, 104.0)
+
+
+def test_shift_movement_snaps_corner_exactly_onto_target_midpoint() -> None:
+    dx, dy, target, label = remarkable_point_snap_translation(
+        [("angle", 100.0, 80.0), ("milieu", 140.0, 80.0)],
+        [("sommet", 202.0, 104.0), ("milieu", 240.0, 104.0)],
+        delta_x=101.0,
+        delta_y=23.0,
+        threshold=4.0,
+    )
+
+    assert (dx, dy) == (102.0, 24.0)
+    assert target == (202.0, 104.0)
+    assert label == "sommet"
 
 
 def test_geometry_lock_survives_project_roundtrip(tmp_path: Path) -> None:
