@@ -68,6 +68,8 @@ from lou_codi_pdf_converter.ui.document_editor import (
     remarkable_point_snap_translation,
     remap_text_ranges_after_edit,
     rectangle_edge_toward,
+    resize_handle_points,
+    resized_object_frame,
     point_hits_rotation_handle,
     nearest_rotation_snap_point,
     polygon_area,
@@ -288,8 +290,7 @@ def test_text_chain_redraw_keeps_previous_raster_until_replacement_is_ready() ->
         def find_withtag(self, tag: str) -> tuple[int, ...]:
             return {
                 "object:0": (10,),
-                "resize-start:0": (11,),
-                "resize-end:0": (12,),
+                    "resize-handle:0": (11, 12, 13, 14, 15, 16, 17, 18),
             }.get(tag, ())
 
         def delete(self, item: object) -> None:
@@ -312,6 +313,12 @@ def test_text_chain_redraw_keeps_previous_raster_until_replacement_is_ready() ->
         ("delete", 10),
         ("delete", 11),
         ("delete", 12),
+        ("delete", 13),
+        ("delete", 14),
+        ("delete", 15),
+        ("delete", 16),
+        ("delete", 17),
+        ("delete", 18),
     ]
 
 
@@ -753,6 +760,37 @@ def test_thin_technical_rectangle_can_be_smaller_than_two_millimetres() -> None:
 
     assert minimum_object_extent(technical_rectangle) == 0.25
     assert minimum_object_extent(text_frame) == 6.0
+
+
+def test_resize_handles_cover_four_corners_and_four_side_midpoints() -> None:
+    item = PageObject("image", 0, 10, 20, 100, 60)
+
+    assert resize_handle_points(item) == {
+        "resize-nw": (10.0, 20.0),
+        "resize-n": (60.0, 20.0),
+        "resize-ne": (110.0, 20.0),
+        "resize-e": (110.0, 50.0),
+        "resize-se": (110.0, 80.0),
+        "resize-s": (60.0, 80.0),
+        "resize-sw": (10.0, 80.0),
+        "resize-w": (10.0, 50.0),
+    }
+
+
+def test_left_and_top_resize_keep_opposite_edges_fixed() -> None:
+    x, y, width, height = resized_object_frame(
+        10.0, 20.0, 100.0, 60.0, 0.0, "resize-nw", 30.0, 35.0, 1.0
+    )
+
+    assert (x, y, width, height) == (30.0, 35.0, 80.0, 45.0)
+    assert x + width == 110.0
+    assert y + height == 80.0
+
+
+def test_side_resize_changes_only_one_axis() -> None:
+    assert resized_object_frame(
+        10.0, 20.0, 100.0, 60.0, 0.0, "resize-e", 125.0, 5.0, 1.0
+    ) == (10.0, 20.0, 115.0, 60.0)
 
 
 def test_geometry_lock_survives_project_roundtrip(tmp_path: Path) -> None:

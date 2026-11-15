@@ -376,6 +376,77 @@ def minimum_object_extent(item: PageObject) -> float:
     return 6.0
 
 
+RESIZE_HANDLE_MODES = {
+    "resize-nw", "resize-n", "resize-ne", "resize-e",
+    "resize-se", "resize-s", "resize-sw", "resize-w",
+}
+
+
+def resize_handle_points(item: PageObject) -> dict[str, tuple[float, float]]:
+    """Return the four corners and four side midpoints of an object."""
+    north_west, north_east, south_east, south_west = rotated_rectangle_points(item)
+    return {
+        "resize-nw": north_west,
+        "resize-n": (
+            (north_west[0] + north_east[0]) / 2,
+            (north_west[1] + north_east[1]) / 2,
+        ),
+        "resize-ne": north_east,
+        "resize-e": (
+            (north_east[0] + south_east[0]) / 2,
+            (north_east[1] + south_east[1]) / 2,
+        ),
+        "resize-se": south_east,
+        "resize-s": (
+            (south_west[0] + south_east[0]) / 2,
+            (south_west[1] + south_east[1]) / 2,
+        ),
+        "resize-sw": south_west,
+        "resize-w": (
+            (north_west[0] + south_west[0]) / 2,
+            (north_west[1] + south_west[1]) / 2,
+        ),
+    }
+
+
+def resized_object_frame(
+    old_x: float,
+    old_y: float,
+    old_width: float,
+    old_height: float,
+    rotation: float,
+    mode: str,
+    pointer_x: float,
+    pointer_y: float,
+    minimum: float,
+) -> tuple[float, float, float, float]:
+    """Resize from one of eight handles while the opposite side stays fixed."""
+    center_x = old_x + old_width / 2
+    center_y = old_y + old_height / 2
+    angle = math.radians(float(rotation) % 360)
+    cosine, sine = math.cos(angle), math.sin(angle)
+    offset_x, offset_y = pointer_x - center_x, pointer_y - center_y
+    local_x = center_x + offset_x * cosine + offset_y * sine
+    local_y = center_y - offset_x * sine + offset_y * cosine
+    left, right = old_x, old_x + old_width
+    top, bottom = old_y, old_y + old_height
+    if mode.endswith(("nw", "sw", "w")):
+        left = min(local_x, right - minimum)
+    elif mode.endswith(("ne", "se", "e")):
+        right = max(local_x, left + minimum)
+    if mode.endswith(("nw", "ne", "n")):
+        top = min(local_y, bottom - minimum)
+    elif mode.endswith(("sw", "se", "s")):
+        bottom = max(local_y, top + minimum)
+    width, height = right - left, bottom - top
+    local_center_x, local_center_y = (left + right) / 2, (top + bottom) / 2
+    local_offset_x = local_center_x - center_x
+    local_offset_y = local_center_y - center_y
+    new_center_x = center_x + local_offset_x * cosine - local_offset_y * sine
+    new_center_y = center_y + local_offset_x * sine + local_offset_y * cosine
+    return new_center_x - width / 2, new_center_y - height / 2, width, height
+
+
 def constrained_right_triangle_vertices(
     points: list[tuple[float, float]],
     point_index: int,
@@ -4944,22 +5015,31 @@ class DocumentEditorWindow(tk.Toplevel):
                     y + size / 2,
                     fill="#1769AA",
                     outline="white",
-                    tags=(f"resize-start:{index}", "resize"),
+                    tags=(f"resize-start:{index}", f"resize-handle:{index}", "resize"),
                 )
-            resize_x, resize_y = x + w, y + h
-            if item.kind == "text":
-                bottom_right = rotated_rectangle_points(item)[2]
-                resize_x = self.page_x + bottom_right[0] * self.zoom
-                resize_y = self.page_y + bottom_right[1] * self.zoom
-            self.canvas.create_rectangle(
-                resize_x - size / 2,
-                resize_y - size / 2,
-                resize_x + size / 2,
-                resize_y + size / 2,
-                fill="#1769AA",
-                outline="white",
-                tags=(f"resize-end:{index}", "resize"),
-            )
+                self.canvas.create_rectangle(
+                    x + w - size / 2,
+                    y + h - size / 2,
+                    x + w + size / 2,
+                    y + h + size / 2,
+                    fill="#1769AA",
+                    outline="white",
+                    tags=(f"resize-end:{index}", f"resize-handle:{index}", "resize"),
+                )
+            else:
+                for mode, (handle_x, handle_y) in resize_handle_points(item).items():
+                    canvas_x = self.page_x + handle_x * self.zoom
+                    canvas_y = self.page_y + handle_y * self.zoom
+                    self.canvas.create_rectangle(
+                        canvas_x - size / 2,
+                        canvas_y - size / 2,
+                        canvas_x + size / 2,
+                        canvas_y + size / 2,
+                        fill="#1769AA" if mode.endswith(("nw", "ne", "se", "sw")) else "white",
+                        outline="#1769AA",
+                        width=2,
+                        tags=(f"{mode}:{index}", f"resize-handle:{index}", "resize"),
+                    )
         elif selected and len(self.selected_indices) == 1 and item.geometry_locked:
             self.canvas.create_text(
                 x + w, y - 7, text="🔒 dimensions", anchor="se",
@@ -7589,7 +7669,9 @@ class DocumentEditorWindow(tk.Toplevel):
                 self._drag_origin = None
                 return
             for tag in self.canvas.gettags(current[0]):
-                if tag.startswith(("resize-start:", "resize-end:")):
+                if ":" in tag and tag.split(":", 1)[0] in {
+                    "resize-start", "resize-end", *RESIZE_HANDLE_MODES
+                }:
                     mode, object_index = tag.split(":", 1)
                     self.selected = int(object_index)
                     item = self.document.objects[self.selected]
@@ -7965,6 +8047,7 @@ class DocumentEditorWindow(tk.Toplevel):
             item = self.document.objects[self.selected]
             delta_x = (self.canvas.canvasx(event.x) - sx) / self.zoom
             delta_y = (self.canvas.canvasy(event.y) - sy) / self.zoom
+            new_x, new_y = old_x, old_y
             if item.kind == "line":
                 excluded = {item.object_id}
                 if mode == "resize-start":
@@ -7991,8 +8074,19 @@ class DocumentEditorWindow(tk.Toplevel):
                     )
             else:
                 minimum_extent = minimum_object_extent(item)
-                new_width = max(minimum_extent, old_width + delta_x)
-                new_height = max(minimum_extent, old_height + delta_y)
+                pointer_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+                pointer_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+                new_x, new_y, new_width, new_height = resized_object_frame(
+                    old_x,
+                    old_y,
+                    old_width,
+                    old_height,
+                    item.rotation,
+                    mode,
+                    pointer_x,
+                    pointer_y,
+                    minimum_extent,
+                )
             control = bool(event.state & 0x0004) or "control" in self._modifier_keys
             if item.kind == "shape" and item.shape == "circle":
                 if control:
@@ -8013,13 +8107,31 @@ class DocumentEditorWindow(tk.Toplevel):
                 )
             resize_snap = (
                 bool(event.state & 0x0001) or "shift" in self._modifier_keys
-            ) and item.kind not in {"line", "dimension", "angle_dimension"}
+            ) and item.kind not in {"line", "dimension", "angle_dimension"} and math.isclose(
+                float(item.rotation) % 360, 0.0, abs_tol=1e-6
+            )
             if resize_snap:
                 target_x, target_y = self._alignment_targets({self.selected})
+                horizontal_edge = mode in {
+                    "resize-nw", "resize-ne", "resize-e", "resize-se", "resize-sw", "resize-w"
+                }
+                vertical_edge = mode in {
+                    "resize-nw", "resize-n", "resize-ne", "resize-se", "resize-s", "resize-sw"
+                }
+                handle_x = (
+                    new_x
+                    if mode in {"resize-nw", "resize-sw", "resize-w"}
+                    else new_x + new_width
+                )
+                handle_y = (
+                    new_y
+                    if mode in {"resize-nw", "resize-n", "resize-ne"}
+                    else new_y + new_height
+                )
                 correction_x, correction_y, guide_x, guide_y = alignment_snap_translation(
-                    (old_x + new_width, old_y + new_height, 0.0, 0.0),
-                    target_x,
-                    target_y,
+                    (handle_x, handle_y, 0.0, 0.0),
+                    target_x if horizontal_edge else [],
+                    target_y if vertical_edge else [],
                     0.0,
                     0.0,
                     threshold=max(4.0, 11.0 / self.zoom),
@@ -8042,8 +8154,16 @@ class DocumentEditorWindow(tk.Toplevel):
                         else:
                             guide_x = None
                 else:
-                    new_width += correction_x
-                    new_height += correction_y
+                    if mode in {"resize-nw", "resize-sw", "resize-w"}:
+                        new_x += correction_x
+                        new_width -= correction_x
+                    elif mode in {"resize-ne", "resize-e", "resize-se"}:
+                        new_width += correction_x
+                    if mode in {"resize-nw", "resize-n", "resize-ne"}:
+                        new_y += correction_y
+                        new_height -= correction_y
+                    elif mode in {"resize-sw", "resize-s", "resize-se"}:
+                        new_height += correction_y
                 self._alignment_snap_guides = (guide_x, guide_y)
                 if guide_x is not None or guide_y is not None:
                     aligned = " et ".join(
@@ -8061,7 +8181,7 @@ class DocumentEditorWindow(tk.Toplevel):
                     [point[0] * new_width / item.width, point[1] * new_height / item.height]
                     for point in item.points
                 ]
-            item.width, item.height = new_width, new_height
+            item.x, item.y, item.width, item.height = new_x, new_y, new_width, new_height
             if item.kind == "text":
                 # Reflowing and rasterising a long rich-text frame on every
                 # pointer event blocks Tk for seconds. During the gesture the
@@ -8071,11 +8191,16 @@ class DocumentEditorWindow(tk.Toplevel):
                 # overlapping text layouts.
                 self.canvas.itemconfigure(f"object:{self.selected}", state="hidden")
                 self.canvas.delete("text-resize-preview")
-                self.canvas.create_rectangle(
-                    self.page_x + item.x * self.zoom,
-                    self.page_y + item.y * self.zoom,
-                    self.page_x + (item.x + item.width) * self.zoom,
-                    self.page_y + (item.y + item.height) * self.zoom,
+                preview_points = [
+                    coordinate
+                    for point in rotated_rectangle_points(item)
+                    for coordinate in (
+                        self.page_x + point[0] * self.zoom,
+                        self.page_y + point[1] * self.zoom,
+                    )
+                ]
+                self.canvas.create_polygon(
+                    *preview_points,
                     fill="",
                     outline="#1769AA",
                     width=2,
@@ -8083,16 +8208,19 @@ class DocumentEditorWindow(tk.Toplevel):
                     tags=("text-resize-preview",),
                 )
                 handle_size = 12
-                handle_x = self.page_x + (item.x + item.width) * self.zoom
-                handle_y = self.page_y + (item.y + item.height) * self.zoom
+                active_point = resize_handle_points(item).get(mode)
+                if active_point is None:
+                    active_point = (item.x + item.width, item.y + item.height)
+                handle_x = self.page_x + active_point[0] * self.zoom
+                handle_y = self.page_y + active_point[1] * self.zoom
                 self.canvas.coords(
-                    f"resize-end:{self.selected}",
+                    f"{mode}:{self.selected}",
                     handle_x - handle_size / 2,
                     handle_y - handle_size / 2,
                     handle_x + handle_size / 2,
                     handle_y + handle_size / 2,
                 )
-                self.canvas.tag_raise(f"resize-end:{self.selected}")
+                self.canvas.tag_raise(f"{mode}:{self.selected}")
             else:
                 self._schedule_live_render()
             width_mm, height_mm = item.width * 25.4 / 72, item.height * 25.4 / 72
@@ -8215,8 +8343,7 @@ class DocumentEditorWindow(tk.Toplevel):
             move_y = (new_y - item.y) * self.zoom
             item.x, item.y = new_x, new_y
             self.canvas.move(f"object:{index}", move_x, move_y)
-            self.canvas.move(f"resize-start:{index}", move_x, move_y)
-            self.canvas.move(f"resize-end:{index}", move_x, move_y)
+            self.canvas.move(f"resize-handle:{index}", move_x, move_y)
             if item.kind == "angle_dimension":
                 self._schedule_live_render()
         moved_ids = {
@@ -10676,8 +10803,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 # few seconds on long Office or browser pastes.
                 previous_items = tuple(self.canvas.find_withtag(f"object:{index}"))
                 previous_handles = (
-                    *self.canvas.find_withtag(f"resize-start:{index}"),
-                    *self.canvas.find_withtag(f"resize-end:{index}"),
+                    *self.canvas.find_withtag(f"resize-handle:{index}"),
                 )
                 self._draw_object(index, candidate)
                 for canvas_item in (*previous_items, *previous_handles):
