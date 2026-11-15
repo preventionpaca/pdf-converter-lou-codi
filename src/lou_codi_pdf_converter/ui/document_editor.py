@@ -369,6 +369,13 @@ def proportional_resize(
     return old_width * scale, old_height * scale
 
 
+def minimum_object_extent(item: PageObject) -> float:
+    """Allow thin technical geometry without making rich objects unusable."""
+    if item.kind in {"shape", "polyline"}:
+        return 0.25
+    return 6.0
+
+
 def constrained_right_triangle_vertices(
     points: list[tuple[float, float]],
     point_index: int,
@@ -7983,8 +7990,9 @@ class DocumentEditorWindow(tk.Toplevel):
                         text=f"Extrémité accrochée sur une {snap_label}."
                     )
             else:
-                new_width = max(20, old_width + delta_x)
-                new_height = max(20, old_height + delta_y)
+                minimum_extent = minimum_object_extent(item)
+                new_width = max(minimum_extent, old_width + delta_x)
+                new_height = max(minimum_extent, old_height + delta_y)
             control = bool(event.state & 0x0004) or "control" in self._modifier_keys
             if item.kind == "shape" and item.shape == "circle":
                 if control:
@@ -15337,7 +15345,7 @@ class DocumentEditorWindow(tk.Toplevel):
                 elif key == "font_size":
                     value = max(6, value)
                 elif key in {"width", "height"} and item.kind != "line":
-                    value = max(6, value)
+                    value = max(minimum_object_extent(item), value)
                 setattr(item, key, value)
             if item.kind == "shape" and item.shape == "circle":
                 item.height = item.width

@@ -52,6 +52,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     inline_editor_padding,
     merge_editor_text_styles,
     merge_mirrored_outlines,
+    minimum_object_extent,
     normalize_external_text,
     normalize_plain_paste,
     normalize_rich_plain_fallback,
@@ -742,6 +743,16 @@ def test_shift_movement_snaps_corner_exactly_onto_target_midpoint() -> None:
     assert (dx, dy) == (102.0, 24.0)
     assert target == (202.0, 104.0)
     assert label == "sommet"
+
+
+def test_thin_technical_rectangle_can_be_smaller_than_two_millimetres() -> None:
+    technical_rectangle = PageObject(
+        "polyline", 0, 0, 0, 100, 5.4, shape="rectangle_geometry"
+    )
+    text_frame = PageObject("text", 0, 0, 0, 100, 30)
+
+    assert minimum_object_extent(technical_rectangle) == 0.25
+    assert minimum_object_extent(text_frame) == 6.0
 
 
 def test_geometry_lock_survives_project_roundtrip(tmp_path: Path) -> None:
