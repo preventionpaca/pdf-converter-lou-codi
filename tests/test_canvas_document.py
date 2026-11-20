@@ -59,6 +59,7 @@ from lou_codi_pdf_converter.ui.document_editor import (
     objects_bounds,
     object_rotation_snap_points,
     paragraph_alignment_at,
+    pdf_page_external_links,
     parse_tabular_clipboard,
     parse_tabular_clipboard_html,
     parse_rich_clipboard_html,
@@ -91,6 +92,31 @@ from lou_codi_pdf_converter.ui.document_editor import (
     union_axis_aligned_rectangles,
     available_font_families,
 )
+
+
+def test_pdf_page_external_links_extracts_only_browser_links(tmp_path: Path) -> None:
+    target = tmp_path / "links.pdf"
+    with pymupdf.open() as pdf:
+        page = pdf.new_page(width=300, height=200)
+        page.insert_link(
+            {
+                "kind": pymupdf.LINK_URI,
+                "from": pymupdf.Rect(20, 30, 140, 50),
+                "uri": "https://example.com/document",
+            }
+        )
+        page.insert_link(
+            {
+                "kind": pymupdf.LINK_GOTO,
+                "from": pymupdf.Rect(20, 70, 140, 90),
+                "page": 0,
+            }
+        )
+        pdf.save(target)
+
+    links = pdf_page_external_links(str(target), 0, target.stat().st_mtime_ns)
+
+    assert links == ((20.0, 30.0, 140.0, 50.0, "https://example.com/document"),)
 
 
 def test_append_canvas_document_remaps_pages_and_relationships() -> None:

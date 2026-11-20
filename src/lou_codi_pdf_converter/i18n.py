@@ -178,6 +178,26 @@ _compression_translations = {
 for _code, _labels in _compression_translations.items():
     TRANSLATIONS[_code].update(dict(zip(_compression_sources, _labels, strict=True)))
 
+_drive_picker_sources = (
+    "☁ Google Drive",
+    "▦ Panneaux illustrés",
+    "☰ Liste",
+    "Dossiers, favoris et Google Drive…",
+    "Dossier Google Drive de cet utilisateur",
+    "Ce dossier reste personnel : chaque auteur peut choisir son propre Google Drive.",
+)
+_drive_picker_translations = {
+    "en": ("☁ Google Drive", "▦ Illustrated tiles", "☰ List", "Folders, favourites and Google Drive…", "This user’s Google Drive folder", "This folder is personal: each author can choose their own Google Drive."),
+    "de": ("☁ Google Drive", "▦ Illustrierte Kacheln", "☰ Liste", "Ordner, Favoriten und Google Drive…", "Google-Drive-Ordner dieses Benutzers", "Dieser Ordner ist persönlich: Jeder Autor kann sein eigenes Google Drive auswählen."),
+    "es": ("☁ Google Drive", "▦ Paneles ilustrados", "☰ Lista", "Carpetas, favoritos y Google Drive…", "Carpeta de Google Drive de este usuario", "Esta carpeta es personal: cada autor puede elegir su propio Google Drive."),
+    "it": ("☁ Google Drive", "▦ Riquadri illustrati", "☰ Elenco", "Cartelle, preferiti e Google Drive…", "Cartella Google Drive di questo utente", "Questa cartella è personale: ogni autore può scegliere il proprio Google Drive."),
+    "zh": ("☁ Google 云端硬盘", "▦ 图示面板", "☰ 列表", "文件夹、收藏夹和 Google 云端硬盘…", "此用户的 Google 云端硬盘文件夹", "此文件夹为个人专用：每位作者都可以选择自己的 Google 云端硬盘。"),
+    "tr": ("☁ Google Drive", "▦ Resimli paneller", "☰ Liste", "Klasörler, favoriler ve Google Drive…", "Bu kullanıcının Google Drive klasörü", "Bu klasör kişiseldir: her yazar kendi Google Drive klasörünü seçebilir."),
+    "ar": ("☁ Google Drive", "▦ لوحات مصورة", "☰ قائمة", "المجلدات والمفضلة وGoogle Drive…", "مجلد Google Drive لهذا المستخدم", "هذا المجلد شخصي: يمكن لكل مؤلف اختيار Google Drive الخاص به."),
+}
+for _code, _labels in _drive_picker_translations.items():
+    TRANSLATIONS[_code].update(dict(zip(_drive_picker_sources, _labels, strict=True)))
+
 # Shared navigation and list vocabulary used across the modules. Keeping this
 # set complete prevents one window from mixing French with the chosen locale.
 _shared_ui_sources = (

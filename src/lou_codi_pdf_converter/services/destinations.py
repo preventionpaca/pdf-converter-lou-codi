@@ -87,6 +87,26 @@ def set_document_destination(directory: Path, path: Path | None = None) -> None:
     _write(target, values)
 
 
+def google_drive_destination(path: Path | None = None) -> Path | None:
+    """Return the per-user Google Drive folder, when configured and available."""
+    values = _read(path or settings_path())
+    raw_path = values.get("google_drive_destination")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return None
+    return resolve_existing_directory(Path(raw_path))
+
+
+def set_google_drive_destination(directory: Path, path: Path | None = None) -> None:
+    """Store the Google Drive folder for the current operating-system user."""
+    resolved = resolve_existing_directory(directory)
+    if resolved is None:
+        raise ValueError("Le dossier Google Drive doit exister.")
+    target = path or settings_path()
+    values = _read(target)
+    values["google_drive_destination"] = str(resolved)
+    _write(target, values)
+
+
 def toolbar_size(path: Path | None = None) -> str:
     value = _read(path or settings_path()).get("document_toolbar_size", "large")
     return value if value in {"compact", "large"} else "compact"

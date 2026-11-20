@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import difflib
+import functools
 import io
 import math
 import re
@@ -119,6 +120,7 @@ from ..services.document_recovery import (
     record_document_studio_error,
     write_recovery_snapshot,
 )
+
 from ..system import open_path
 from .input_dialogs import ask_number, ask_table_size, ask_text, choose_color, pick_symbol
 from .destination_settings import configure_document_destinations
@@ -126,6 +128,43 @@ from .directory_picker import choose_save_path
 from .pdf_picker import choose_documents
 from .module_links import add_help_contact_buttons
 from .windowing import center_window, make_modal, maximize_window
+
+
+@functools.lru_cache(maxsize=256)
+def pdf_page_external_links(
+    source_pdf: str, page_number: int, modified_ns: int
+) -> tuple[tuple[float, float, float, float, str], ...]:
+    """Return browser links from one PDF page in PDF point coordinates.
+
+    ``modified_ns`` is deliberately part of the cache key so replacing a PDF
+    in place never leaves stale clickable areas in Document Studio.
+    """
+    del modified_ns
+    links: list[tuple[float, float, float, float, str]] = []
+    try:
+        with pymupdf.open(source_pdf) as pdf:
+            if not 0 <= page_number < pdf.page_count:
+                return ()
+            for raw_link in pdf[page_number].get_links():
+                address = str(raw_link.get("uri", "")).strip()
+                rectangle = raw_link.get("from")
+                if not address or rectangle is None:
+                    continue
+                parsed = urlparse(address)
+                if parsed.scheme.lower() not in {"http", "https", "mailto"}:
+                    continue
+                links.append(
+                    (
+                        float(rectangle.x0),
+                        float(rectangle.y0),
+                        float(rectangle.x1),
+                        float(rectangle.y1),
+                        address,
+                    )
+                )
+    except (OSError, RuntimeError, ValueError):
+        return ()
+    return tuple(links)
 
 NAVY = "#193B66"
 BACKGROUND = "#F0F4F9"
@@ -2953,6 +2992,10 @@ class DocumentEditorWindow(tk.Toplevel):
         tools_menu.add_command(label="Polices livrées avec Lou Còdi…", command=self._show_bundled_fonts)
         tools_menu.add_separator()
         tools_menu.add_command(label="Réglages d’envoi par e-mail…", command=self._configure_email)
+        tools_menu.add_command(
+            label="Dossiers, favoris et Google Drive…",
+            command=lambda: configure_document_destinations(self),
+        )
         tools_menu.add_separator()
         tools_menu.add_command(label="Reconnaître le texte de la page PDF (OCR)…", command=self._ocr_pdf_page)
         menu.add_cascade(label="Outils", menu=tools_menu)
@@ -5953,6 +5996,8 @@ class DocumentEditorWindow(tk.Toplevel):
             self._modifier_keys.add(modifier)
         else:
             self._modifier_keys.discard(modifier)
+        if modifier == "control" and not self._drawing_line and not self._drawing_polyline:
+            self.canvas.configure(cursor="hand2" if "control" in self._modifier_keys else "")
         if self._drawing_polyline and self._polyline_raw_cursor is not None:
             cursor = self._constrained_polyline_point(
                 *self._polyline_raw_cursor, 0
@@ -6445,6 +6490,25 @@ class DocumentEditorWindow(tk.Toplevel):
             )
 
     def _polyline_motion(self, event: tk.Event[tk.Misc]) -> None:
+        pdf_link = self._pdf_link_at_event(event)
+        control_pressed = "control" in self._modifier_keys or bool(event.state & 0x0004)
+        if pdf_link and control_pressed:
+            self.canvas.configure(cursor="hand2")
+            self.status.configure(
+                text=f"Lien du PDF — Ctrl+clic pour ouvrir : {pdf_link}"
+            )
+        elif not any(
+            (
+                self._drawing_line,
+                self._drawing_polyline,
+                self._drawing_triangle,
+                self._drawing_rectangle,
+                self._drawing_text,
+                self._measurement_mode,
+                self._choosing_rotation_pivot,
+            )
+        ):
+            self.canvas.configure(cursor="")
         if self._choosing_rotation_pivot:
             self._preview_rotation_pivot(event)
             return
@@ -7488,10 +7552,94 @@ class DocumentEditorWindow(tk.Toplevel):
                 return index
         return None
 
+    def _pdf_link_at_event(self, event: tk.Event[tk.Misc]) -> str:
+        source = Path(self.document.source_pdf)
+        if not source.is_file():
+            return ""
+        page_x = (self.canvas.canvasx(event.x) - self.page_x) / self.zoom
+        page_y = (self.canvas.canvasy(event.y) - self.page_y) / self.zoom
+        try:
+            modified_ns = source.stat().st_mtime_ns
+        except OSError:
+            return ""
+        for left, top, right, bottom, address in pdf_page_external_links(
+            str(source), self.current_page, modified_ns
+        ):
+            if left <= page_x <= right and top <= page_y <= bottom:
+                return address
+        return ""
+
+    def _open_pdf_link_from_event(self, event: tk.Event[tk.Misc]) -> bool:
+        if "control" not in self._modifier_keys and not (event.state & 0x0004):
+            return False
+        address = self._pdf_link_at_event(event)
+        if not address:
+            return False
+        if not webbrowser.open(address, new=2):
+            messagebox.showerror(
+                "Lien impossible à ouvrir",
+                f"Le navigateur n’a pas pu ouvrir :\n{address}",
+                parent=self,
+            )
+        else:
+            self.status.configure(text=f"Lien PDF ouvert dans le navigateur : {address}")
+        return True
+
+    def _place_draggable_inline_toolbar(
+        self,
+        toolbar: tk.Widget,
+        handle: tk.Widget,
+        x: float,
+        y: float,
+    ) -> int:
+        """Place an inline editing palette and let its handle move it."""
+        window_id = self.canvas.create_window(
+            x, y, window=toolbar, anchor="nw", tags=("inline-editor",)
+        )
+        drag_origin: dict[str, float] = {}
+
+        def start(event: tk.Event[tk.Misc]) -> str:
+            coordinates = self.canvas.coords(window_id)
+            if len(coordinates) == 2:
+                drag_origin.update(
+                    pointer_x=float(event.x_root),
+                    pointer_y=float(event.y_root),
+                    toolbar_x=float(coordinates[0]),
+                    toolbar_y=float(coordinates[1]),
+                )
+            return "break"
+
+        def move(event: tk.Event[tk.Misc]) -> str:
+            if not drag_origin:
+                return "break"
+            toolbar.update_idletasks()
+            width = toolbar.winfo_reqwidth()
+            height = toolbar.winfo_reqheight()
+            left = self.canvas.canvasx(0)
+            top = self.canvas.canvasy(0)
+            right = self.canvas.canvasx(self.canvas.winfo_width()) - width
+            bottom = self.canvas.canvasy(self.canvas.winfo_height()) - height
+            new_x = drag_origin["toolbar_x"] + event.x_root - drag_origin["pointer_x"]
+            new_y = drag_origin["toolbar_y"] + event.y_root - drag_origin["pointer_y"]
+            self.canvas.coords(
+                window_id,
+                max(left, min(new_x, max(left, right))),
+                max(top, min(new_y, max(top, bottom))),
+            )
+            return "break"
+
+        handle.bind("<ButtonPress-1>", start)
+        handle.bind("<B1-Motion>", move)
+        handle.configure(cursor="fleur")
+        self._add_tooltip(handle, "Faites glisser cette poignée pour déplacer la barre")
+        return window_id
+
     def _press(self, event: tk.Event[tk.Misc]) -> None:
         self._dismiss_context_menu()
         self._drag_snap_preview = None
         self._alignment_snap_guides = None
+        if self._open_pdf_link_from_event(event):
+            return
         if self._choosing_rotation_pivot:
             self._set_rotation_pivot_from_event(event)
             return
@@ -8956,6 +9104,16 @@ class DocumentEditorWindow(tk.Toplevel):
             tags=("inline-editor",),
         )
         link_toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
+        drag_handle = tk.Label(
+            link_toolbar,
+            text="⠿  Déplacer la barre",
+            bg="#D8E4F0",
+            fg="#193B66",
+            anchor="w",
+            padx=6,
+            pady=2,
+        )
+        drag_handle.pack(fill="x")
         primary = tk.Frame(link_toolbar, bg="#E8EEF5")
         primary.pack(fill="x")
         secondary = tk.Frame(link_toolbar, bg="#E8EEF5")
@@ -9118,11 +9276,8 @@ class DocumentEditorWindow(tk.Toplevel):
                 visible_bottom - toolbar_height,
             ),
         )
-        self.canvas.create_window(
-            toolbar_x,
-            toolbar_y,
-            window=link_toolbar,
-            anchor="nw", tags=("inline-editor",),
+        self._place_draggable_inline_toolbar(
+            link_toolbar, drag_handle, toolbar_x, toolbar_y
         )
 
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor())
@@ -9627,6 +9782,15 @@ class DocumentEditorWindow(tk.Toplevel):
             tags=("inline-editor",),
         )
         toolbar = tk.Frame(self.canvas, bg="#E8EEF5", relief="solid", borderwidth=1)
+        drag_handle = tk.Label(
+            toolbar,
+            text="⠿",
+            bg="#D8E4F0",
+            fg="#193B66",
+            padx=6,
+            pady=2,
+        )
+        drag_handle.pack(side="left", padx=(0, 2), pady=2)
         tk.Label(
             toolbar,
             text=(
@@ -9719,13 +9883,7 @@ class DocumentEditorWindow(tk.Toplevel):
         if toolbar_y < max(self.page_y, visible_top):
             toolbar_y = y + editor_height + 4
         toolbar_y = max(self.page_y, visible_top, min(toolbar_y, page_bottom - toolbar_height))
-        self.canvas.create_window(
-            toolbar_x,
-            toolbar_y,
-            window=toolbar,
-            anchor="nw",
-            tags=("inline-editor",),
-        )
+        self._place_draggable_inline_toolbar(toolbar, drag_handle, toolbar_x, toolbar_y)
         widget.bind("<Control-Return>", lambda _event: self._commit_inline_editor() or "break")
         widget.bind("<Escape>", lambda _event: self._commit_inline_editor() or "break")
         widget.bind("<Delete>", self._edit_table_delete)

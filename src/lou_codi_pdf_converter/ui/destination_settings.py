@@ -7,12 +7,14 @@ from tkinter import messagebox, ttk
 from ..services.destinations import (
     document_destination,
     favorite_destinations,
+    google_drive_destination,
     resolve_existing_directory,
     save_favorite_destinations,
     set_document_destination,
+    set_google_drive_destination,
 )
-from .windowing import center_window, make_modal
 from .directory_picker import choose_directory
+from .windowing import center_window, make_modal
 
 
 def configure_document_destinations(parent: tk.Misc) -> None:
@@ -20,9 +22,10 @@ def configure_document_destinations(parent: tk.Misc) -> None:
     dialog = tk.Toplevel(parent, class_="Loucodiworkshop")
     dialog.title("Dossiers et favoris — Lou Còdi Workshop")
     dialog.configure(bg="#F0F4F9")
-    center_window(dialog, 760, 500)
+    center_window(dialog, 760, 580)
 
     default_var = tk.StringVar(value=str(document_destination()))
+    google_drive_var = tk.StringVar(value=str(google_drive_destination() or ""))
     label_var = tk.StringVar()
     path_var = tk.StringVar()
     favorites = favorite_destinations()
@@ -40,6 +43,19 @@ def configure_document_destinations(parent: tk.Misc) -> None:
             variable.set(str(selected))
 
     ttk.Button(default_row, text="Parcourir…", command=lambda: browse(default_var)).pack(side="left", padx=(8, 0))
+    ttk.Label(body, text="Dossier Google Drive de cet utilisateur", font=("Sans", 13, "bold")).pack(anchor="w")
+    ttk.Label(
+        body,
+        text="Ce dossier reste personnel : chaque auteur peut choisir son propre Google Drive.",
+    ).pack(anchor="w", pady=(2, 6))
+    google_drive_row = ttk.Frame(body)
+    google_drive_row.pack(fill="x", pady=(0, 18))
+    ttk.Entry(google_drive_row, textvariable=google_drive_var).pack(side="left", fill="x", expand=True)
+    ttk.Button(
+        google_drive_row,
+        text="Parcourir…",
+        command=lambda: browse(google_drive_var),
+    ).pack(side="left", padx=(8, 0))
     ttk.Label(body, text="Favoris d’enregistrement", font=("Sans", 13, "bold")).pack(anchor="w")
     ttk.Label(
         body,
@@ -103,6 +119,16 @@ def configure_document_destinations(parent: tk.Misc) -> None:
             messagebox.showerror("Dossier incorrect", "Le dossier par défaut doit exister.", parent=dialog)
             return
         set_document_destination(default)
+        if google_drive_var.get().strip():
+            google_drive = resolve_existing_directory(Path(google_drive_var.get()))
+            if google_drive is None:
+                messagebox.showerror(
+                    "Dossier incorrect",
+                    "Le dossier Google Drive doit exister sur cet ordinateur.",
+                    parent=dialog,
+                )
+                return
+            set_google_drive_destination(google_drive)
         save_favorite_destinations(favorites)
         dialog.destroy()
 

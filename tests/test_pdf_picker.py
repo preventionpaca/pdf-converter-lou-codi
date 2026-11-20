@@ -1,6 +1,15 @@
 import os
 
-from lou_codi_pdf_converter.ui.pdf_picker import PdfPicker, _format_size, _sorted_entries
+from lou_codi_pdf_converter.services.destinations import (
+    google_drive_destination,
+    set_google_drive_destination,
+)
+from lou_codi_pdf_converter.ui.pdf_picker import (
+    PdfPicker,
+    _format_size,
+    _illustrated_thumbnail,
+    _sorted_entries,
+)
 
 
 def test_format_size_uses_french_units() -> None:
@@ -40,3 +49,24 @@ def test_picker_sorts_name_and_size_while_keeping_directories_first(tmp_path) ->
 
     assert [row[0] for row in by_name] == [folder, large, small]
     assert [row[0] for row in by_size] == [folder, large, small]
+
+
+def test_google_drive_destination_is_saved_per_preferences_file(tmp_path) -> None:
+    preferences = tmp_path / "preferences.json"
+    google_drive = tmp_path / "GoogleDrive"
+    google_drive.mkdir()
+
+    assert google_drive_destination(preferences) is None
+    set_google_drive_destination(google_drive, preferences)
+
+    assert google_drive_destination(preferences) == google_drive
+
+
+def test_illustrated_thumbnail_is_created_for_folder_and_document(tmp_path) -> None:
+    folder = tmp_path / "Dossier"
+    folder.mkdir()
+    document = tmp_path / "rapport.docx"
+    document.write_bytes(b"not a real docx")
+
+    assert _illustrated_thumbnail(folder).size == (170, 108)
+    assert _illustrated_thumbnail(document).size == (170, 108)
